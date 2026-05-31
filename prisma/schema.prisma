@@ -1,0 +1,425 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model AIInsight {
+  id    String    @id @default(cuid())
+  type      String
+  userId    String?
+  classId   String
+  scopeId   String?
+  content   String
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+  Class     Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  User      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model AnalysisTemplate {
+  id    String    @id @default(cuid())
+  teacherId                                                                         String?
+  type                                                                             String
+  name                                                                             String
+  content                                                                          String
+  isDefault                                                                        Boolean              @default(false)
+  createdAt                                                                        DateTime             @default(now())
+  updatedAt                                                                        DateTime
+  learningTasksAsClassInsightTemplate   LearningTask[]       @relation("LearningTask_classInsightTemplateIdToAnalysisTemplate")
+  learningTasksAsStudentInsightTemplate LearningTask[]       @relation("LearningTask_studentInsightTemplateIdToAnalysisTemplate")
+  presetConversationsAsClassInsightTemplate   PresetConversation[] @relation("PresetConversation_classInsightTemplateIdToAnalysisTemplate")
+  presetConversationsAsStudentInsightTemplate PresetConversation[] @relation("PresetConversation_studentInsightTemplateIdToAnalysisTemplate")
+  QuizActivity                               QuizActivity[]
+  subProjectsAsClassInsightTemplate           SubProject[]         @relation("SubProject_classInsightTemplateIdToAnalysisTemplate")
+  subProjectsAsStudentInsightTemplate         SubProject[]         @relation("SubProject_studentInsightTemplateIdToAnalysisTemplate")
+}
+
+model Class {
+  id    String    @id @default(cuid())
+  name                       String
+  description                String?
+  teacherId                  String
+  inviteCode                 String             @unique
+  status                     String             @default("ACTIVE")
+  aiPromptStrategy           String             @default("PRIORITY_MATERIAL")
+  customSystemPrompt         String?
+  isCurrent                  Boolean            @default(false)
+  openInviteCode             Boolean            @default(false)
+  createdAt                  DateTime           @default(now())
+  AIInsight                  AIInsight[]
+  User_Class_teacherIdToUser User               @relation("Class_teacherIdToUser", fields: [teacherId], references: [id])
+  Conversation               Conversation[]
+  Evaluation                 Evaluation[]
+  Exercise                   Exercise[]
+  LearningProgress           LearningProgress[]
+  Material                   Material[]
+  TaskAssignment             TaskAssignment[]
+  User_User_classIdToClass   User[]             @relation("User_classIdToClass")
+}
+
+model Conversation {
+  id    String    @id @default(cuid())
+  userId               String
+  classId              String
+  presetConversationId String?
+  title                String              @default("新对话")
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime
+  PresetConversation   PresetConversation? @relation(fields: [presetConversationId], references: [id])
+  Class                Class               @relation(fields: [classId], references: [id], onDelete: Cascade)
+  User                 User                @relation(fields: [userId], references: [id])
+  Message              Message[]
+}
+
+model DocumentChunk {
+  id    String    @id @default(cuid())
+  materialId String
+  content    String
+  embedding  String?
+  metadata   String?
+  createdAt  DateTime @default(now())
+  Material   Material @relation(fields: [materialId], references: [id])
+}
+
+model Evaluation {
+  id    String    @id @default(cuid())
+  userId    String
+  classId   String
+  dimension String
+  score     Int
+  feedback  String?
+  evidence  String?
+  createdAt DateTime @default(now())
+  Class     Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  User      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Exercise {
+  id    String    @id @default(cuid())
+  classId         String
+  materialId      String?
+  question        String
+  options         String?
+  answer          String
+  type            String
+  difficulty      String            @default("MEDIUM")
+  sourceContent   String?
+  explanation     String?
+  createdAt       DateTime          @default(now())
+  Material        Material?         @relation(fields: [materialId], references: [id], onDelete: Cascade)
+  Class           Class             @relation(fields: [classId], references: [id], onDelete: Cascade)
+  ExerciseAttempt ExerciseAttempt[]
+}
+
+model ExerciseAttempt {
+  id    String    @id @default(cuid())
+  exerciseId String
+  userId     String
+  userAnswer String
+  isCorrect  Boolean
+  score      Int?
+  createdAt  DateTime @default(now())
+  User       User     @relation(fields: [userId], references: [id])
+  Exercise   Exercise @relation(fields: [exerciseId], references: [id])
+}
+
+model ExplorationActionLog {
+  id    String    @id @default(cuid())
+  submissionId          String
+  type                  String
+  target                String
+  value                 String
+  timestamp             BigInt
+  ExplorationSubmission ExplorationSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+}
+
+model ExplorationActivity {
+  id    String    @id @default(cuid())
+  subProjectId          String
+  title                 String
+  description           String?
+  htmlContent           String                  @default("")
+  sortOrder             Int                     @default(0)
+  enabled               Boolean                 @default(true)
+  createdAt             DateTime                @default(now())
+  enableSubmission      Boolean                 @default(false)
+  questionsJson         String?
+  teachingAdvice        String?
+  analysisPrompt        String?
+  designPrompt          String?
+  SubProject            SubProject              @relation(fields: [subProjectId], references: [id], onDelete: Cascade)
+  ExplorationSubmission ExplorationSubmission[]
+}
+
+model ExplorationSubmission {
+  id    String    @id @default(cuid())
+  explorationId        String
+  studentId            String
+  answers              String
+  score                Float?
+  totalScore           Float                  @default(100)
+  learningAdvice       String?
+  status               String                 @default("submitted")
+  submittedAt          DateTime               @default(now())
+  gradedAt             DateTime?
+  ExplorationActionLog ExplorationActionLog[]
+  ExplorationActivity  ExplorationActivity    @relation(fields: [explorationId], references: [id], onDelete: Cascade)
+
+  @@unique([explorationId, studentId])
+}
+
+model InsightTemplate {
+  id    String    @id @default(cuid())
+  category    String   @unique
+  name        String
+  content     String
+  description String?
+  isSystem    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime
+}
+
+model KnowledgeBase {
+  id    String    @id @default(cuid())
+  teacherId  String
+  name       String
+  filename   String?
+  fileSize   Int?
+  content    String
+  vectorData String?
+  status     String   @default("RAW")
+  enabled    Boolean  @default(true)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime
+}
+
+model LearningProgress {
+  id    String    @id @default(cuid())
+  userId         String
+  classId        String
+  knowledgePoint String
+  masteryLevel   Int      @default(0)
+  lastStudiedAt  DateTime
+  Class          Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  User           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model LearningTask {
+  id    String    @id @default(cuid())
+  title                                                                    String
+  description                                                              String?
+  grade                                                                    String?
+  subject                                                                  String?
+  objectives                                                               String
+  requirements                                                             String
+  knowledgeBase                                                            String?
+  knowledgeBaseIds                                                         String?
+  analysisPrompt                                                           String?
+  studentInsightTemplateId                                                 String?
+  classInsightTemplateId                                                   String?
+  status                                                                   String            @default("DISABLED")
+  teacherId                                                                String
+  createdAt                                                                DateTime          @default(now())
+  updatedAt                                                                DateTime
+  classAnalysisPrompt                                                      String?
+  classInsightTemplate AnalysisTemplate? @relation("LearningTask_classInsightTemplateIdToAnalysisTemplate", fields: [classInsightTemplateId], references: [id])
+  studentInsightTemplate AnalysisTemplate? @relation("LearningTask_studentInsightTemplateIdToAnalysisTemplate", fields: [studentInsightTemplateId], references: [id])
+  User                   User              @relation(fields: [teacherId], references: [id])
+  subProjects            SubProject[]
+  assignments            TaskAssignment[]
+}
+
+model Material {
+  id    String    @id @default(cuid())
+  classId       String
+  teacherId     String
+  type          String
+  filename      String
+  originalName  String
+  fileType      String
+  fileSize      Int
+  content       String?
+  status        String          @default("PROCESSING")
+  createdAt     DateTime        @default(now())
+  DocumentChunk DocumentChunk[]
+  Exercise      Exercise[]
+  Class         Class           @relation(fields: [classId], references: [id], onDelete: Cascade)
+}
+
+model Message {
+  id    String    @id @default(cuid())
+  conversationId String
+  role           String
+  content        String
+  createdAt      DateTime     @default(now())
+  Conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model PresetConversation {
+  id    String    @id @default(cuid())
+  subProjectId                                                                   String
+  title                                                                          String
+  description                                                                    String?
+  systemPrompt                                                                   String?
+  analysisPrompt                                                                 String?
+  classAnalysisPrompt                                                            String?
+  studentInsightTemplateId                                                       String?
+  classInsightTemplateId                                                         String?
+  sortOrder                                                                      Int               @default(0)
+  enabled                                                                        Boolean           @default(true)
+  createdAt                                                                      DateTime          @default(now())
+  Conversation                                                                   Conversation[]
+  AnalysisTemplate_PresetConversation_classInsightTemplateIdToAnalysisTemplate   AnalysisTemplate? @relation("PresetConversation_classInsightTemplateIdToAnalysisTemplate", fields: [classInsightTemplateId], references: [id])
+  AnalysisTemplate_PresetConversation_studentInsightTemplateIdToAnalysisTemplate AnalysisTemplate? @relation("PresetConversation_studentInsightTemplateIdToAnalysisTemplate", fields: [studentInsightTemplateId], references: [id])
+  SubProject                                                                     SubProject        @relation(fields: [subProjectId], references: [id], onDelete: Cascade)
+}
+
+model Question {
+  id    String    @id @default(cuid())
+  quizActivityId  String
+  type            String
+  content         String
+  options         String?
+  answer          String
+  score           Int               @default(0)
+  difficulty      String
+  explanation     String?
+  order           Int               @default(0)
+  QuizActivity    QuizActivity      @relation(fields: [quizActivityId], references: [id], onDelete: Cascade)
+  QuestionAttempt QuestionAttempt[]
+}
+
+model QuestionAttempt {
+  id    String    @id @default(cuid())
+  quizAttemptId  String
+  questionId     String
+  selectedAnswer String
+  isCorrect      Boolean
+  score          Float?
+  maxScore       Int?
+  comment        String?
+  gradedBy       String      @default("ai")
+  answeredAt     DateTime    @default(now())
+  Question       Question    @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  QuizAttempt    QuizAttempt @relation(fields: [quizAttemptId], references: [id], onDelete: Cascade)
+}
+
+model QuizActivity {
+  id    String    @id @default(cuid())
+  subProjectId         String
+  title                String
+  description          String?
+  quizDesignTemplateId String?
+  sortOrder            Int               @default(0)
+  status               String            @default("INACTIVE")
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime
+  analysisPrompt       String?
+  Question             Question[]
+  AnalysisTemplate     AnalysisTemplate? @relation(fields: [quizDesignTemplateId], references: [id])
+  SubProject           SubProject        @relation(fields: [subProjectId], references: [id], onDelete: Cascade)
+  QuizAttempt          QuizAttempt[]
+}
+
+model QuizAttempt {
+  id    String    @id @default(cuid())
+  userId          String
+  quizActivityId  String
+  score           Int               @default(0)
+  totalQuestions  Int               @default(0)
+  correctCount    Int               @default(0)
+  totalScore      Float?
+  maxTotalScore   Int?
+  startedAt       DateTime          @default(now())
+  submittedAt     DateTime?
+  QuestionAttempt QuestionAttempt[]
+  QuizActivity    QuizActivity      @relation(fields: [quizActivityId], references: [id], onDelete: Cascade)
+  User            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model SubProject {
+  id    String    @id @default(cuid())
+  taskId                                                                 String
+  title                                                                  String
+  description                                                            String?
+  objectives                                                             String
+  requirements                                                           String
+  knowledgeBase                                                          String?
+  analysisPrompt                                                         String?
+  studentInsightTemplateId                                               String?
+  classInsightTemplateId                                                 String?
+  sortOrder                                                              Int                   @default(0)
+  enabled                                                                Boolean               @default(true)
+  createdAt                                                              DateTime              @default(now())
+  ExplorationActivity                                                    ExplorationActivity[]
+  PresetConversation                                                     PresetConversation[]
+  QuizActivity                                                           QuizActivity[]
+  classInsightTemplate AnalysisTemplate? @relation("SubProject_classInsightTemplateIdToAnalysisTemplate", fields: [classInsightTemplateId], references: [id])
+  studentInsightTemplate AnalysisTemplate? @relation("SubProject_studentInsightTemplateIdToAnalysisTemplate", fields: [studentInsightTemplateId], references: [id])
+  task                   LearningTask      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+}
+
+model SystemConfig {
+  id    String    @id @default(cuid())
+  aiBaseUrl                    String   @default("https://dashscope.aliyuncs.com/compatible-mode/v1")
+  aiApiKey                     String?
+  aiModel                      String   @default("qwen-turbo")
+  aiMaxConcurrent              Int      @default(20)
+  reasoningEnabled             Boolean  @default(true)
+  insightDataSource            String   @default("CONVERSATIONS")
+  studentWordLimit             Int?
+  classWordLimit               Int?
+  requireStarRating            Boolean  @default(false)
+  teacherName                  String?
+  grade                        String?
+  subject                      String?
+  conversationWarningThreshold Int      @default(20000)
+  updatedAt                    DateTime
+  studentMotto                 String?
+}
+
+model TaskAssignment {
+  id    String    @id @default(cuid())
+  taskId       String
+  classId      String
+  createdAt    DateTime     @default(now())
+  class Class        @relation(fields: [classId], references: [id], onDelete: Cascade)
+  task  LearningTask @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, classId])
+}
+
+model User {
+  id    String    @id @default(cuid())
+  email                       String?
+  password                    String?
+  name                        String
+  studentNo                   String?
+  role                        String             @default("STUDENT")
+  avatar                      String?
+  classId                     String?
+  gender                      String?
+  phone                       String?            @unique
+  school                      String?
+  createdAt                   DateTime           @default(now())
+  motto                       String?
+  studentMotto                String?
+  passwordKeyHash             String?
+  recoveryAnswerHash          String?
+  recoveryQuestion            String?
+  AIInsight                   AIInsight[]
+  Class_Class_teacherIdToUser Class[]            @relation("Class_teacherIdToUser")
+  Conversation                Conversation[]
+  Evaluation                  Evaluation[]
+  ExerciseAttempt             ExerciseAttempt[]
+  LearningProgress            LearningProgress[]
+  LearningTask                LearningTask[]
+  QuizAttempt                 QuizAttempt[]
+  Class_User_classIdToClass   Class?             @relation("User_classIdToClass", fields: [classId], references: [id], onDelete: Cascade)
+}

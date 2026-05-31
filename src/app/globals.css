@@ -1,0 +1,52 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #F3F6F9;
+  --foreground: #1A1A1A;
+  --primary: #0052D9;
+  --primary-light: #E8F0FE;
+  --success: #00A870;
+  --warning: #ED7B2F;
+  --danger: #E34D59;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: "PingFang SC", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+@layer utilities {
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+.teacher-menu .t-menu-item {
+  transition: background-color 0.2s;
+}
+
+.teacher-menu .t-menu-item:hover {
+  background-color: #E8F0FE !important;
+}
+
+.teacher-menu .t-menu-item.t-is-active {
+  background-color: #0052D9 !important;
+  color: white !important;
+}
+
+/* 座右铭滚动动画 */
+@keyframes marquee {
+  0% {
+    transform: translateX(0%);
+  }
+  100% {
+    transform: translateX(-50%);
+  }
+}
+
+.animate-marquee {
+  animation: marquee 20s linear infinite;
+}
