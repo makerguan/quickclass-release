@@ -7,21 +7,24 @@ import { Button, Input, MessagePlugin } from "tdesign-react";
 export default function HomePage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const [checking, setChecking] = useState(true); // 正在检查是否已有用户
+  const [hasUsers, setHasUsers] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-    // 检查是否有用户
     fetch("/api/auth/check-users")
       .then(res => res.json())
       .then(data => {
         if (data.hasUsers) {
           // 有用户，跳转登录
           router.replace("/login");
+        } else {
+          setHasUsers(false);
+          setChecking(false);
         }
       })
       .catch(() => {
-        // 出错默认留在本页
+        // 出错时也跳转登录页（比停留在设置页更安全）
+        router.replace("/login");
       });
   }, [router]);
 
@@ -145,6 +148,18 @@ export default function HomePage() {
   };
 
   const inputCls = "w-full !rounded-lg border-gray-200 focus:border-[#0052D9] focus:ring-1 focus:ring-[#0052D9]";
+
+  // 检查中：显示加载状态
+  if (checking) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-[#0052D9] to-[#00A870] flex items-center justify-center">
+        <div className="text-white text-center">
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-white mx-auto mb-3"></div>
+          <p className="text-sm">正在加载...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0052D9] to-[#00A870] flex items-center justify-center py-6">
