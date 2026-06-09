@@ -7,6 +7,9 @@ echo   QuickClass 启动脚本 (Windows)
 echo ====================================
 echo.
 
+::: 设置 Prisma 需要的 DATABASE_URL（指向当前目录的 prisma\dev.db）
+set "DATABASE_URL=file:./dev.db"
+
 ::: 检查 Node.js
 where node >nul 2>&1
 if %errorlevel% neq 0 (

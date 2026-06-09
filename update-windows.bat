@@ -6,6 +6,9 @@ echo   QuickClass 更新脚本 (Windows)
 echo ====================================
 echo.
 
+::: 设置 Prisma 需要的 DATABASE_URL（指向当前目录的 prisma\dev.db）
+set "DATABASE_URL=file:./dev.db"
+
 ::: 检查是否在旧版目录中运行
 if not exist "prisma\dev.db" (
     echo [错误] 未找到数据库文件 prisma\dev.db

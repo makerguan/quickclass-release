@@ -20,6 +20,9 @@ fi
 echo "Node.js 版本：$(node -v)"
 echo ""
 
+# 设置 Prisma 需要的 DATABASE_URL（指向当前目录的 prisma/dev.db）
+export DATABASE_URL="file:./dev.db"
+
 # 检查 node_modules
 if [ ! -d "node_modules" ]; then
     echo "[1/4] 正在安装依赖..."
