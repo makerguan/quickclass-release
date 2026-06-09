@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="zh-CN" xml:lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <title>快速上手-五步应用指南</title>
+  <style>
+    /* 覆盖 pandoc 默认的 36em 限制，让 body 全宽 */
+    body { max-width: none !important; padding: 0 !important; margin: 0 !important; }
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    code{white-space: pre-wrap;}
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+  </style>
+  <style>
+  /* ===== 基础重置 ===== */
+  *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth;-webkit-text-size-adjust:100%}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    font-size:16px;line-height:1.75;color:#1e293b;
+    background:linear-gradient(180deg,#f8fafc 0%,#eef2f7 100%);
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;
+    text-rendering:optimizeLegibility;
+  }
+
+  /* ===== 排版基础 ===== */
+  p{margin:1em 0;color:#334155}
+  strong{color:#0f172a;font-weight:600}
+  em{color:#475569}
+  a{color:#6366f1;text-decoration:none;border-bottom:1px solid rgba(99,102,241,.3);transition:all .2s}
+  a:hover{color:#4f46e5;border-bottom-color:#4f46e5}
+  hr{
+    border:0;height:1px;
+    background:linear-gradient(90deg,transparent 0%,#cbd5e1 50%,transparent 100%);
+    margin:3em 0;
+  }
+
+  /* ===== 标题系统 ===== */
+  h1,h2,h3,h4{
+    font-weight:700;line-height:1.3;letter-spacing:-.01em;
+    color:#0f172a;
+  }
+  h1.title{display:none}
+  h1{
+    font-size:2.25em;margin:1.5em 0 .8em;
+    padding-bottom:.4em;border-bottom:2px solid #e2e8f0;
+  }
+  h2{
+    font-size:1.875em;margin:2.2em 0 1em;
+    padding:.6em 0 .6em 1em;
+    background:linear-gradient(90deg,#eef2ff 0%,transparent 70%);
+    border-left:5px solid #6366f1;
+    border-radius:0 8px 8px 0;
+    position:relative;
+  }
+  h2::before{
+    content:"";position:absolute;left:-5px;top:0;bottom:0;width:5px;
+    background:linear-gradient(180deg,#6366f1 0%,#8b5cf6 100%);
+    border-radius:4px 0 0 4px;
+  }
+  h3{
+    font-size:1.4em;margin:1.8em 0 .8em;
+    padding-bottom:.3em;border-bottom:1px dashed #cbd5e1;
+    color:#1e293b;
+  }
+  h3::before{
+    content:"▸";color:#6366f1;margin-right:.5em;font-weight:400;
+  }
+  h4{
+    font-size:1.15em;margin:1.4em 0 .6em;
+    color:#475569;
+  }
+  h4::before{
+    content:"#";color:#a5b4fc;margin-right:.4em;font-weight:400;
+  }
+
+  /* ===== 列表 ===== */
+  ul,ol{padding-left:1.6em;margin:1em 0}
+  li{margin:.5em 0;color:#334155;line-height:1.7}
+  li::marker{color:#a5b4fc}
+  ul li{padding-left:.3em}
+  ul li::marker{content:"●  ";color:#6366f1;font-size:.8em}
+
+  /* ===== 引用块 ===== */
+  blockquote{
+    position:relative;margin:1.5em 0;padding:1.1em 1.4em 1.1em 1.6em;
+    background:linear-gradient(135deg,#f0f9ff 0%,#f5f3ff 100%);
+    border-left:5px solid #06b6d4;
+    border-radius:0 12px 12px 0;
+    color:#334155;font-size:.97em;
+    box-shadow:0 2px 8px rgba(99,102,241,.06);
+  }
+  blockquote::before{
+    content:"\201C";position:absolute;top:-10px;left:10px;
+    font-size:3em;color:#06b6d4;opacity:.3;line-height:1;
+    font-family:Georgia,serif;
+  }
+  blockquote p{margin:.4em 0;color:#1e40af;font-weight:500}
+  blockquote p:first-child{margin-top:0}
+  blockquote p:last-child{margin-bottom:0}
+
+  /* ===== 代码 ===== */
+  code{
+    font-family:"SF Mono","JetBrains Mono","Fira Code",Consolas,Monaco,monospace;
+    font-size:.88em;
+    background:#f1f5f9;color:#be185d;
+    padding:.15em .45em;border-radius:5px;
+    border:1px solid #e2e8f0;
+    font-weight:500;
+  }
+  pre{
+    position:relative;margin:1.5em 0;padding:0;
+    background:#0f172a;color:#e2e8f0;
+    border-radius:12px;overflow:hidden;
+    box-shadow:0 4px 20px rgba(15,23,42,.15);
+    border:1px solid #1e293b;
+  }
+  pre::before{
+    content:"";display:block;height:36px;
+    background:linear-gradient(180deg,#1e293b 0%,#0f172a 100%);
+    border-bottom:1px solid #1e293b;
+    background-image:
+      radial-gradient(circle 6px at 18px 18px,#ff5f57),
+      radial-gradient(circle 6px at 38px 18px,#febc2e),
+      radial-gradient(circle 6px at 58px 18px,#28c840);
+    background-size:12px 12px,12px 12px,12px 12px;
+    background-repeat:no-repeat;
+  }
+  pre code{
+    display:block;padding:1.2em 1.4em;
+    background:transparent;color:inherit;
+    border:0;font-size:.9em;line-height:1.65;
+    font-weight:400;overflow-x:auto;
+  }
+
+  /* ===== 表格 ===== */
+  table{
+    width:100%;border-collapse:separate;border-spacing:0;
+    margin:1.5em 0;font-size:.95em;
+    background:#fff;border-radius:12px;overflow:hidden;
+    box-shadow:0 2px 12px rgba(15,23,42,.06);
+    border:1px solid #e2e8f0;
+  }
+  thead{
+    background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);
+    color:#fff;
+  }
+  th{
+    padding:14px 18px;text-align:left;font-weight:600;
+    letter-spacing:.02em;border-bottom:2px solid rgba(255,255,255,.1);
+  }
+  td{
+    padding:12px 18px;border-bottom:1px solid #f1f5f9;
+    color:#334155;vertical-align:top;
+  }
+  tbody tr{transition:background .15s}
+  tbody tr:hover{background:#f8fafc}
+  tbody tr:last-child td{border-bottom:0}
+
+  /* ===== Hero 区域 ===== */
+  .hero{
+    position:relative;
+    background:
+      radial-gradient(ellipse 80% 50% at 20% 0%,rgba(99,102,241,.25) 0%,transparent 60%),
+      radial-gradient(ellipse 60% 50% at 80% 100%,rgba(139,92,246,.2) 0%,transparent 60%),
+      linear-gradient(180deg,#0f172a 0%,#1e1b4b 50%,#0f172a 100%);
+    color:#fff;
+    padding:80px 40px 100px;
+    text-align:center;
+    overflow:hidden;
+    border-bottom:1px solid #1e293b;
+  }
+  .hero::before{
+    content:"";position:absolute;inset:0;
+    background-image:
+      linear-gradient(rgba(255,255,255,.04) 1px,transparent 1px),
+      linear-gradient(90deg,rgba(255,255,255,.04) 1px,transparent 1px);
+    background-size:50px 50px;
+    mask-image:radial-gradient(ellipse 80% 60% at 50% 50%,#000 30%,transparent 80%);
+    -webkit-mask-image:radial-gradient(ellipse 80% 60% at 50% 50%,#000 30%,transparent 80%);
+  }
+  .hero-content{position:relative;z-index:1;max-width:900px;margin:0 auto}
+  .hero-badge{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:6px 16px;background:rgba(99,102,241,.2);
+    border:1px solid rgba(99,102,241,.4);border-radius:999px;
+    font-size:.85em;letter-spacing:.05em;
+    margin-bottom:24px;color:#c7d2fe;
+  }
+  .hero-badge::before{content:"";width:6px;height:6px;background:#10b981;border-radius:50%;box-shadow:0 0 8px #10b981}
+  .hero-title{
+    font-size:3em;font-weight:800;letter-spacing:-.02em;line-height:1.15;
+    margin:0 0 8px;color:#fff;
+    background:linear-gradient(135deg,#fff 0%,#c7d2fe 50%,#a5b4fc 100%);
+    -webkit-background-clip:text;background-clip:text;
+    -webkit-text-fill-color:transparent;
+  }
+  .hero-title small{
+    display:block;font-size:.5em;font-weight:500;letter-spacing:.15em;
+    color:#94a3b8;-webkit-text-fill-color:#94a3b8;margin-bottom:8px;
+  }
+  .hero .subtitle{
+    font-size:1.25em;color:#cbd5e1;font-weight:400;margin:0 0 16px;
+    line-height:1.6;
+  }
+  .hero .subtitle strong{color:#fbbf24;font-weight:600}
+  .hero-meta{
+    display:flex;justify-content:center;flex-wrap:wrap;gap:24px;
+    margin-top:32px;font-size:.95em;color:#94a3b8;
+  }
+  .hero-meta span{display:flex;align-items:center;gap:6px}
+  .hero-meta svg{width:16px;height:16px;fill:#94a3b8}
+
+  /* ===== 5 步进度指示器 ===== */
+  .steps-progress{
+    display:flex;justify-content:center;align-items:center;gap:0;
+    margin:48px auto 0;max-width:700px;flex-wrap:wrap;
+  }
+  .step-dot{
+    display:flex;flex-direction:column;align-items:center;gap:6px;
+    position:relative;flex:0 0 auto;
+  }
+  .step-dot .num{
+    width:44px;height:44px;display:flex;align-items:center;justify-content:center;
+    background:rgba(255,255,255,.08);
+    border:2px solid rgba(255,255,255,.25);border-radius:50%;
+    font-weight:700;font-size:1.05em;color:#cbd5e1;
+    transition:all .3s;
+  }
+  .step-dot .label{font-size:.78em;color:#94a3b8;letter-spacing:.05em}
+  .step-line{
+    flex:1;height:2px;
+    background:linear-gradient(90deg,rgba(255,255,255,.1) 0%,rgba(255,255,255,.25) 50%,rgba(255,255,255,.1) 100%);
+    min-width:30px;align-self:center;margin-bottom:24px;
+  }
+
+  /* ===== 文档主体容器 ===== */
+  main{
+    display:grid;
+    grid-template-columns:240px 1fr;
+    gap:60px;
+    max-width:1200px;
+    margin:0 auto;
+    padding:60px 40px;
+  }
+
+  /* ===== 浮动目录 ===== */
+  .toc-sidebar{
+    position:sticky;top:40px;
+    align-self:start;
+    max-height:calc(100vh - 80px);
+    overflow-y:auto;
+    font-size:.92em;
+    padding-right:12px;
+  }
+  .toc-sidebar::-webkit-scrollbar{width:4px}
+  .toc-sidebar::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:2px}
+  .toc-title{
+    font-size:.78em;font-weight:700;letter-spacing:.1em;
+    color:#64748b;text-transform:uppercase;
+    margin-bottom:16px;padding-left:12px;
+  }
+  .toc-sidebar ul{list-style:none;padding:0;margin:0}
+  .toc-sidebar li{margin:0}
+  .toc-sidebar a{
+    display:block;padding:8px 12px;margin:2px 0;
+    color:#64748b;border-left:2px solid transparent;
+    border-bottom:0;border-radius:0 6px 6px 0;
+    transition:all .2s;
+  }
+  .toc-sidebar a:hover{
+    color:#6366f1;background:#eef2ff;
+    border-left-color:#a5b4fc;
+  }
+  .toc-sidebar a.active{
+    color:#6366f1;background:#eef2ff;
+    border-left-color:#6366f1;font-weight:600;
+  }
+
+  /* ===== 文章内容 ===== */
+  article{
+    background:#fff;border-radius:16px;
+    padding:50px 60px;
+    box-shadow:0 4px 24px rgba(15,23,42,.05);
+    border:1px solid #e2e8f0;
+    min-width:0;
+  }
+  .author-block{
+    display:flex;align-items:center;gap:12px;
+    padding:14px 20px;
+    background:linear-gradient(135deg,#eef2ff 0%,#f5f3ff 100%);
+    border:1px solid #c7d2fe;border-radius:10px;
+    margin:0 0 2em;color:#4338ca;
+  }
+  .author-block .avatar{
+    width:40px;height:40px;
+    background:linear-gradient(135deg,#6366f1 0%,#8b5cf6 100%);
+    color:#fff;border-radius:50%;
+    display:flex;align-items:center;justify-content:center;
+    font-weight:700;font-size:1.1em;
+    box-shadow:0 2px 8px rgba(99,102,241,.3);
+    flex-shrink:0;
+  }
+  .author-block .info{font-size:.95em}
+  .author-block .info .name{font-weight:600;color:#1e1b4b}
+  .author-block .info .role{color:#6366f1;font-size:.85em;margin-top:2px}
+
+  /* ===== 章节锚点偏移 ===== */
+  h2:target,h3:target,h4:target{
+    scroll-margin-top:40px;
+  }
+
+  /* ===== 底部页脚 ===== */
+  .doc-footer{
+    margin-top:60px;padding-top:32px;
+    border-top:2px solid #e2e8f0;
+    text-align:center;
+    color:#64748b;font-size:.92em;
+  }
+  .doc-footer .author-tag{
+    display:inline-flex;align-items:center;gap:8px;
+    padding:8px 18px;
+    background:linear-gradient(135deg,#f0f9ff 0%,#f5f3ff 100%);
+    border:1px solid #c7d2fe;border-radius:999px;
+    color:#4338ca;font-weight:500;
+    margin-bottom:16px;
+  }
+  .doc-footer .copyright{
+    color:#94a3b8;font-size:.88em;
+  }
+  .doc-footer .copyright strong{color:#64748b}
+
+  /* ===== 响应式 ===== */
+  @media (max-width:980px){
+    main{grid-template-columns:1fr;gap:30px;padding:30px 20px}
+    .toc-sidebar{position:static;max-height:none;display:none}
+    article{padding:30px 24px}
+    .hero{padding:50px 20px 70px}
+    .hero-title{font-size:2.2em}
+    .hero .subtitle{font-size:1.05em}
+    .steps-progress{gap:0}
+    .step-line{min-width:16px}
+  }
+  @media (max-width:600px){
+    h1{font-size:1.6em}
+    h2{font-size:1.3em;padding:.5em 0 .5em .8em}
+    h3{font-size:1.15em}
+    pre{font-size:.82em}
+    table{font-size:.85em}
+    th,td{padding:8px 10px}
+    .steps-progress .step-dot .label{display:none}
+    .step-dot .num{width:36px;height:36px;font-size:.9em}
+    .author-block{flex-direction:column;text-align:center}
+  }
+
+  /* ===== 打印优化 ===== */
+  @media print{
+    body{background:#fff}
+    .hero,.toc-sidebar,.doc-footer{display:none}
+    main{grid-template-columns:1fr;padding:0;max-width:100%}
+    article{box-shadow:none;border:0;padding:0}
+    a{color:#000;border-bottom:0}
+    pre{background:#f8f8f8;color:#000;box-shadow:none}
+    pre code{color:#000}
+  }
+  </style>
+</head>
+<body>
+<header class="hero">
+  <div class="hero-content">
+    <div class="hero-badge">QuickClass Agent 觉课智能体 教师上手指南</div>
+    <h1 class="hero-title">
+      <small>QUICKCLASS AGENT 觉课</small>
+      新用户 五步应用指南
+    </h1>
+    <p class="subtitle">让任何一位教师，<strong>10 分钟看懂，30 分钟上手，2 小时开始正式上课</strong>。</p>
+    <div class="hero-meta">
+      <span>
+        <svg viewBox="0 0 24 24"><path d="M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11zM7 10h5v5H7z"/></svg>
+        2026 年 6 月
+      </span>
+      <span>
+        <svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/></svg>
+        v1.0 · 完整版
+      </span>
+    </div>
+    <div class="steps-progress">
+      <div class="step-dot"><div class="num">1</div><div class="label">配 AI</div></div>
+      <div class="step-line"></div>
+      <div class="step-dot"><div class="num">2</div><div class="label">建班级</div></div>
+      <div class="step-line"></div>
+      <div class="step-dot"><div class="num">3</div><div class="label">装知识库</div></div>
+      <div class="step-line"></div>
+      <div class="step-dot"><div class="num">4</div><div class="label">设计课堂</div></div>
+      <div class="step-line"></div>
+      <div class="step-dot"><div class="num">5</div><div class="label">教学循环</div></div>
+    </div>
+  </div>
+</header>
+<main>
+  <aside class="toc-sidebar">
+    <div class="toc-title">本文目录</div>
+    <ul>
+      <li><a href="#一句话理解-quickclass-agent-觉课智能体">一句话理解</a></li>
+      <li><a href="#核心设计哲学为什么是这套逻辑">设计哲学</a></li>
+      <li><a href="#全景图5-步走通整个工作流">5 步工作流</a></li>
+      <li><a href="#第-1-步配-ai一次性--2-分钟">① 配 AI</a></li>
+      <li><a href="#第-2-步建班级每学期一次--1-分钟">② 建班级</a></li>
+      <li><a href="#第-3-步装知识库积累性--可跳过">③ 装知识库</a></li>
+      <li><a href="#第-4-步设计课堂核心--10-30-分钟">④ 设计课堂</a></li>
+      <li><a href="#第-5-步教学循环每节课">⑤ 教学循环</a></li>
+      <li><a href="#高级玩法用熟了再看">高级玩法</a></li>
+      <li><a href="#一页速查决策流程图">一页速查</a></li>
+      <li><a href="#常见问题先看这里避免踩坑">常见问题</a></li>
+      <li><a href="#管老师寄语quickclass-agent-觉课智能体-想让你做什么">管老师寄语</a></li>
+    </ul>
+  </aside>
+  <article>
+<blockquote>
+<p>让任何一位教师，<strong>10 分钟看懂，30 分钟上手，2 小时开始正式上课</strong>。</p>
+</blockquote>
+<hr />
+<section id="一句话理解-quickclass-agent-觉课智能体" class="level2">
+<h2>一句话理解 QuickClass Agent 觉课智能体</h2>
+<blockquote>
+<p><strong>教师搭骨架（知识库 + 课堂结构），AI 填血肉（与学生对话、批改作业、生成报告）。</strong></p>
+</blockquote>
+<ul>
+<li>你不需要懂 AI 怎么工作</li>
+<li>你只需要想清楚三件事：<strong>让学生看什么材料？做什么活动？怎么评价学得怎么样？</strong></li>
+<li>QuickClass Agent 觉课智能体 把这三件事的”AI 化执行”全部自动化</li>
+</ul>
+<hr />
+</section>
+<section id="核心设计哲学为什么是这套逻辑" class="level2">
+<h2>核心设计哲学：为什么是这套逻辑？</h2>
+<table>
+<thead>
+<tr>
+<th>教学痛点</th>
+<th>QuickClass Agent 觉课智能体 的解法</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>学生不敢问老师</td>
+<td><strong>AI 一对一陪伴</strong>，消除心理压力</td>
+</tr>
+<tr>
+<td>课堂时间不够个性化辅导</td>
+<td><strong>并行对话</strong>——50 个学生可同时和 AI 谈</td>
+</tr>
+<tr>
+<td>教师不知道每个学生卡在哪里</td>
+<td><strong>学情自动分析</strong>——对谁有疑问一目了然</td>
+</tr>
+<tr>
+<td>备课重复劳动</td>
+<td><strong>知识库 + 模板 + 导入导出</strong>——一次设计，多次复用</td>
+</tr>
+<tr>
+<td>开放对话容易跑题</td>
+<td><strong>三级结构化任务</strong>——给 AI 设定边界和目标</td>
+</tr>
+<tr>
+<td>班级作业批改耗时</td>
+<td><strong>AI 自动批改 + 报告</strong>——秒出结果</td>
+</tr>
+</tbody>
+</table>
+<hr />
+</section>
+<section id="全景图5-步走通整个工作流" class="level2">
+<h2>全景图：5 步走通整个工作流</h2>
+<pre><code>┌──────────────────────────────────────────────────────────────┐
+│  第 1 步 配 AI（一次性，2 分钟）                              │
+│  → 让 QuickClass Agent 觉课智能体 拥有&quot;大脑&quot;                                  │
+└──────────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────────┐
+│  第 2 步 建班级（每学期一次，1 分钟）                          │
+│  → 给学生一个&quot;门牌号&quot;：邀请码                                 │
+└──────────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────────┐
+│  第 3 步 装知识库（积累性，可跳过）                            │
+│  → 给 AI 一本&quot;参考书&quot;：全量注入，零信息丢失                   │
+└──────────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────────┐
+│  第 4 步 设计课堂（每节课一次，10-30 分钟）⭐ 核心             │
+│  → 搭&quot;骨架&quot;：课堂 → 学习活动 → 对话/作业/探究                │
+└──────────────────────────────────────────────────────────────┘
+                          ↓
+┌──────────────────────────────────────────────────────────────┐
+│  第 5 步 教学循环（每节课）                                   │
+│  启用 → 学生加入 → 学习中观察 → 结束 → 学情分析 → 复盘/复用   │
+└──────────────────────────────────────────────────────────────┘</code></pre>
+<hr />
+</section>
+<section id="第-1-步配-ai一次性-2-分钟" class="level2">
+<h2>第 1 步｜配 AI（一次性 · 2 分钟）</h2>
+<p><strong>目的</strong>：让 QuickClass Agent 觉课智能体 接上一个大语言模型。</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 35%" />
+<col style="width: 35%" />
+</colgroup>
+<thead>
+<tr>
+<th>操作</th>
+<th>在哪做</th>
+<th>关键点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>进入「系统设置」</td>
+<td>教师端左侧菜单</td>
+<td>第一次登录会引导</td>
+</tr>
+<tr>
+<td>填入 API Base URL、API Key、模型名</td>
+<td>系统设置页</td>
+<td>推荐 <code>qwen-turbo</code>（便宜）或 <code>qwen3.6-plus</code>（支持图片）</td>
+</tr>
+<tr>
+<td>点「测试连接」</td>
+<td>同上</td>
+<td><strong>没看到绿色对勾前，不要往下走</strong></td>
+</tr>
+<tr>
+<td>调整并发数</td>
+<td>同上</td>
+<td>小班 10-20，中班 20-40，大班 40-100</td>
+</tr>
+</tbody>
+</table>
+<p><strong>💡 设计原理</strong>：AI 配置是整个系统最底层的依赖，<strong>先把路铺好</strong>，再做任何事都顺畅。</p>
+<p><strong>✅ 完成标志</strong>：测试连接显示成功。</p>
+<hr />
+</section>
+<section id="第-2-步建班级每学期一次-1-分钟" class="level2">
+<h2>第 2 步｜建班级（每学期一次 · 1 分钟）</h2>
+<p><strong>目的</strong>：为学生生成进入系统的”门牌号”。</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 35%" />
+<col style="width: 35%" />
+</colgroup>
+<thead>
+<tr>
+<th>操作</th>
+<th>在哪做</th>
+<th>关键点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>进入「班级管理」</td>
+<td>教师端左侧菜单</td>
+<td>—</td>
+</tr>
+<tr>
+<td>点「创建班级」</td>
+<td>班级列表页</td>
+<td>填<strong>班级名称</strong>和<strong>邀请码</strong>（如 <code>MATH2026</code>）</td>
+</tr>
+<tr>
+<td>记录邀请码</td>
+<td>自己记好</td>
+<td>学生要靠这个码登录</td>
+</tr>
+<tr>
+<td>（可选）勾选”开放邀请码自助注册”</td>
+<td>创建/编辑班级时</td>
+<td>开启后学生首次登录无需密码</td>
+</tr>
+</tbody>
+</table>
+<p><strong>💡 设计原理</strong>：班级是<strong>学生归属的容器</strong>，所有课堂、学情分析都按班级隔离。一班一码，简单清晰。</p>
+<p><strong>🎓 学生端视角</strong>：
+- 学生只需输入 <strong>姓名 + 邀请码</strong>，<strong>零注册</strong>
+- 系统自动建账号、加入班级</p>
+<p><strong>✅ 完成标志</strong>：班级列表多了一条，邀请码已经告诉你想告诉的人。</p>
+<hr />
+</section>
+<section id="第-3-步装知识库积累性-可跳过" class="level2">
+<h2>第 3 步｜装知识库（积累性 · 可跳过）</h2>
+<p><strong>目的</strong>：给 AI 一份”教学参考资料”，让 AI 回答更专业、更贴你的教材。</p>
+<p><strong>什么时候必须做？</strong>
+- 你希望 AI 严格依据某本书/某份资料回答（“严格依据材料”模式）
+- 你希望 AI 用专业术语、引用特定案例</p>
+<p><strong>什么时候可以跳过？</strong>
+- 你只想要 AI 自由聊天、答疑解惑（“自定义 Prompt”模式）</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 35%" />
+<col style="width: 35%" />
+</colgroup>
+<thead>
+<tr>
+<th>操作</th>
+<th>在哪做</th>
+<th>关键点</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>进入「知识库」</td>
+<td>教师端左侧菜单</td>
+<td>—</td>
+</tr>
+<tr>
+<td>创建新条目</td>
+<td>知识库页</td>
+<td>填<strong>名称</strong>和<strong>Markdown 内容</strong>（或上传 .txt/.md 文件）</td>
+</tr>
+<tr>
+<td>启用/禁用</td>
+<td>知识库列表</td>
+<td>禁用的不会出现在课堂选择中</td>
+</tr>
+<tr>
+<td>在课堂中引用</td>
+<td>第 4 步时讲</td>
+<td>一个课堂可引用多条，总字符数 ≤ 50,000</td>
+</tr>
+</tbody>
+</table>
+<p><strong>💡 设计原理（为什么是”全量注入”而不是”检索增强”）</strong>：</p>
+<table>
+<thead>
+<tr>
+<th>维度</th>
+<th>全量注入（QuickClass Agent 觉课智能体 采用）</th>
+<th>检索增强（RAG）</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>信息完整性</td>
+<td><strong>100%</strong>，AI 看全部资料</td>
+<td>依赖召回率，可能漏</td>
+</tr>
+<tr>
+<td>回答准确性</td>
+<td><strong>严格依据资料</strong>，少幻觉</td>
+<td>检索不到时 AI 可能编</td>
+</tr>
+<tr>
+<td>部署复杂度</td>
+<td><strong>零依赖</strong>，无模型/索引</td>
+<td>需 Embedding + 向量库</td>
+</tr>
+<tr>
+<td>Token 消耗</td>
+<td>较高（每次 ~15K）</td>
+<td>较低（~2K）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>教学场景 50 人同时上课，全量注入一节课成本约 ¥8（DeepSeek）或 ¥2.4（GPT-4o-mini）——完全可以接受。</strong></p>
+<p><strong>✅ 完成标志</strong>：知识库列表里有 1 条以上已启用的内容。</p>
+<hr />
+</section>
+<section id="第-4-步设计课堂核心-10-30-分钟" class="level2">
+<h2>第 4 步｜设计课堂（核心 · 10-30 分钟）</h2>
+<p><strong>目的</strong>：把”一节课”拆成结构化任务，让学生有目标地学。</p>
+<section id="理解三级结构30-秒看懂" class="level3">
+<h3>4.1 理解三级结构（30 秒看懂）</h3>
+<pre><code>课堂（你要讲的这一节课）
+  │
+  ├── 学习活动（1 个，容器）
+  │     │
+  │     ├── 对话活动（2-4 个）  ← 学生和 AI 一对一聊天
+  │     ├── 课堂作业（1 个）    ← 自动批改的客观题
+  │     └── 互动探究（0-N 个）  ← HTML 交互式学习
+  │
+  └── 班级分配（可多个班级）</code></pre>
+<p><strong>为什么是这种结构？</strong>
+- <strong>课堂</strong>：定边界（年级/学科/目标/参考资料）
+- <strong>学习活动</strong>：作为组织容器，把同类活动归组
+- <strong>对话/作业/探究</strong>：聚焦具体任务的”原子单元”</p>
+<p><strong>🔑 关键约束</strong>：
+- 一个课堂 → 1 个学习活动 → 1 个课堂作业
+- 对话活动 2-4 个最合适（太少不深入，太多学生疲）
+- 互动探究是加分项，按需添加</p>
+</section>
+<section id="三种活动的设计逻辑" class="level3">
+<h3>4.2 三种活动的设计逻辑</h3>
+<section id="对话活动最常用-学生和-ai-自由聊" class="level4">
+<h4>🎯 对话活动（最常用 · 学生和 AI 自由聊）</h4>
+<p><strong>作用</strong>：学生通过提问、追问、复述，让 AI 引导他深入理解某个知识点。</p>
+<p><strong>设计要点</strong>：
+| 字段 | 写什么 | 技巧 |
+|—–|——-|——|
+| 标题 | 简洁明确 | 如”什么是方程的解” |
+| 描述 | 这段对话要达成什么 | “学生能用自己话说出方程解的含义” |
+| 系统提示词 | <strong>最关键</strong>——给 AI 的角色和规则 | 详见下方模板 |</p>
+<p><strong>系统提示词模板</strong>（复制后改）：</p>
+<pre><code>你是一位耐心的老师，正在辅导一名[年级]学生学习[学科]。
+当前主题：[本对话活动标题]
+学习目标：[学生应达到的理解]
+
+规则：
+1. 不直接给答案，用提问引导学生思考
+2. 每次回复不超过 3 句话
+3. 鼓励学生用自己的话复述
+4. 学生说错时，反问一个引导性问题，不批评
+5. 当学生答对核心概念时，给出简短总结并结束</code></pre>
+<p><strong>💡 设计原理</strong>：教师写”剧本”，AI 当”演员”。<strong>剧本越具体，AI 越靠谱。</strong></p>
+<hr />
+</section>
+<section id="课堂作业自动批改-客观题评测" class="level4">
+<h4>✏️ 课堂作业（自动批改 · 客观题评测）</h4>
+<p><strong>作用</strong>：用选择/判断题快速检验全班对核心概念的掌握。</p>
+<p><strong>设计要点</strong>：
+- <strong>5-10 道题</strong>为宜
+- <strong>题型</strong>：单选、判断（自动评分用）；填空/简答（人工看）
+- <strong>难度分布</strong>：基础 60% + 中等 30% + 进阶 10%
+- <strong>每题配解析</strong>，学生答错时能看到为什么</p>
+<p><strong>🤖 省力技巧</strong>：点「AI 自动生成」按钮 → 选好参数 → AI 自动出题 → 人工微调 1-2 道。</p>
+<p><strong>💡 设计原理</strong>：作业是”廉价且标准化”的评测工具，覆盖全班、秒出分数，让教师一眼看出哪道题全班错得多。</p>
+<hr />
+</section>
+<section id="互动探究html-交互-高阶玩法可选" class="level4">
+<h4>🧩 互动探究（HTML 交互 · 高阶玩法，可选）</h4>
+<p><strong>作用</strong>：学生在一个 HTML 交互页面里”动手做”——拖拽、填空、模拟实验，<strong>AI 还能自动评分</strong>。</p>
+<p><strong>适合场景</strong>：
+- 数学：拖动图形理解定理
+- 物理：模拟电路连接
+- 语文：拖拽字词成句
+- 英语：配对单词图片</p>
+<p><strong>设计要点</strong>：
+- 准备 HTML 源码（可手写、可让 AI 生成）
+- 开启「提交功能」后，AI 会自动识别题目和答案，<strong>自动判分</strong>
+- 支持题型：单选、填空、拖拽</p>
+<p><strong>💡 设计原理</strong>：探究活动是”做中学”的数字化形态，弥补了纯对话无法动手的短板。<strong>适合每学期精心打磨 1-2 个，反复复用。</strong></p>
+<hr />
+</section>
+</section>
+<section id="操作流程具体怎么点" class="level3">
+<h3>4.3 操作流程（具体怎么点）</h3>
+<table>
+<colgroup>
+<col style="width: 27%" />
+<col style="width: 33%" />
+<col style="width: 38%" />
+</colgroup>
+<thead>
+<tr>
+<th>步骤</th>
+<th>操作</th>
+<th>在哪做</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>进入「课堂管理」</td>
+<td>教师端左侧菜单</td>
+</tr>
+<tr>
+<td>2</td>
+<td>点「创建课堂」</td>
+<td>列表页右上角</td>
+</tr>
+<tr>
+<td>3</td>
+<td>填<strong>标题、年级、学科、目标、要求</strong></td>
+<td>弹窗/表单</td>
+</tr>
+<tr>
+<td>4</td>
+<td>（可选）引用<strong>知识库</strong></td>
+<td>多选标签，<strong>总字符数 ≤ 50,000</strong></td>
+</tr>
+<tr>
+<td>5</td>
+<td>选<strong>分配班级</strong></td>
+<td>多选标签</td>
+</tr>
+<tr>
+<td>6</td>
+<td>点「AI 自动创建」 ⭐</td>
+<td><strong>新手推荐这个</strong>——AI 自动生成学习活动+对话+作业</td>
+</tr>
+<tr>
+<td>7</td>
+<td>进入课堂编辑页微调</td>
+<td>修改 AI 生成的内容</td>
+</tr>
+<tr>
+<td>8</td>
+<td>保存（状态：未启用）</td>
+<td>右下角「保存」</td>
+</tr>
+</tbody>
+</table>
+<p><strong>🤖 AI 自动创建</strong>的省力程度：</p>
+<blockquote>
+<p>填写 4 个字段（标题/年级/学科/目标）→ 点一下按钮 →
+系统自动生成：1 个学习活动 + 2-4 个对话活动 + 1 个课堂作业（5-10 题）→
+直接保存进数据库，<strong>你只需要微调 1-2 处就可用</strong>。</p>
+</blockquote>
+<p><strong>✅ 完成标志</strong>：课堂列表多了一条，状态为”未启用”。</p>
+<hr />
+</section>
+</section>
+<section id="第-5-步教学循环每节课" class="level2">
+<h2>第 5 步｜教学循环（每节课）</h2>
+<section id="启动4-步让课堂亮起来" class="level3">
+<h3>5.1 启动：4 步让课堂”亮起来”</h3>
+<pre><code>课堂列表 → 找到刚创建的课堂 → 点「启用」 → 学生即可访问</code></pre>
+<p><strong>状态生命周期</strong>：</p>
+<pre><code>未启用 ──启用──→ 启用 ──结束──→ 结束
+  ↑                                │
+  └────────── 暂存 ────────────────┘</code></pre>
+<table>
+<thead>
+<tr>
+<th>状态</th>
+<th>学生能看到吗</th>
+<th>数据是否保留</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>未启用</strong></td>
+<td>❌</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><strong>启用</strong></td>
+<td>✅ 可对话/答题</td>
+<td>✅ 持续记录</td>
+</tr>
+<tr>
+<td><strong>结束</strong></td>
+<td>❌</td>
+<td>✅ 可分析</td>
+</tr>
+</tbody>
+</table>
+<p><strong>💡 设计原理</strong>：让教师<strong>预先设计、临时启用、事后分析</strong>——保证教学节奏可控，又不丢数据。</p>
+</section>
+<section id="学生加入3-步搞定" class="level3">
+<h3>5.2 学生加入：3 步搞定</h3>
+<ol type="1">
+<li>教师把教师电脑的<strong>局域网 IP</strong>告诉学生（如 <code>http://192.168.1.100:3000</code>）</li>
+<li>学生手机/电脑浏览器访问该地址</li>
+<li>点「学生入口」→ 输入<strong>姓名 + 邀请码</strong> → 自动建账号登录</li>
+</ol>
+<p><strong>🎓 学生端能做什么</strong>：
+- <strong>AI 对话</strong>：选对话活动，和 AI 自由聊
+- <strong>课堂作业</strong>：选作业，答题，系统自动判分
+- <strong>互动探究</strong>：选探究活动，动手操作，可提交
+- <strong>个人学情</strong>：查看自己的学习分析报告
+- <strong>能力评估</strong>：查看教师发布的评估</p>
+</section>
+<section id="教学过程中教师要做的-3-件事" class="level3">
+<h3>5.3 教学过程中：教师要做的 3 件事</h3>
+<table>
+<thead>
+<tr>
+<th>事</th>
+<th>在哪做</th>
+<th>频率</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>实时观察</strong></td>
+<td>「对话记录」页</td>
+<td>随时（可按班级/课堂/活动筛选）</td>
+</tr>
+<tr>
+<td><strong>看学情</strong></td>
+<td>课堂列表的「分析」图标</td>
+<td>课中/课后</td>
+</tr>
+<tr>
+<td><strong>答疑</strong></td>
+<td>实时对话窗</td>
+<td>必要时（AI 答不上的题）</td>
+</tr>
+</tbody>
+</table>
+<p><strong>💡 设计原理</strong>：教师<strong>从”讲课者”变成”观察者+教练”</strong>——把”教”交给 AI，把精力放在”看数据、点名学生、个别辅导”上。</p>
+</section>
+<section id="结束与复盘3-步把数据变洞察" class="level3">
+<h3>5.4 结束与复盘：3 步把数据变洞察</h3>
+<ol type="1">
+<li><strong>结束课堂</strong>：点「结束」→ 学生不能再对话/答题，<strong>数据全部保留</strong></li>
+<li><strong>生成学情分析</strong>：在课堂列表点「分析」图标 → 选班级 → 选「个人分析」或「全班分析」</li>
+<li><strong>看报告</strong>：
+<ul>
+<li><strong>个人分析</strong>：每个学生的 AI 评语（100 字 + 星星评分）</li>
+<li><strong>全班分析</strong>：整体掌握情况、教学建议（300 字 + HTML 可视化大屏）</li>
+<li><strong>版本对比</strong>：不同时间点的分析结果可对比，看进步轨迹</li>
+</ul></li>
+</ol>
+<p><strong>💡 设计原理</strong>：教学结束 ≠ 数据沉睡。<strong>QuickClass Agent 觉课智能体 让数据自动变成”下一步怎么教”的依据</strong>。</p>
+<hr />
+</section>
+</section>
+<section id="高级玩法用熟了再看" class="level2">
+<h2>高级玩法（用熟了再看）</h2>
+<section id="玩法-1模板复用" class="level3">
+<h3>玩法 1：模板复用</h3>
+<ul>
+<li>把设计好的课堂<strong>导出为 JSON</strong> → 别的电脑/学期直接<strong>导入</strong></li>
+<li>把分析提示词<strong>保存为模板</strong> → 下次直接选，不用重写</li>
+</ul>
+</section>
+<section id="玩法-2清理与复用" class="level3">
+<h3>玩法 2：清理与复用</h3>
+<ul>
+<li>课堂跑完一轮 → 结束 → 清理对话 → 暂存回”未启用” → 改改目标 → 再启用</li>
+<li><strong>一个课堂可以反复用</strong>，不必每学期重建</li>
+</ul>
+</section>
+<section id="玩法-3多模态" class="level3">
+<h3>玩法 3：多模态</h3>
+<ul>
+<li>切换到支持图片的模型（如 <code>qwen3.6-plus</code>）→ 学生可<strong>拍照上传题目</strong>让 AI 解答</li>
+<li>适合：数学应用题拍照、英语阅读理解拍照</li>
+</ul>
+</section>
+<section id="玩法-4html-互动探究" class="level3">
+<h3>玩法 4：HTML 互动探究</h3>
+<ul>
+<li>让 AI 生成 HTML 源码 → 复制到探究活动 → 开启提交 → <strong>AI 自动识别题目、自动评分</strong></li>
+<li>适合：可视化强的概念（电路、几何、化学实验模拟）</li>
+</ul>
+<hr />
+</section>
+</section>
+<section id="一页速查决策流程图" class="level2">
+<h2>一页速查：决策流程图</h2>
+<pre><code>你是新手？
+  │
+  ├─ 是 → 用「AI 自动创建」课堂（最少文字输入）
+  │
+  └─ 否 → 手动设计（更精细）
+            │
+            ├─ 要依据教材？ → 先建知识库，引用进来
+            │
+            ├─ 学生要动手？ → 加 1-2 个互动探究
+            │
+            └─ 想看学生掌握？ → 加课堂作业（5-10 题）</code></pre>
+<hr />
+</section>
+<section id="常见问题先看这里避免踩坑" class="level2">
+<h2>常见问题（先看这里避免踩坑）</h2>
+<section id="q1学生看不到课堂" class="level3">
+<h3>Q1：学生看不到课堂？</h3>
+<p>检查 3 件事：①课堂是否”启用” ②是否分配到了学生所在班级 ③对话活动是否启用</p>
+</section>
+<section id="q2ai-答非所问" class="level3">
+<h3>Q2：AI 答非所问？</h3>
+<p>①检查知识库是否引用 ②把课堂目标/要求写得<strong>更具体</strong> ③系统设置切换到”严格依据材料”模式</p>
+</section>
+<section id="q3第一次慢" class="level3">
+<h3>Q3：第一次慢？</h3>
+<p>正常——首次启动需要初始化数据库、加载 AI 配置。第二次就快了。</p>
+</section>
+<section id="q4学情分析没数据" class="level3">
+<h3>Q4：学情分析没数据？</h3>
+<p>需要学生<strong>有对话或答题数据</strong>。空数据无法分析。</p>
+</section>
+<section id="q5能多人用一份设计吗" class="level3">
+<h3>Q5：能多人用一份设计吗？</h3>
+<p><strong>能</strong>。课堂支持导出 JSON，下次直接导入。或用模板功能。</p>
+<hr />
+</section>
+</section>
+<section id="管老师寄语quickclass-agent-觉课智能体-想让你做什么" class="level2">
+<h2>管老师寄语：QuickClass Agent 觉课智能体 想让你做什么？</h2>
+<blockquote>
+<p><strong>不是让你成为一个”会 AI 的老师”</strong></p>
+<p><strong>而是让你成为一个”会用 AI 的老师”</strong></p>
+<p>你最懂学生、最懂学科——AI 不懂</p>
+<p>QuickClass Agent 觉课智能体 帮你把”重复劳动”全部外包给 AI：
+- 重复答疑 → AI 一对一
+- 重复批改 → AI 自动判
+- 重复分析 → AI 自动出报告</p>
+<p><strong>你只需要做三件事</strong>：
+1. <strong>设计</strong>好学习目标（这是你的专业）
+2. <strong>观察</strong>学生的真实表现（这是你的判断）
+3. <strong>调整</strong>教学策略（这是你的智慧）</p>
+<p>其他一切，AI 来。</p>
+</blockquote>
+</section>
+  </article>
+</main>
+<footer class="doc-footer">
+  <div class="author-tag">
+    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 00-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg>
+    作者：管雪沨
+  </div>
+  <div class="copyright">
+    <strong>QuickClass Agent 觉课智能体 新用户 五步应用指南</strong> · © 2026 · 仅供教学使用
+  </div>
+</footer>
+<script>
+(function(){
+  // 平滑滚动
+  document.querySelectorAll('a[href^="#"]').forEach(function(a){
+    a.addEventListener('click',function(e){
+      var id=a.getAttribute('href').slice(1);
+      var el=document.getElementById(id);
+      if(el){e.preventDefault();el.scrollIntoView({behavior:'smooth',block:'start'})}
+    });
+  });
+  // 目录高亮当前章节
+  var tocLinks=document.querySelectorAll('.toc-sidebar a');
+  var sections=[];
+  tocLinks.forEach(function(a){
+    var el=document.getElementById(a.getAttribute('href').slice(1));
+    if(el)sections.push({el:el,link:a});
+  });
+  if(sections.length){
+    var obs=new IntersectionObserver(function(entries){
+      entries.forEach(function(e){
+        if(e.isIntersecting){
+          sections.forEach(function(s){s.link.classList.remove('active')});
+          var cur=sections.filter(function(s){return s.el===e.target})[0];
+          if(cur)cur.link.classList.add('active');
+        }
+      });
+    },{rootMargin:'-20% 0px -70% 0px'});
+    sections.forEach(function(s){obs.observe(s.el)});
+  }
+})();
+</script>
+</body>
+</html>

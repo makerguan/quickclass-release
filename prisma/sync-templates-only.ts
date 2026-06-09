@@ -42,7 +42,7 @@ async function main() {
     {
       name: "探索分析模板",
       type: "EXPLORATION_ANALYSIS",
-      content: fs.readFileSync(path.join(__dirname, "../学生全班学情模板.md"), "utf-8"),
+      content: fs.readFileSync(path.join(__dirname, "../互动探究分析模板.md"), "utf-8"),
       isDefault: true,
     },
   ];

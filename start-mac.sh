@@ -40,6 +40,18 @@ if [ $? -ne 0 ]; then
     exit 1
 fi
 
+# 初始化数据库（首次运行时建表）
+if [ ! -f "prisma/dev.db" ]; then
+    echo "[2.5/4] 首次启动，正在初始化数据库..."
+    npx prisma db push --skip-generate --accept-data-loss
+    if [ $? -ne 0 ]; then
+        echo "[错误] 数据库初始化失败"
+        exit 1
+    fi
+else
+    echo "[2.5/4] 数据库已存在"
+fi
+
 # 检查构建缓存
 if [ ! -f ".next/BUILD_ID" ]; then
     echo "[3/4] 正在构建生产版本（首次运行，耗时约 1-3 分钟）..."

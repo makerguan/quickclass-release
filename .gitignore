@@ -52,3 +52,16 @@ quickclass-dist.zip
 /win/
 prisma/dev.db
 prisma/dev.db-journal
+prisma/dev.db.bak.*
+prisma/prisma/
+
+# environment files (敏感，不应提交)
+.env
+.env.local
+.env.*.local
+
+# test pages
+public/test-*.html
+
+# temporary backup directory
+.backups-tmp/

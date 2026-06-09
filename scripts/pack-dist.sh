@@ -47,7 +47,7 @@ echo "===================================="
 echo ""
 
 # 设置默认数据库路径（当前目录下的 prisma/dev.db）
-export DATABASE_URL="file:./prisma/dev.db"
+export DATABASE_URL="file:./dev.db"
 export PRISMA_SCHEMA="./prisma/schema.prisma"
 
 echo "[1/2] 初始化数据库..."
@@ -66,7 +66,7 @@ echo "  访问地址: http://localhost:3000"
 echo "  按 Ctrl+C 停止服务"
 echo "===================================="
 echo ""
-DATABASE_URL="file:./prisma/dev.db" npm start
+DATABASE_URL="file:./dev.db" npm start
 SCRIPT
 chmod +x dist/run.sh
 

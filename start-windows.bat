@@ -1,5 +1,6 @@
 @echo off
 chcp 65001 >nul
+setlocal enabledelayedexpansion
 title QuickClass 启动器
 echo ====================================
 echo   QuickClass 启动脚本 (Windows)
@@ -27,61 +28,76 @@ echo Node.js 版本：
 node -v
 echo.
 
-::: 检查 node_modules
-if not exist "node_modules" (
-    echo [1/4] 正在安装依赖...
-    call npm install
-    if %errorlevel% neq 0 (
-        echo [错误] 依赖安装失败
+cd /d "%~dp0"
+
+::: [1/5] 检查并安装依赖
+if not exist "node_modules\prisma" (
+    echo [1/5] 正在安装依赖（首次运行，约 2-5 分钟）...
+    call npm install --no-audit --no-fund
+    if !errorlevel! neq 0 (
+        echo.
+        echo [错误] 依赖安装失败！请检查：
+        echo   1. 网络是否正常
+        echo   2. 是否需要切换 npm 镜像：npm config set registry https://registry.npmmirror.com
+        echo   3. 关闭杀毒软件后重试
         pause
         exit /b 1
     )
 ) else (
-    echo [1/4] 依赖已安装
+    echo [1/5] 依赖已安装
 )
+echo.
 
-::: 生成 Prisma 客户端
-echo [2/4] 生成 Prisma 客户端...
+::: [2/5] 生成 Prisma 客户端（每次启动都跑，保证 prisma client 最新）
+echo [2/5] 正在生成 Prisma 客户端...
 call npx prisma generate
-if %errorlevel% neq 0 (
-    echo [错误] Prisma 生成失败
+if !errorlevel! neq 0 (
+    echo.
+    echo [错误] Prisma 客户端生成失败！
+    echo 可能原因：node_modules 不完整
+    echo 修复方法：删除 node_modules 文件夹后重新双击本脚本
     pause
     exit /b 1
 )
+echo.
 
-::: 检查构建缓存（必须存在 BUILD_ID 文件才算有效）
+::: [3/5] 初始化数据库
+if not exist "prisma\dev.db" (
+    echo [3/5] 首次启动，正在初始化数据库...
+    call npx prisma db push --skip-generate --accept-data-loss
+    if !errorlevel! neq 0 (
+        echo.
+        echo [错误] 数据库初始化失败！
+        pause
+        exit /b 1
+    )
+) else (
+    echo [3/5] 数据库已存在
+)
+echo.
+
+::: [4/5] 检查构建缓存
 if not exist ".next\BUILD_ID" (
-    echo [3/4] 正在构建生产版本（首次运行，耗时约 1-3 分钟）...
+    echo [4/5] 正在构建生产版本（首次运行，约 1-3 分钟）...
     echo.
     call npm run build
-    if %errorlevel% neq 0 (
+    if !errorlevel! neq 0 (
         echo.
         echo [错误] 构建失败！
-        echo 请检查上方错误信息，常见原因：
-        echo   - 网络问题导致依赖下载失败
-        echo   - Node.js 版本过低
         echo 修复后重新双击此脚本即可。
         pause
         exit /b 1
     )
 ) else (
-    echo [3/4] 构建缓存已存在
+    echo [4/5] 构建缓存已存在
 )
-
-::: 再次确认构建成功
-if not exist ".next\BUILD_ID" (
-    echo [错误] 构建后仍未找到 BUILD_ID，请手动运行：npm run build
-    pause
-    exit /b 1
-)
-
 echo.
+
+::: [5/5] 启动服务
 echo ====================================
 echo   启动成功！
 echo ====================================
 echo.
-
-::: 获取本机 IP 地址
 echo   教师访问地址: http://localhost:3000
 echo.
 echo   学生访问地址（局域网）:
@@ -94,7 +110,6 @@ echo.
 echo   按 Ctrl+C 停止服务
 echo.
 
-::: 启动生产模式（监听所有网络接口，允许局域网访问）
 call npx next start -H 0.0.0.0
 
 echo.

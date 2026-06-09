@@ -64,7 +64,16 @@ copy /Y "prisma\dev.db.bak" "prisma\dev.db" >nul
 echo.
 echo [4/5] 更新数据库结构...
 call npx prisma generate
+if %errorlevel% neq 0 (
+    echo [错误] Prisma 客户端生成失败
+    pause
+    exit /b 1
+)
 call npx prisma migrate deploy
+if %errorlevel% neq 0 (
+    echo [警告] 数据库迁移失败，尝试 db push...
+    call npx prisma db push --skip-generate --accept-data-loss
+)
 
 echo.
 echo [5/5] 重新构建...
