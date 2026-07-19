@@ -3,8 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import { Card, Statistic, Button, MessagePlugin, Select } from "tdesign-react";
 import { DashboardIcon, ChatIcon, UserIcon, RefreshIcon, ChartBarIcon, InfoCircleIcon } from "tdesign-icons-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import { usePromptPreview, PromptPreviewDialog } from "@/components/prompt-preview";
 
@@ -371,7 +370,7 @@ export default function TeacherDashboardPage() {
                 <div className="mt-4">
                   <h4 className="text-sm font-medium text-[#ED7B2F] mb-2">上一次分析结果：</h4>
                   <div className="bg-[#FFF8F0] p-5 rounded-lg text-sm leading-relaxed max-h-[400px] overflow-y-auto border border-[#ED7B2F]/20 break-words">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{previousInsights.class}</ReactMarkdown>
+                    <Markdown>{previousInsights.class}</Markdown>
                   </div>
                 </div>
               )}
@@ -518,7 +517,7 @@ export default function TeacherDashboardPage() {
                                   <div className="mt-3">
                                     <h4 className="text-xs font-medium text-[#ED7B2F] mb-2">上一次分析：</h4>
                                     <div className="bg-[#FFF8F0] p-4 rounded-lg text-sm leading-relaxed max-h-[400px] overflow-y-auto border border-[#ED7B2F]/20 prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
-                                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{previousInsights[student.id]}</ReactMarkdown>
+                                      <Markdown>{previousInsights[student.id]}</Markdown>
                                     </div>
                                   </div>
                                 )}

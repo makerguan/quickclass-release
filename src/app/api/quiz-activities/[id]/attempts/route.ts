@@ -28,6 +28,14 @@ export async function POST(
       return new Response("answers 必须是数组", { status: 400 });
     }
 
+    // 检查是否已提交（已提交不允许重新提交）—— 放在 AI 批阅之前，避免浪费 AI 调用
+    const existingAttempt = await prisma.quizAttempt.findFirst({
+      where: { userId, quizActivityId: id },
+    });
+    if (existingAttempt && existingAttempt.submittedAt) {
+      return NextResponse.json({ error: "作业已提交，不能重复提交" }, { status: 403 });
+    }
+
     // 转换为 AI 批阅格式
     const gradingQuestions: GradingQuestion[] = quiz.Question.map((q) => ({
       id: q.id,
@@ -41,10 +49,7 @@ export async function POST(
     // 调用 AI 批阅（选择题走精确匹配，填空简答走 AI）
     const gradingResult = await aiGrade(gradingQuestions, answers, false);
 
-    // 查找或创建答题记录
-    let attempt = await prisma.quizAttempt.findFirst({
-      where: { userId, quizActivityId: id },
-    });
+    let attempt = existingAttempt;
     if (!attempt) {
       attempt = await prisma.quizAttempt.create({
         data: { userId, quizActivityId: id },
@@ -112,6 +117,7 @@ export async function POST(
       maxTotalScore,
       totalQuestions: quiz.Question.length,
       correctCount,
+      passScore: quiz.passScore ?? 60,
       results: gradingResult.results,
     });
   } catch (error) {

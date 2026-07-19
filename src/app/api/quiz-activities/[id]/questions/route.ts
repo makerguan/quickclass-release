@@ -41,6 +41,12 @@ export async function PUT(
     });
     if (!quiz) return new Response("作业不存在", { status: 404 });
 
+    // 有学生提交时禁止修改题目
+    const attemptCount = await prisma.quizAttempt.count({ where: { quizActivityId: id } });
+    if (attemptCount > 0) {
+      return NextResponse.json({ error: "已有学生提交作业，无法修改题目。请先清空答题记录。" }, { status: 403 });
+    }
+
     const { questions } = await req.json();
     if (!Array.isArray(questions)) {
       return new Response("题目数据格式错误", { status: 400 });
@@ -59,7 +65,9 @@ export async function PUT(
             quizActivityId: id,
             type: q.type || "SINGLE_CHOICE",
             content: q.content,
-            options: typeof q.options === "string" ? q.options : JSON.stringify(q.options || {}),
+            options: q.type === "TRUE_FALSE" || q.type === "JUDGEMENT"
+              ? "{}"
+              : (typeof q.options === "string" ? q.options : JSON.stringify(q.options || {})),
             answer: q.answer || "A",
             score: q.score || 0,
             difficulty: q.difficulty || "BASIC",

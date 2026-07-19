@@ -123,7 +123,7 @@ export async function GET(
     });
   } catch (error) {
     console.error("Get PC insight error:", error);
-    return NextResponse.json({ error: "获取失败", detail: error.message }, { status: 500 });
+    return NextResponse.json({ error: "获取失败", detail: error instanceof Error ? error.message : "服务器错误" }, { status: 500 });
   }
 }
 
@@ -207,13 +207,9 @@ export async function POST(
         ...pc,
         subProject: {
           ...pc.SubProject,
-          task: {
-            ...pc.SubProject.task,
-            grade: pc.SubProject.task.grade ?? undefined,
-            subject: pc.SubProject.task.subject ?? undefined,
-          },
+          task: { ...pc.SubProject.task },
         },
-      };
+      } as any;
       
       if (effectivePrompt) {
         if (type === "class") {
@@ -289,14 +285,14 @@ export async function POST(
           subject: pc.SubProject.task.subject ?? undefined,
         },
       },
-    };
+    } as any;
 
 let content: string;
 
 // 根据是否使用 analysisPrompt 字段选择不同的生成函数
     if (effectivePrompt) {
       // HTML 输出时跳过字数限制和格式约束
-      const classConfig = { insightLevel, classWordLimit: isHtmlOutput ? undefined : classWordLimit, starCount, isHtmlOutput };
+      const classConfig = { insightLevel, classWordLimit: isHtmlOutput ? 0 : classWordLimit, starCount, isHtmlOutput };
       const studentConfig = { insightLevel, studentWordLimit: isHtmlOutput ? undefined : studentWordLimit, classWordLimit: isHtmlOutput ? undefined : classWordLimit, starCount, requireStarRating };
 
       if (type === "class") {
@@ -363,7 +359,7 @@ async function generatePCClassInsight(
   config: { insightLevel: string; classWordLimit: number; starCount: number },
   isPreview?: boolean
 ): Promise<string> {
-  const taskInfo = { taskTitle: pc.SubProject.task.title, taskObjectives: pc.SubProject.task.objectives, grade: pc.SubProject.task.grade ?? undefined, subject: pc.SubProject.task.subject ?? undefined };
+  const taskInfo = { taskTitle: pc.subProject.task.title, taskObjectives: pc.subProject.task.objectives, grade: pc.subProject.task.grade ?? undefined, subject: pc.subProject.task.subject ?? undefined };
   const [students, conversations] = await Promise.all([
     prisma.user.findMany({ where: { classId, role: "STUDENT" }, select: { id: true, name: true } }),
     prisma.conversation.findMany({
@@ -396,9 +392,9 @@ ${convTexts || "（无对话记录）"}`;
   const prompt = buildConversationClassPrompt({
     pcTitle: pc.title,
     pcDescription: pc.description ?? undefined,
-    spTitle: pc.SubProject.title,
-    spObjectives: pc.SubProject.objectives,
-    spRequirements: pc.SubProject.requirements,
+    spTitle: pc.subProject.title,
+    spObjectives: pc.subProject.objectives,
+    spRequirements: pc.subProject.requirements,
     activeCount: uniqueActiveStudents.size,
     totalStudents: students.length,
     dialogContents,
@@ -432,7 +428,7 @@ async function generatePCClassInsightWithTemplate(
   config: { insightLevel: string; classWordLimit: number; starCount: number },
   isPreview?: boolean
 ): Promise<string> {
-  const taskInfo = pc.SubProject.task ? { taskTitle: pc.SubProject.task.title, taskObjectives: pc.SubProject.task.objectives, grade: pc.SubProject.task.grade ?? undefined, subject: pc.SubProject.task.subject ?? undefined } : undefined;
+  const taskInfo = pc.subProject.task ? { taskTitle: pc.subProject.task.title, taskObjectives: pc.subProject.task.objectives, grade: pc.subProject.task.grade ?? undefined, subject: pc.subProject.task.subject ?? undefined } : undefined;
   const [students, conversations] = await Promise.all([
     prisma.user.findMany({ where: { classId, role: "STUDENT" }, select: { id: true, name: true } }),
     prisma.conversation.findMany({
@@ -463,9 +459,9 @@ async function generatePCClassInsightWithTemplate(
   const finalPrompt = buildConversationClassPrompt({
     pcTitle: pc.title,
     pcDescription: pc.description ?? undefined,
-    spTitle: pc.SubProject.title,
-    spObjectives: pc.SubProject.objectives,
-    spRequirements: pc.SubProject.requirements,
+    spTitle: pc.subProject.title,
+    spObjectives: pc.subProject.objectives,
+    spRequirements: pc.subProject.requirements,
     activeCount: uniqueActiveStudents.size,
     totalStudents: students.length,
     dialogContents,
@@ -499,7 +495,7 @@ async function generatePCStudentInsight(
   config: { insightLevel?: string; studentWordLimit?: number | null; classWordLimit?: number | null; starCount?: number; requireStarRating?: boolean },
   isPreview?: boolean
 ): Promise<string> {
-  const taskInfo = { taskTitle: pc.SubProject.task.title, taskObjectives: pc.SubProject.task.objectives, grade: pc.SubProject.task.grade ?? undefined, subject: pc.SubProject.task.subject ?? undefined };
+  const taskInfo = { taskTitle: pc.subProject.task.title, taskObjectives: pc.subProject.task.objectives, grade: pc.subProject.task.grade ?? undefined, subject: pc.subProject.task.subject ?? undefined };
   const [student, conversations] = await Promise.all([
     prisma.user.findUnique({ where: { id: studentId }, select: { id: true, name: true } }),
     prisma.conversation.findMany({
@@ -523,9 +519,9 @@ async function generatePCStudentInsight(
   const prompt = buildConversationStudentPrompt({
     pcTitle: pc.title,
     pcDescription: pc.description ?? undefined,
-    spTitle: pc.SubProject.title,
-    spObjectives: pc.SubProject.objectives,
-    spRequirements: pc.SubProject.requirements,
+    spTitle: pc.subProject.title,
+    spObjectives: pc.subProject.objectives,
+    spRequirements: pc.subProject.requirements,
     studentName: student.name,
     dialogContent,
     customSection,
@@ -559,7 +555,7 @@ async function generatePCStudentInsightWithTemplate(
   config: { insightLevel?: string; studentWordLimit?: number | null; classWordLimit?: number | null; starCount?: number; requireStarRating?: boolean },
   isPreview?: boolean
 ): Promise<string> {
-  const taskInfo = pc.SubProject.task ? { taskTitle: pc.SubProject.task.title, taskObjectives: pc.SubProject.task.objectives, grade: pc.SubProject.task.grade ?? undefined, subject: pc.SubProject.task.subject ?? undefined } : undefined;
+  const taskInfo = pc.subProject.task ? { taskTitle: pc.subProject.task.title, taskObjectives: pc.subProject.task.objectives, grade: pc.subProject.task.grade ?? undefined, subject: pc.subProject.task.subject ?? undefined } : undefined;
   const [student, conversations] = await Promise.all([
     prisma.user.findUnique({ where: { id: studentId }, select: { id: true, name: true } }),
     prisma.conversation.findMany({
@@ -584,9 +580,9 @@ async function generatePCStudentInsightWithTemplate(
   const finalPrompt = buildConversationStudentPrompt({
     pcTitle: pc.title,
     pcDescription: pc.description ?? undefined,
-    spTitle: pc.SubProject.title,
-    spObjectives: pc.SubProject.objectives,
-    spRequirements: pc.SubProject.requirements,
+    spTitle: pc.subProject.title,
+    spObjectives: pc.subProject.objectives,
+    spRequirements: pc.subProject.requirements,
     studentName: student.name,
     dialogContent,
     customSection,

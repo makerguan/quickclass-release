@@ -17,28 +17,19 @@ export async function GET(req: NextRequest) {
     // 获取该教师所有班级的学生（含密码状态）
     const classes = await prisma.class.findMany({
       where: { teacherId: payload.userId as string },
-      select: {
-        id: true,
-        name: true,
-        students: {
-          select: {
-            id: true,
-            name: true,
-            studentNo: true,
-            createdAt: true,
-            password: true,
-          },
-        },
-      },
+      select: { id: true, name: true },
     });
-
-    const allStudents = classes.flatMap((c) =>
-      (c.students).map((s) => ({
-        ...s,
-        classId: c.id,
-        className: c.name,
-      }))
-    );
+    const classIds = classes.map((c) => c.id);
+    const students = await prisma.user.findMany({
+      where: { classId: { in: classIds }, role: "STUDENT" },
+      select: { id: true, name: true, studentNo: true, createdAt: true, password: true, classId: true },
+    });
+    const classMap = new Map(classes.map((c) => [c.id, c.name]));
+    const allStudents = students.map((s) => ({
+      ...s,
+      classId: s.classId!,
+      className: classMap.get(s.classId!) || "",
+    }));
 
     return NextResponse.json(allStudents);
   } catch (error) {

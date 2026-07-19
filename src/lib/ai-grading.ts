@@ -7,7 +7,7 @@ import { getAIConfig } from "./ai";
 
 export interface GradingQuestion {
   id: string;
-  type: "SINGLE_CHOICE" | "MULTIPLE_CHOICE" | "TRUE_FALSE" | "FILL_BLANK" | "SHORT_ANSWER";
+  type: "SINGLE_CHOICE" | "MULTIPLE_CHOICE" | "TRUE_FALSE" | "JUDGEMENT" | "FILL_BLANK" | "SHORT_ANSWER";
   content: string;
   options?: string; // JSON, for choice questions
   answer: string;   // 正确答案
@@ -39,38 +39,18 @@ function gradeObjective(q: GradingQuestion, answer: string): GradingResult {
   var correct = q.answer.trim().toUpperCase();
   var selected = answer.trim().toUpperCase();
   var isCorrect = selected === correct;
-  // 多选题：比较集合，全对满分，漏选一半分，错选不得分
+  // 多选题：全对满分，不全对0分
   if (q.type === "MULTIPLE_CHOICE") {
-    var correctSet = correct.split(",").map(function(s) { return s.trim(); }).sort().join(",");
-    var selectedSet = selected.split(",").map(function(s) { return s.trim(); }).sort().join(",");
-    var fullMatch = correctSet === selectedSet;
-    var partialMatch = selectedSet !== "" && selectedSet.split(",").every(function(s) { return correctSet.indexOf(s) >= 0; });
-    if (fullMatch) {
-      return {
-        questionId: q.id,
-        score: q.score,
-        maxScore: q.score,
-        comment: "全对",
-        isCorrect: true
-      };
-    } else if (partialMatch) {
-      var halfScore = Math.round(q.score / 2);
-      return {
-        questionId: q.id,
-        score: halfScore,
-        maxScore: q.score,
-        comment: "漏选，得一半分",
-        isCorrect: false
-      };
-    } else {
-      return {
-        questionId: q.id,
-        score: 0,
-        maxScore: q.score,
-        comment: "选错，不得分",
-        isCorrect: false
-      };
-    }
+    var correctSet = correct.split(",").map(function(s) { return s.trim(); }).filter(Boolean).sort().join(",");
+    var selectedSet = selected.split(",").map(function(s) { return s.trim(); }).filter(Boolean).sort().join(",");
+    var isCorrect = correctSet === selectedSet;
+    return {
+      questionId: q.id,
+      score: isCorrect ? q.score : 0,
+      maxScore: q.score,
+      comment: isCorrect ? "正确" : "错误",
+      isCorrect: isCorrect
+    };
   }
 
   return {
@@ -153,8 +133,9 @@ async function gradeByAI(
 
   const parsed = JSON.parse(jsonMatch[0]);
 
-  const results: GradingResult[] = parsed.results.map((r: any) => {
-    const q = questions.find((q) => q.id === r.questionId)!;
+  const results: GradingResult[] = (parsed.results || []).map((r: any) => {
+    const q = questions.find((q) => q.id === r.questionId);
+    if (!q) return null; // AI 返回了不存在的 questionId，跳过
     return {
       questionId: r.questionId,
       score: Math.min(r.score, q.score), // 不超过满分
@@ -162,7 +143,7 @@ async function gradeByAI(
       comment: r.comment || "",
       isCorrect: r.score >= q.score * 0.6, // 60%以上算基本正确
     };
-  });
+  }).filter((r: GradingResult | null): r is GradingResult => r !== null);
 
   return { results, learningAdvice: parsed.learningAdvice };
 }
@@ -181,7 +162,7 @@ export async function aiGrade(
   studentName?: string
 ): Promise<AIGradingOutput> {
   const objectiveQuestions = questions.filter((q) =>
-    q.type === "SINGLE_CHOICE" || q.type === "MULTIPLE_CHOICE" || q.type === "TRUE_FALSE"
+    q.type === "SINGLE_CHOICE" || q.type === "MULTIPLE_CHOICE" || q.type === "TRUE_FALSE" || q.type === "JUDGEMENT"
   );
   const subjectiveQuestions = questions.filter((q) =>
     q.type === "FILL_BLANK" || q.type === "SHORT_ANSWER"
@@ -202,10 +183,15 @@ export async function aiGrade(
       subjectiveQuestions.find((q) => q.id === a.questionId)
     );
     if (subAnswers.length > 0) {
-      const aiResult = await gradeByAI(subjectiveQuestions, subAnswers, generateAdvice, studentName);
-      results.push(...aiResult.results);
-      if (aiResult.learningAdvice) {
-        learningAdvice = aiResult.learningAdvice;
+      try {
+        const aiResult = await gradeByAI(subjectiveQuestions, subAnswers, generateAdvice, studentName);
+        results.push(...aiResult.results);
+        if (aiResult.learningAdvice) {
+          learningAdvice = aiResult.learningAdvice;
+        }
+      } catch (aiErr) {
+        // AI 批阅失败时，主观题默认 0 分，但不阻塞整体提交
+        console.error("AI 主观题批阅失败:", aiErr);
       }
     }
   }

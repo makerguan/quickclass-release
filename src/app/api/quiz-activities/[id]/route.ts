@@ -66,6 +66,12 @@ export async function PUT(
     });
     if (!quiz) return new Response("作业不存在", { status: 404 });
 
+    // 有学生提交时禁止修改作业
+    const attemptCount = await prisma.quizAttempt.count({ where: { quizActivityId: id } });
+    if (attemptCount > 0) {
+      return NextResponse.json({ error: "已有学生提交作业，无法修改。请先清空答题记录。" }, { status: 403 });
+    }
+
     const body = await req.json();
     const updated = await prisma.quizActivity.update({
       where: { id },
@@ -74,6 +80,7 @@ export async function PUT(
         description: body.description,
         quizDesignTemplateId: body.quizDesignTemplateId,
         analysisPrompt: body.analysisPrompt,
+        passScore: body.passScore,
         // 保存后强制变为失效状态
         status: "INACTIVE",
       },

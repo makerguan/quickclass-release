@@ -4,8 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { Button, Tag, Select, MessagePlugin, Dialog } from "tdesign-react";
 import { ArrowLeftIcon, ChartBarIcon } from "tdesign-icons-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 
 interface StudentRecord {
@@ -98,7 +97,7 @@ function InsightContent({ content, className = "" }: { content: string; classNam
   }
   return (
     <div className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <Markdown>{content}</Markdown>
     </div>
   );
 }

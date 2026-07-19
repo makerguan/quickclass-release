@@ -56,6 +56,7 @@ interface PresetConversation {
   systemPrompt?: string;
   analysisPrompt?: string;
   classAnalysisPrompt?: string;
+  analysisTemplateId?: string;
   conversationPromptTemplateId?: string;
   enabled?: boolean;
 }
@@ -347,6 +348,11 @@ export default function TeacherTasksPage() {
   // 答题提交
   const [explorationEnableSubmission, setExplorationEnableSubmission] = useState(false);
   const [explorationHasSubmissions, setExplorationHasSubmissions] = useState(false);
+  // AI伴学
+  const [explorationEnableAiCompanion, setExplorationEnableAiCompanion] = useState(false);
+  const [aiCompanionStatus, setAiCompanionStatus] = useState<"idle" | "injecting" | "analyzing" | "ready" | "error">("idle");
+  const [aiCompanionPromptText, setAiCompanionPromptText] = useState<string>("");
+  const [showAiCompanionPrompt, setShowAiCompanionPrompt] = useState(false);
   // AI 预览注入分析
   const [injectionPreviewVisible, setInjectionPreviewVisible] = useState(false);
   const [previewAnalysis, setPreviewAnalysis] = useState<any>(null);
@@ -409,6 +415,10 @@ export default function TeacherTasksPage() {
     setExplorationEnableSubmission(false);
     syncConfirmedInjection(false);
     setOriginalHtmlForInjection("");
+    setExplorationEnableAiCompanion(false);
+    setAiCompanionStatus("idle");
+    setAiCompanionPromptText("");
+    setShowAiCompanionPrompt(false);
     setExplorationModalVisible(true);
   };
 
@@ -620,6 +630,8 @@ export default function TeacherTasksPage() {
             title: explorationTitle,
             htmlContent: explorationHtml,
             enableSubmission: explorationEnableSubmission,
+            enableAiCompanion: explorationEnableAiCompanion,
+            aiCompanionPrompt: aiCompanionPromptText || undefined,
             designPrompt: explorationDesignPrompt,
             analysisPrompt: explorationPrompt,
           }),
@@ -633,6 +645,7 @@ export default function TeacherTasksPage() {
             title: explorationTitle,
             htmlContent: explorationHtml,
             enableSubmission: explorationEnableSubmission,
+            enableAiCompanion: explorationEnableAiCompanion,
             designPrompt: explorationDesignPrompt,
             analysisPrompt: explorationPrompt,
           }),
@@ -648,12 +661,24 @@ export default function TeacherTasksPage() {
         }
         // 同步 enableSubmission 状态（避免数据库值与前端不一致）
         setExplorationEnableSubmission(saved.enableSubmission ?? explorationEnableSubmission);
+        setExplorationEnableAiCompanion(saved.enableAiCompanion ?? explorationEnableAiCompanion);
+        if (saved.aiCompanionPrompt) {
+          setAiCompanionPromptText(saved.aiCompanionPrompt);
+        }
         MessagePlugin.success("探究已保存");
         if (saved._injectWarnings && saved._injectWarnings.length > 0) {
           saved._injectWarnings.forEach((w: string) => MessagePlugin.warning(w));
         }
+        if (saved._aiCompanionWarnings && saved._aiCompanionWarnings.length > 0) {
+          saved._aiCompanionWarnings.forEach((w: string) => MessagePlugin.warning(w));
+        }
         setExplorationModalVisible(false);
         setInjectionPreviewVisible(false);
+
+        // 如果启用了AI伴学，异步生成伴学语义提示词
+        if (saved.enableAiCompanion && saved.id) {
+          generateAiCompanionPromptInBackground(saved.id);
+        }
       } else {
         const data = await res.json();
         MessagePlugin.error(data.error || "保存失败");
@@ -662,6 +687,149 @@ export default function TeacherTasksPage() {
       MessagePlugin.error("保存失败");
     } finally {
       setSavingExploration(false);
+    }
+  };
+
+  // 后台生成AI伴学提示词
+  const generateAiCompanionPromptInBackground = async (expId: string) => {
+    setAiCompanionStatus("analyzing");
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/exploration-activities/${expId}/generate-companion-prompt`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setAiCompanionPromptText(data.aiCompanionPrompt || "");
+        setAiCompanionStatus("ready");
+      } else {
+        setAiCompanionStatus("error");
+      }
+    } catch {
+      setAiCompanionStatus("error");
+    }
+  };
+
+  // AI伴学开关处理
+  const handleAiCompanionToggle = async (val: boolean) => {
+    if (!explorationEditId) {
+      // 新建模式下，先标记状态，等保存时一起提交
+      setExplorationEnableAiCompanion(val);
+      MessagePlugin.info(val ? "已标记启用AI伴学，保存后生效" : "已取消AI伴学");
+      return;
+    }
+
+    if (val) {
+      // 启用
+      setExplorationEnableAiCompanion(true);
+      try {
+        const token = localStorage.getItem("token") || "";
+
+        // 1. 先获取最新数据，看是否已有提示词
+        const detailRes = await fetch(`/api/exploration-activities/${explorationEditId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        let hasPrompt = false;
+        if (detailRes.ok) {
+          const detail = await detailRes.json();
+          hasPrompt = !!(detail.aiCompanionPrompt && detail.aiCompanionPrompt.length > 50);
+          if (hasPrompt) {
+            setAiCompanionPromptText(detail.aiCompanionPrompt);
+          }
+        }
+
+        // 2. 调用PUT注入UI
+        setAiCompanionStatus("injecting");
+        const res = await fetch(`/api/exploration-activities/${explorationEditId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ enableAiCompanion: true }),
+        });
+        if (!res.ok) {
+          throw new Error("注入失败");
+        }
+        const saved = await res.json();
+        setExplorations((prev) => prev.map((e) => e.id === saved.id ? saved : e));
+
+        // 同步更新预览和源代码编辑区
+        if (saved.htmlContent) {
+          setExplorationHtml(saved.htmlContent);
+          setExplorationPreview(saved.htmlContent);
+        }
+
+        // 3. 如果已有提示词 → 秒开，否则生成
+        if (hasPrompt) {
+          setAiCompanionStatus("ready");
+          MessagePlugin.success("AI伴学已开启（秒开）");
+        } else {
+          setAiCompanionStatus("analyzing");
+          await generateAiCompanionPromptInBackground(explorationEditId);
+          MessagePlugin.success("AI伴学已就绪");
+        }
+      } catch (e: any) {
+        setAiCompanionStatus("error");
+        setExplorationEnableAiCompanion(false);
+        MessagePlugin.error("AI伴学启用失败：" + (e?.message || "未知错误"));
+      }
+    } else {
+      // 禁用：调用PUT移除UI，提示词保留（再次启用秒开）
+      setAiCompanionStatus("idle");
+      try {
+        const token = localStorage.getItem("token") || "";
+        const res = await fetch(`/api/exploration-activities/${explorationEditId}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ enableAiCompanion: false }),
+        });
+        if (res.ok) {
+          const saved = await res.json();
+          setExplorations((prev) => prev.map((e) => e.id === saved.id ? saved : e));
+          // 同步更新预览和源代码编辑区（移除AI伴学代码）
+          if (saved.htmlContent) {
+            setExplorationHtml(saved.htmlContent);
+            setExplorationPreview(saved.htmlContent);
+          }
+          MessagePlugin.success("AI伴学已关闭（提示词已保留，再次启用秒开）");
+        }
+        setExplorationEnableAiCompanion(false);
+      } catch {
+        MessagePlugin.error("操作失败");
+      }
+    }
+  };
+
+  // 重置AI伴学提示词（清空aiCompanionPrompt，下次启用时重新生成）
+  const handleResetAiCompanionPrompt = async () => {
+    if (!explorationEditId) return;
+    if (!confirm("确定要重置AI伴学提示词吗？\n重置后，下次开启AI伴学会重新分析HTML生成提示词（耗时10-30秒）。")) {
+      return;
+    }
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/exploration-activities/${explorationEditId}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ aiCompanionPrompt: null }),
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        setExplorations((prev) => prev.map((e) => e.id === saved.id ? saved : e));
+        setAiCompanionPromptText("");
+        if (explorationEnableAiCompanion) {
+          // 已启用状态下重置：立即重新生成
+          setAiCompanionStatus("analyzing");
+          await generateAiCompanionPromptInBackground(explorationEditId);
+          MessagePlugin.success("提示词已重置并重新生成");
+        } else {
+          setAiCompanionStatus("idle");
+          MessagePlugin.success("提示词已重置，下次启用AI伴学会重新生成");
+        }
+      } else {
+        MessagePlugin.error("重置失败");
+      }
+    } catch {
+      MessagePlugin.error("操作失败");
     }
   };
 
@@ -815,6 +983,11 @@ export default function TeacherTasksPage() {
     syncConfirmedInjection(false);
     // 保存编辑前的原始 HTML（用于关闭时恢复）
     setOriginalHtmlForInjection(e.htmlContent || "");
+    // AI伴学状态
+    setExplorationEnableAiCompanion(e.enableAiCompanion || false);
+    setAiCompanionPromptText((e as any).aiCompanionPrompt || "");
+    setAiCompanionStatus(e.enableAiCompanion ? "ready" : "idle");
+    setShowAiCompanionPrompt(false);
     setExplorationModalVisible(true);
   };
 
@@ -1419,7 +1592,7 @@ export default function TeacherTasksPage() {
   };
 
   const handleClearAttempts = async (quizId: string) => {
-    if (!confirm("确定要清除所有学生的答题记录吗？\n\nAI 分析报告将继续保留。\n\n此操作不可撤销！")) return;
+    if (!confirm("确定要清除本作业覆盖的所有班级的学生答题吗？\n\nAI 分析报告将继续保留。\n\n此操作不可撤销！")) return;
     setClearingAttemptsQuizId(quizId);
     try {
       const token = localStorage.getItem("token") || "";
@@ -2454,6 +2627,11 @@ export default function TeacherTasksPage() {
                                               启用提交{(e._count?.ExplorationSubmission ?? 0) > 0 ? " 🔒" : ""}
                                             </span>
                                           )}
+                                          {e.enableAiCompanion && (
+                                            <span className="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-700">
+                                              AI伴学{(e as any).aiCompanionPrompt ? " ✓" : ""}
+                                            </span>
+                                          )}
                                           <Switch value={e.enabled} size="small"
                                             onChange={(val: boolean) => handleExplorationToggle(e, val)}
                                             disabled={operatingExplorationId === e.id} />
@@ -2773,13 +2951,13 @@ export default function TeacherTasksPage() {
                                                             ) : (
                                                               <div className="flex gap-2 items-center">
                                                                 {["A", "B", "C", "D"].map((opt) => {
-                                                                  const correctList = (question.answer || "").split(",").map(s => s.trim()).filter(Boolean);
+                                                                  const correctList = (question.answer || "").split(",").map((s: string) => s.trim()).filter(Boolean);
                                                                   const checked = correctList.includes(opt);
                                                                   return (
                                                                     <label key={opt} className="flex items-center gap-1 cursor-pointer">
                                                                       <input type="checkbox" checked={checked} onChange={() => {
                                                                         const updated = [...quizDesignQuestions];
-                                                                        const list = checked ? correctList.filter(s => s !== opt) : [...correctList, opt];
+                                                                        const list = checked ? correctList.filter((s: string) => s !== opt) : [...correctList, opt];
                                                                         updated[idx] = { ...updated[idx], answer: list.join(",") };
                                                                         setQuizDesignQuestions(updated);
                                                                       }} />
@@ -3507,6 +3685,72 @@ export default function TeacherTasksPage() {
               )}
             </div>
 
+            {/* AI伴学功能 */}
+            <div className="border-t border-gray-100 pt-3 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-medium text-gray-600">AI伴学</span>
+                  <Switch
+                    value={explorationEnableAiCompanion}
+                    size="small"
+                    disabled={!explorationHtml.trim() || aiCompanionStatus === "analyzing"}
+                    onChange={handleAiCompanionToggle}
+                  />
+                  {aiCompanionStatus === "analyzing" && (
+                    <span className="text-xs text-orange-500 flex items-center gap-1">
+                      <span className="inline-block w-3 h-3 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                      正在分析交互内容，生成指导策略...
+                    </span>
+                  )}
+                  {aiCompanionStatus === "ready" && explorationEnableAiCompanion && (
+                    <span className="text-xs text-green-600">✓ AI伴学已就绪</span>
+                  )}
+                  {aiCompanionStatus === "error" && (
+                    <span className="text-xs text-red-500">✗ 生成失败</span>
+                  )}
+                  {!explorationEnableAiCompanion && aiCompanionPromptText && (
+                    <span className="text-xs text-gray-500">提示词已保留（再次启用秒开）</span>
+                  )}
+                </div>
+                {explorationEditId && aiCompanionPromptText && (
+                  <Button
+                    size="small"
+                    variant="text"
+                    theme="danger"
+                    onClick={handleResetAiCompanionPrompt}
+                    disabled={aiCompanionStatus === "analyzing"}
+                  >
+                    重置提示词
+                  </Button>
+                )}
+              </div>
+              {explorationEnableAiCompanion ? (
+                <>
+                  <div className="text-xs text-purple-700 bg-purple-50 rounded p-2">
+                    学生可在互动页面右下角看到"AI伴学"按钮，可随时提问获取AI指导。
+                    AI会先分析完整HTML内容生成指导策略，再结合实时页面状态回答。
+                  </div>
+                  {explorationEditId && (
+                    <Button
+                      size="small"
+                      variant="text"
+                      theme="primary"
+                      onClick={() => setShowAiCompanionPrompt(true)}
+                      disabled={!aiCompanionPromptText}
+                    >
+                      查看/编辑伴学提示词
+                    </Button>
+                  )}
+                </>
+              ) : (
+                <div className="text-xs text-gray-400 bg-gray-50 rounded p-2">
+                  {aiCompanionPromptText
+                    ? "关闭后学生无法使用AI伴学功能（已生成的提示词会保留，再次启用时秒开）。"
+                    : "关闭后学生无法使用AI伴学功能。"}
+                </div>
+              )}
+            </div>
+
             <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
               <Button onClick={() => setExplorationModalVisible(false)}>取消</Button>
               <Button
@@ -3768,7 +4012,7 @@ export default function TeacherTasksPage() {
                           Object.entries(options).map(([k, v]) => {
                             const isMulti = q.type === "MULTIPLE_CHOICE";
                             const selectedList = userAns ? userAns.split(",") : [];
-                            const correctList = (q.answer || "").split(",").map(s => s.trim()).filter(Boolean);
+                            const correctList = (q.answer || "").split(",").map((s: string) => s.trim()).filter(Boolean);
                             const isSelected = isMulti ? selectedList.includes(k) : userAns === k;
                             const isCorrect = isMulti ? correctList.includes(k) : q.answer === k;
                             let bgClass = "bg-gray-50";
@@ -3784,7 +4028,7 @@ export default function TeacherTasksPage() {
                                 }`}>{k}.</span>
                                 <span className={`text-sm flex-1 ${
                                   isCorrect ? "text-green-700" : isSelected ? "text-red-700" : "text-gray-600"
-                                }`}>{v}</span>
+                                }`}>{v as React.ReactNode}</span>
                                 {isSelected && !isCorrect && <span className="ml-auto text-xs text-red-400">你的答案</span>}
                                 {isCorrect && <span className="ml-auto text-xs text-green-500">正确答案</span>}
                               </div>
@@ -3982,6 +4226,78 @@ export default function TeacherTasksPage() {
           ) : (
             <div className="text-center py-8 text-sm text-gray-400">暂无数据</div>
           )}
+        </Dialog>
+
+        {/* AI伴学提示词查看/编辑弹窗 */}
+        <Dialog
+          header="AI伴学提示词"
+          visible={showAiCompanionPrompt}
+          onClose={() => setShowAiCompanionPrompt(false)}
+          width={720}
+          zIndex={100000}
+          footer={
+            <div className="flex justify-between items-center w-full">
+              <Button
+                theme="default"
+                variant="text"
+                loading={aiCompanionStatus === "analyzing"}
+                onClick={async () => {
+                  if (!explorationEditId) return;
+                  await generateAiCompanionPromptInBackground(explorationEditId);
+                  // 重新获取最新提示词
+                  const token = localStorage.getItem("token") || "";
+                  try {
+                    const res = await fetch(`/api/exploration-activities/${explorationEditId}`, {
+                      headers: { Authorization: `Bearer ${token}` },
+                    });
+                    if (res.ok) {
+                      const data = await res.json();
+                      setAiCompanionPromptText(data.aiCompanionPrompt || "");
+                    }
+                  } catch {}
+                }}
+              >
+                重新生成
+              </Button>
+              <div className="flex gap-2">
+                <Button onClick={() => setShowAiCompanionPrompt(false)}>取消</Button>
+                <Button
+                  theme="primary"
+                  onClick={async () => {
+                    if (!explorationEditId) return;
+                    try {
+                      const token = localStorage.getItem("token") || "";
+                      await fetch(`/api/exploration-activities/${explorationEditId}`, {
+                        method: "PUT",
+                        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+                        body: JSON.stringify({ aiCompanionPrompt: aiCompanionPromptText }),
+                      });
+                      MessagePlugin.success("提示词已保存");
+                      setShowAiCompanionPrompt(false);
+                    } catch {
+                      MessagePlugin.error("保存失败");
+                    }
+                  }}
+                >
+                  保存
+                </Button>
+              </div>
+            </div>
+          }
+        >
+          <div className="space-y-3">
+            <div className="text-xs text-gray-500">
+              这是AI分析互动HTML后生成的伴学指导手册，作为AI伴学的系统提示词使用。
+              可手动调整其中的指导策略和回答风格。
+            </div>
+            <Textarea
+              value={aiCompanionPromptText}
+              onChange={(v) => setAiCompanionPromptText(v)}
+              placeholder="AI伴学提示词（自动生成中...）"
+              rows={20}
+              style={{ fontFamily: "monospace", fontSize: 12 }}
+            />
+          </div>
         </Dialog>
 
 </div>

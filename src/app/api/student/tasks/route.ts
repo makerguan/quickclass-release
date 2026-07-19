@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
 
 // GET: 学生获取自己班级分配的课堂
 export async function GET(req: NextRequest) {
@@ -35,7 +36,7 @@ export async function GET(req: NextRequest) {
             },
             ExplorationActivity: {
               where: { enabled: true },
-              select: { id: true, title: true, description: true, htmlContent: true, enableSubmission: true, questionsJson: true },
+              select: { id: true, title: true, description: true, htmlContent: true, enableSubmission: true, enableAiCompanion: true, questionsJson: true },
               orderBy: { sortOrder: "asc" },
             },
           },
@@ -44,6 +45,35 @@ export async function GET(req: NextRequest) {
       },
       orderBy: { createdAt: "desc" },
     });
+
+    // 惰性升级：AI 伴学 HTML 可能来自教师升级前的旧版本，学生端无教师保存入口，
+    // 在这里兜底升级到当前版本，确保学生 iframe 拿到的脚本一定可解析。
+    const upgrades: Promise<unknown>[] = [];
+    for (const task of tasks) {
+      for (const sp of task.subProjects) {
+        for (const exp of sp.ExplorationActivity) {
+          if (!exp.enableAiCompanion) continue;
+          const upgrade = upgradeAiCompanionIfNeeded(exp.htmlContent, {
+            explorationId: exp.id,
+          });
+          if (upgrade.changed) {
+            exp.htmlContent = upgrade.html;
+            upgrades.push(
+              prisma.explorationActivity
+                .update({ where: { id: exp.id }, data: { htmlContent: upgrade.html } })
+                .catch((e) => console.error("[student/tasks] 持久化AI伴学升级失败", exp.id, e))
+            );
+          }
+        }
+      }
+    }
+    // 不阻塞响应：升级已先在内存中完成，写库是后台 best-effort。
+    if (upgrades.length > 0) {
+      Promise.allSettled(upgrades).then((results) => {
+        const failed = results.filter((r) => r.status === "rejected").length;
+        if (failed > 0) console.warn(`[student/tasks] ${failed}/${results.length} 个探究HTML升级写库失败，下次读取仍会重试`);
+      });
+    }
 
     // 映射字段名以匹配前端期望
     const mappedTasks = tasks.map(task => ({

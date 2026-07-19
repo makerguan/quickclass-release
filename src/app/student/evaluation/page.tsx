@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card } from "tdesign-react";
 import { ChartBarIcon } from "tdesign-icons-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import Markdown from "@/components/Markdown";
 import StudentLayout from "@/components/layout/StudentLayout";
 
 interface InsightRecord {
@@ -87,7 +86,7 @@ export default function StudentEvaluationPage() {
                 </div>
               </div>
               <div className="bg-[#F7F8FA] p-5 rounded-lg text-sm leading-relaxed prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all">
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{insight.content}</ReactMarkdown>
+                <Markdown>{insight.content}</Markdown>
               </div>
             </Card>
           ))}

@@ -48,7 +48,7 @@ export async function GET(
 
     // 不再依赖 taskAssignment，直接查询有对话记录的班级
     // 1. 先获取该课堂所有的 presetConversationId
-    const presetIds = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => pc.id));
+    const presetIds = task.subProjects.flatMap((sp) => (sp as any).PresetConversation.map((pc: { id: string }) => pc.id));
     console.log('[insights] presetIds:', presetIds);
 
     // 2. 查询所有相关的对话（含无预设活动的对话），提取 classId
@@ -102,7 +102,7 @@ export async function GET(
           select: { id: true, name: true },
         });
 
-        const presetIds = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => pc.id));
+        const presetIds = task.subProjects.flatMap((sp) => (sp as any).PresetConversation.map((pc: { id: string }) => pc.id));
 
         const conversations = await prisma.conversation.findMany({
           where: { 
@@ -159,7 +159,7 @@ export async function GET(
             id: sp.id,
             title: sp.title,
             analysisPrompt: sp.analysisPrompt,
-            presetConversations: sp.PresetConversation.map((pc) => {
+            presetConversations: (sp as any).PresetConversation.map((pc: { id: string }) => {
               const stat = presetConvStats.get(pc.id) || { completedCount: 0, totalMessages: 0 };
               return {
                 id: pc.id,
@@ -232,7 +232,7 @@ export async function GET(
         subProjects: task.subProjects.map((sp) => ({
           id: sp.id, title: sp.title,
           analysisPrompt: sp.analysisPrompt,
-          presetConversations: sp.PresetConversation.map((pc) => ({
+          presetConversations: (sp as any).PresetConversation.map((pc: { id: string; title: string; analysisPrompt: string | null }) => ({
             id: pc.id, title: pc.title, analysisPrompt: pc.analysisPrompt,
           })),
         })),
@@ -351,11 +351,16 @@ export async function POST(
     const starCount = 10; // 已从 SystemConfig 移除，提供默认值
     const requireStarRating = systemConfig?.requireStarRating ?? false;
 
-    // 将 null 转换为 undefined 以符合函数签名
+    // 将 null 转换为 undefined 以符合函数签名，并映射 Prisma 字段名
     const taskNormalized = {
       ...task,
       grade: task.grade ?? undefined,
       subject: task.subject ?? undefined,
+      subProjects: task.subProjects.map((sp) => ({
+        ...sp,
+        presetConversations: sp.PresetConversation,
+        PresetConversation: undefined,
+      })),
     };
 
     // 如果只是预览提示词，不调用 AI
@@ -367,7 +372,7 @@ export async function POST(
           insightLevel, classWordLimit: isHtmlOutput ? undefined : classWordLimit, starCount, requireStarRating, isHtmlOutput,
         }, true);
         // 查询班级对话概览供预览
-        const presetIds = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => pc.id));
+        const presetIds = (task as any).subProjects.flatMap((sp: any) => sp.PresetConversation.map((pc: { id: string }) => pc.id));
         const [students, conversations] = await Promise.all([
           prisma.user.findMany({ where: { classId, role: "STUDENT" }, select: { id: true, name: true } }),
           prisma.conversation.findMany({
@@ -387,7 +392,7 @@ export async function POST(
           insightLevel, studentWordLimit, starCount, requireStarRating
         }, true);
         // 查询该学生的对话记录供预览
-        const presetIds = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => pc.id));
+        const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
         const [student, conversations] = await Promise.all([
           prisma.user.findUnique({ where: { id: studentId }, select: { name: true } }),
           prisma.conversation.findMany({
@@ -470,8 +475,8 @@ async function generateTaskClassInsight(
   templateContent: string | null,
   config: { insightLevel: string; classWordLimit: number; starCount: number; requireStarRating: boolean; isHtmlOutput?: boolean }
 ): Promise<string> {
-  const presetIds = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => pc.id));
-  const allPCs = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => ({ id: pc.id, title: pc.title })));
+  const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
+  const allPCs = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title })));
 
   const [students, conversations] = await Promise.all([
     prisma.user.findMany({ where: { classId, role: "STUDENT" }, select: { id: true, name: true } }),
@@ -577,7 +582,7 @@ async function generateTaskClassInsight(
   const totalPresetCount = presetIds.length;
 
   const subProjectSummary = task.subProjects.map((sp) => {
-    const pcStats = sp.PresetConversation.map((pc) => {
+    const pcStats = sp.presetConversations.map((pc) => {
       const stat = presetStats.get(pc.id);
       const completed = stat?.completedStudents.size || 0;
       const msgs = stat?.totalMessages || 0;
@@ -650,8 +655,8 @@ async function generateTaskStudentInsight(
   templateContent: string | null,
   config: { insightLevel: string; studentWordLimit: number; starCount: number; requireStarRating: boolean }
 ): Promise<string> {
-  const presetIds = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => pc.id));
-  const allPCs = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => ({ id: pc.id, title: pc.title })));
+  const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
+  const allPCs = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title })));
 
   const [student, conversations] = await Promise.all([
     prisma.user.findUnique({ where: { id: studentId }, select: { id: true, name: true } }),
@@ -719,7 +724,7 @@ const prompt = buildTaskStudentPrompt({
   const totalPresetCount = presetIds.length;
 
   const presetCompletion = task.subProjects.map((sp) => {
-    const items = sp.PresetConversation.map((pc) => {
+    const items = sp.presetConversations.map((pc) => {
       const done = completedPresetIds.has(pc.id);
       const conv = conversations.find((c) => c.presetConversationId === pc.id);
       return `  - ${pc.title}：${done ? "✓已完成" : "✗未完成"}${conv ? `，${conv.Message.length}条消息` : ""}`;
@@ -776,8 +781,8 @@ async function generateTaskClassInsightWithTemplate(
   config: { insightLevel: string; classWordLimit: number; starCount: number; requireStarRating: boolean; isHtmlOutput?: boolean },
   isPreview?: boolean
 ): Promise<string> {
-  const presetIds = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => pc.id));
-  const allPCs = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => ({ id: pc.id, title: pc.title })));
+  const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
+  const allPCs = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title })));
 
   const [students, conversations] = await Promise.all([
     prisma.user.findMany({ where: { classId, role: "STUDENT" }, select: { id: true, name: true } }),
@@ -848,7 +853,7 @@ async function generateTaskClassInsightWithTemplate(
     .slice(0, 30).map((q) => `${q.student}：${q.question.substring(0, 80)}`).join("\n");
 
   const subProjectSummary = task.subProjects.map((sp) => {
-    const pcStats = sp.PresetConversation.map((pc) => {
+    const pcStats = sp.presetConversations.map((pc) => {
       const stat = presetStats.get(pc.id);
       const completed = stat?.completedStudents.size || 0;
       const msgs = stat?.totalMessages || 0;
@@ -929,8 +934,8 @@ async function generateTaskStudentInsightWithTemplate(
   config: { insightLevel: string; studentWordLimit: number; starCount: number; requireStarRating: boolean },
   isPreview?: boolean
 ): Promise<string> {
-  const presetIds = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => pc.id));
-  const allPCs = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => ({ id: pc.id, title: pc.title })));
+  const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
+  const allPCs = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title })));
 
   const [student, conversations] = await Promise.all([
     prisma.user.findUnique({ where: { id: studentId }, select: { id: true, name: true } }),
@@ -968,7 +973,7 @@ async function generateTaskStudentInsightWithTemplate(
   const totalPresetCount = presetIds.length;
 
   const presetCompletion = task.subProjects.map((sp) => {
-    const items = sp.PresetConversation.map((pc) => {
+    const items = sp.presetConversations.map((pc) => {
       const done = completedPresetIds.has(pc.id);
       const conv = conversations.find((c) => c.presetConversationId === pc.id);
       return `  - ${pc.title}：${done ? "✓已完成" : "✗未完成"}${conv ? `，${conv.Message.length}条消息` : ""}`;
@@ -1031,7 +1036,7 @@ async function checkTaskMissingItems(
 
   // 获取所有对话活动（扁平化）
   const allPCs = task.subProjects.flatMap((sp) =>
-    sp.PresetConversation.map((pc) => ({ id: pc.id, title: pc.title, spTitle: sp.title }))
+    sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title, spTitle: sp.title }))
   );
   const presetIds = allPCs.map((pc) => pc.id);
 
@@ -1113,7 +1118,7 @@ async function checkTaskMissingItems(
 function buildDialogContents(
   conversations: Array<{
     userId: string;
-    messages: Array<{ role: string; content: string }>;
+    Message: Array<{ role: string; content: string }>;
     updatedAt: Date;
     user: { name: string } | null;
     presetConversationId?: string | null;

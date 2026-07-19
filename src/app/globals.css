@@ -2,6 +2,9 @@
 @tailwind components;
 @tailwind utilities;
 
+/* KaTeX 数学公式样式（支持 AI 回复中的 $...$ 与 $$...$$） */
+@import "katex/dist/katex.min.css";
+
 :root {
   --background: #F3F6F9;
   --foreground: #1A1A1A;

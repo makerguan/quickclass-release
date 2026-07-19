@@ -3,6 +3,16 @@
  * 当启用提交时，系统会用这些提示词改造 HTML，注入提交功能
  */
 
+// 为 window 全局变量声明类型
+declare global {
+  interface Window {
+    __explorationData__?: Record<string, any>;
+    __TASK_TITLE__?: string;
+    __STUDENT_NAME__?: string;
+    __CLASS_NAME__?: string;
+  }
+}
+
 /**
  * 提交按钮 CSS 样式
  */
@@ -167,7 +177,7 @@ async function submitResults() {
   if (!confirm("确认提交？提交后将无法修改。")) return;
 
   var btn = document.getElementById("submitBtn");
-  if (btn) { btn.innerHTML = "提交中..."; btn.disabled = true; }
+  if (btn) { btn.innerHTML = "提交中..."; (btn as HTMLButtonElement).disabled = true; }
 
   // 准备提交数据
   var submitData = {
@@ -221,11 +231,11 @@ async function submitResults() {
       if (btn) { btn.innerHTML = "已提交 ✓"; btn.style.background = "#4CAF50"; }
     } else {
       alert("提交失败，请重试。");
-      if (btn) { btn.innerHTML = "重新提交"; btn.disabled = false; }
+      if (btn) { btn.innerHTML = "重新提交"; (btn as HTMLButtonElement).disabled = false; }
     }
-  } catch (e) {
-    alert("提交失败：" + e.message);
-    if (btn) { btn.innerHTML = "重新提交"; btn.disabled = false; }
+} catch (e) {
+      alert("提交失败：" + (e instanceof Error ? e.message : String(e)));
+      if (btn) { btn.innerHTML = "重新提交"; (btn as HTMLButtonElement).disabled = false; }
   }
 }
 

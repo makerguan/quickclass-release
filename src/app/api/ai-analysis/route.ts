@@ -106,8 +106,8 @@ export async function POST(req: NextRequest) {
       const activeStudents = new Set(conversations.map((c) => c.userId));
       let dialogData = `参与学生：${activeStudents.size}/${students.length}人\n\n`;
       dialogData += conversations.slice(0, 10).map((c) => {
-        const msgs = c.messages.map((m) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${m.content.substring(0, 150)}`).join("\n");
-        return `${c.user?.name || "未知"}：\n${msgs}`;
+        const msgs = c.Message.map((m: { role: string; content: string }) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${m.content.substring(0, 150)}`).join("\n");
+        return `${c.User?.name || "未知"}：\n${msgs}`;
       }).join("\n\n---\n\n");
       return NextResponse.json({ prompt: promptText, dialogData });
     }
@@ -124,9 +124,9 @@ export async function POST(req: NextRequest) {
       ]);
       const conversations = rawConversations.map(mapConversation);
       let dialogData = `学生：${student?.name || "未知"}\n对话数：${conversations.length}\n\n`;
-      dialogData += conversations.map((conv, i) => {
-        const msgs = conv.messages.map((m) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${m.content.substring(0, 200)}`).join("\n");
-        return `【对话 ${i + 1}】${conv.title}\n${msgs}`;
+      dialogData += (conversations as Array<{ user: { name: string } | null; messages: { role: string; content: string }[]; title?: string }>).map((conv, i) => {
+        const msgs = conv.messages.map((m: { role: string; content: string }) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${m.content.substring(0, 200)}`).join("\n");
+        return `【对话 ${i + 1}】${conv.title || ""}\n${msgs}`;
       }).join("\n\n---\n\n");
       return NextResponse.json({ prompt: promptText, dialogData });
     }

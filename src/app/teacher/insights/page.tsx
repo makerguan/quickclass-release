@@ -3,8 +3,7 @@
 import { useEffect, useState } from "react";
 import { Card, Select, Button, MessagePlugin, Tag } from "tdesign-react";
 import { RefreshIcon, UserIcon, ChartBarIcon, InfoCircleIcon } from "tdesign-icons-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import { usePromptPreview, PromptPreviewDialog } from "@/components/prompt-preview";
 
@@ -48,7 +47,7 @@ function InsightContent({ content, className = "" }: { content: string; classNam
   }
   return (
     <div className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
-      <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+      <Markdown>{content}</Markdown>
     </div>
   );
 }
@@ -57,6 +56,7 @@ interface ClassInfo {
   id: string;
   name: string;
   subject: string;
+  isCurrent?: boolean;
   _count?: { students: number; conversations: number };
 }
 

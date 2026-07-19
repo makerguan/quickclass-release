@@ -9,8 +9,7 @@ import {
   FolderIcon,
   ChatIcon,
 } from "tdesign-icons-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import Markdown from "@/components/Markdown";
 import StudentLayout from "@/components/layout/StudentLayout";
 import QuizPanel from "./QuizPanel";
 import ExplorationPanel from "./ExplorationPanel";
@@ -52,6 +51,7 @@ interface ExplorationInfo {
   description?: string;
   htmlContent?: string;
   enableSubmission?: boolean;
+  enableAiCompanion?: boolean;
   questionsJson?: string;
 }
 
@@ -284,6 +284,7 @@ export default function StudentChatPage() {
         explorationId={exp.id}
         htmlContent={exp.htmlContent || ""}
         enableSubmissionEnabled={exp.enableSubmission}
+        enableAiCompanion={exp.enableAiCompanion}
         onBack={onBack}
       />
     );
@@ -761,7 +762,7 @@ onClick={() => {
                     )}
                     {msg.role === "assistant" ? (
                       <div className="prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_pre]:bg-gray-800 [&_pre]:text-gray-100 [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_pre_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-gray-400 [&_blockquote]:pl-3 [&_blockquote]:italic [&_table]:text-xs [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                        <Markdown>{msg.content}</Markdown>
                       </div>
                     ) : (
                       <div className="whitespace-pre-wrap">{msg.content}</div>

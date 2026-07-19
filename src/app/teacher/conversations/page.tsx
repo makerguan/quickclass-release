@@ -3,8 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Input, Card, MessagePlugin, Dialog } from "tdesign-react";
 import { SearchIcon, DeleteIcon, CheckCircleIcon } from "tdesign-icons-react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 
 interface UserInfo {
@@ -762,7 +761,7 @@ export default function TeacherConversationsPage() {
                               <div className="text-sm text-[#333] break-words bg-[#F7F8FA] rounded-lg p-3 overflow-hidden w-full">
                                 {msg.role === "assistant" ? (
                                   <div className="!max-w-full prose prose-sm prose-gray [&_*]:break-words [&_*]:!max-w-full [&_*]:whitespace-pre-wrap [&_pre]:overflow-x-auto [&_pre]:!max-w-full [&_code]:break-all [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_pre]:bg-gray-800 [&_pre]:text-gray-100 [&_pre]:rounded-lg [&_pre]:!overflow-x-auto [&_pre]:p-3 [&_pre_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-gray-400 [&_blockquote]:pl-3 [&_blockquote]:italic [&_table]:text-xs [&_table]:table-auto [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1">
-                                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                                    <Markdown>{msg.content}</Markdown>
                                   </div>
                                 ) : (
                                   <div className="whitespace-pre-wrap break-all w-full">{msg.content}</div>

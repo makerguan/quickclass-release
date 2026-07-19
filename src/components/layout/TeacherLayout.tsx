@@ -61,6 +61,11 @@ export default function TeacherLayout({
       label: "对话记录",
     },
     {
+      key: "/teacher/research",
+      icon: <Icon.ChartIcon />,
+      label: "教学研究",
+    },
+    {
       key: "/teacher/templates",
       icon: <Icon.FileIcon />,
       label: "模板设置",

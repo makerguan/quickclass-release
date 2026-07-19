@@ -12,6 +12,7 @@ export default function TeacherQuizListPage() {
   const [showModal, setShowModal] = useState(false);
   const [newTitle, setNewTitle] = useState("");
   const [newDesc, setNewDesc] = useState("");
+  const [newPassScore, setNewPassScore] = useState(60);
   const [autoGenerate, setAutoGenerate] = useState(true);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
@@ -35,7 +36,7 @@ export default function TeacherQuizListPage() {
     const res = await fetch("/api/quiz-activities", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ subProjectId, title: newTitle, description: newDesc, autoGenerate }),
+      body: JSON.stringify({ subProjectId, title: newTitle, description: newDesc, autoGenerate, passScore: newPassScore }),
     });
     const data = await res.json();
     if (res.ok) {
@@ -48,6 +49,7 @@ export default function TeacherQuizListPage() {
       setShowModal(false);
       setNewTitle("");
       setNewDesc("");
+      setNewPassScore(60);
       router.push(`/teacher/activities/${subProjectId}/quiz/${data.id}`);
     } else {
       MessagePlugin.error(data.error || "创建失败");
@@ -67,13 +69,15 @@ export default function TeacherQuizListPage() {
       });
       if (res.ok) {
         setQuizzes((prev) =>
-          prev.map((q) => (q.id === quiz.id ? { ...q, enabled: checked } : q))
+          prev.map((q) => (q.id === quiz.id ? { ...q, status: checked ? "ACTIVE" : "INACTIVE" } : q))
         );
         MessagePlugin.success(checked ? "作业已生效" : "作业已失效");
       } else {
-        const err = await res.json();
-        MessagePlugin.error(err.message || "切换失败");
+        const err = await res.json().catch(() => ({ error: "切换失败" }));
+        MessagePlugin.error(err.error || "切换失败");
       }
+    } catch (e) {
+      MessagePlugin.error("切换失败");
     } finally {
       setTogglingId(null);
     }
@@ -141,25 +145,11 @@ export default function TeacherQuizListPage() {
                 />
 
                 <button
-                  onClick={(e) => { e.stopPropagation(); router.push(`/teacher/activities/${subProjectId}/quiz/${q.id}/questions`); }}
+                  onClick={(e) => { e.stopPropagation(); router.push(q.status === "ACTIVE" ? `/teacher/activities/${subProjectId}/quiz/${q.id}/report` : `/teacher/activities/${subProjectId}/quiz/${q.id}/questions`); }}
                   className="px-3 py-1.5 text-sm text-blue-600 border border-blue-300 rounded-lg hover:bg-blue-50"
                 >
                   {q.status === "ACTIVE" ? "查看报告" : "题目管理"}
                 </button>
-                <button
-                  onClick={(e) => { e.stopPropagation(); router.push(`/teacher/activities/${subProjectId}/quiz/${q.id}/questions`); }}
-                  className="px-3 py-1.5 text-sm text-purple-600 border border-purple-300 rounded-lg hover:bg-purple-50"
-                >
-                  {q.status === "ACTIVE" ? "查看报告" : "题目管理"}
-                </button>
-                {q.status === "ACTIVE" && q._count?.attempts > 0 && (
-                  <button
-                    onClick={(e) => { e.stopPropagation(); router.push(`/teacher/activities/${subProjectId}/quiz/${q.id}/report`); }}
-                    className="px-3 py-1.5 text-sm text-green-600 border border-green-300 rounded-lg hover:bg-green-50"
-                  >
-                    查看报告
-                  </button>
-                )}
               </div>
             </div>
           ))}
@@ -179,12 +169,24 @@ export default function TeacherQuizListPage() {
               autoFocus
             />
             <textarea
-              className="w-full border rounded-lg px-3 py-2 mb-4 text-sm"
+              className="w-full border rounded-lg px-3 py-2 mb-3 text-sm"
               placeholder="作业说明（选填）"
               value={newDesc}
               onChange={(e) => setNewDesc(e.target.value)}
               rows={3}
             />
+            <div className="flex items-center gap-3 mb-4">
+              <label className="text-sm text-gray-600">合格线分值</label>
+              <input
+                type="number"
+                min={0}
+                max={100}
+                className="w-20 border rounded-lg px-3 py-2 text-sm text-center"
+                value={newPassScore}
+                onChange={(e) => setNewPassScore(Number(e.target.value) || 60)}
+              />
+              <span className="text-xs text-gray-400">默认60分</span>
+            </div>
             <div className="flex gap-3 justify-end">
               <button onClick={() => setShowModal(false)} className="px-4 py-2 text-gray-500 text-sm">取消</button>
               <button onClick={handleCreate} disabled={creating || !newTitle.trim()} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50">

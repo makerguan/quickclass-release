@@ -1,10 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 
-// 强制动态路由，避免被 Next.js 静态缓存（注册后必须立即能查到这个新用户）
-export const dynamic = "force-dynamic";
-export const revalidate = 0;
-
 export async function GET() {
   try {
     // 只检测"教师用户"，与 /api/auth/register 保持一致

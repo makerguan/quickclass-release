@@ -149,12 +149,28 @@ model ExplorationActivity {
   enabled               Boolean                 @default(true)
   createdAt             DateTime                @default(now())
   enableSubmission      Boolean                 @default(false)
+  enableAiCompanion     Boolean                 @default(false)
+  aiCompanionPrompt     String?
   questionsJson         String?
   teachingAdvice        String?
   analysisPrompt        String?
   designPrompt          String?
   SubProject            SubProject              @relation(fields: [subProjectId], references: [id], onDelete: Cascade)
   ExplorationSubmission ExplorationSubmission[]
+  AiCompanionMessage    AiCompanionMessage[]
+}
+
+model AiCompanionMessage {
+  id                  String   @id @default(cuid())
+  explorationId       String
+  studentId           String
+  role                String   // "user" | "assistant"
+  content             String
+  createdAt           DateTime @default(now())
+  ExplorationActivity ExplorationActivity @relation(fields: [explorationId], references: [id], onDelete: Cascade)
+  User                User                @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([explorationId, studentId])
 }
 
 model ExplorationSubmission {
@@ -183,6 +199,40 @@ model InsightTemplate {
   isSystem    Boolean  @default(false)
   createdAt   DateTime @default(now())
   updatedAt   DateTime
+}
+
+/// 教学研究项目（方案/论文）
+model ResearchProject {
+  id              String   @id @default(cuid())
+  teacherId       String
+
+  // 用户输入
+  projectName     String
+  projectType     String              // "PAPER" | "PROPOSAL"
+  keywords        String?
+  dataScope       String?             // JSON: {mode, taskIds?}
+
+  // AI 生成
+  generatedTitles String?             // JSON: [{title, description, category, score, evidence}]
+  selectedTitle   String?
+  selectedIndex   Int?
+  content         String?             // JSON: 结构化内容
+  contentText     String?             // Markdown 全文
+
+  // 状态机
+  status          String              @default("DRAFT") // DRAFT | TITLES_READY | COMPLETED
+
+  // 元数据
+  dataSnapshot    String?             // JSON
+  generationLog   String?             // JSON
+
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  User            User                @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@index([teacherId, status])
+  @@index([createdAt])
 }
 
 model KnowledgeBase {
@@ -318,6 +368,7 @@ model QuizActivity {
   quizDesignTemplateId String?
   sortOrder            Int               @default(0)
   status               String            @default("INACTIVE")
+  passScore            Int               @default(60)
   createdAt            DateTime          @default(now())
   updatedAt            DateTime
   analysisPrompt       String?
@@ -421,5 +472,7 @@ model User {
   LearningProgress            LearningProgress[]
   LearningTask                LearningTask[]
   QuizAttempt                 QuizAttempt[]
+  AiCompanionMessage          AiCompanionMessage[]
+  ResearchProject             ResearchProject[]
   Class_User_classIdToClass   Class?             @relation("User_classIdToClass", fields: [classId], references: [id], onDelete: Cascade)
 }

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
 
 // GET: 导出课堂完整结构（不含教师/学生/班级数据）
 export async function GET(
@@ -100,7 +101,17 @@ export async function GET(
           explorations: sp.ExplorationActivity.map((e) => ({
             title: e.title,
             description: e.description || "",
-            htmlContent: e.htmlContent || "",
+            // 导出时升级到当前 AI 伴学版本，避免把旧版 HTML 灌回导入端
+            htmlContent: (() => {
+              if (!e.enableAiCompanion) return e.htmlContent || "";
+              const up = upgradeAiCompanionIfNeeded(e.htmlContent, { explorationId: e.id });
+              if (up.changed) {
+                prisma.explorationActivity
+                  .update({ where: { id: e.id }, data: { htmlContent: up.html } })
+                  .catch((err) => console.error("[GET /export] 持久化AI伴学升级失败", e.id, err));
+              }
+              return up.html;
+            })(),
             designPrompt: e.designPrompt || "",
             analysisPrompt: e.analysisPrompt || "",
           })),

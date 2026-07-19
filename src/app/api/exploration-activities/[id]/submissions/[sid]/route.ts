@@ -53,7 +53,7 @@ export async function PATCH(
   }
 }
 
-// GET: 获取某个学生的提交详情
+// GET: 获取某个学生的提交详情（教师或提交本人）
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string; sid: string }> }
@@ -67,13 +67,49 @@ export async function GET(
 
     const submission = await prisma.explorationSubmission.findUnique({
       where: { id: sid },
-      include: { ExplorationActivity: true },
+      include: {
+        ExplorationActivity: {
+          select: {
+            id: true,
+            title: true,
+            enabled: true,
+            enableAiCompanion: true,
+            SubProject: { select: { task: { select: { teacherId: true } } } },
+          },
+        },
+      },
     });
     if (!submission || submission.explorationId !== id) {
       return new Response("提交记录不存在", { status: 404 });
     }
 
-    return NextResponse.json(submission);
+    // 鉴权：教师必须是该课堂所有者；学生只能看自己
+    const taskTeacherId = submission.ExplorationActivity?.SubProject?.task?.teacherId;
+    const role = String(payload.role || "").toUpperCase();
+    if (role === "TEACHER" || role === "ADMIN") {
+      if (taskTeacherId !== String(payload.userId)) {
+        return new Response("无权限", { status: 403 });
+      }
+    } else if (role === "STUDENT") {
+      if (submission.studentId !== String(payload.userId)) {
+        return new Response("无权限", { status: 403 });
+      }
+    } else {
+      return new Response("无权限", { status: 403 });
+    }
+
+    // 不再透传 htmlContent（详情页不需要 iframe 渲染；同时彻底规避升级盲区与泄露）
+    const { ExplorationActivity, ...safe } = submission;
+    const liteExploration = ExplorationActivity
+      ? {
+          id: ExplorationActivity.id,
+          title: ExplorationActivity.title,
+          enabled: ExplorationActivity.enabled,
+          enableAiCompanion: ExplorationActivity.enableAiCompanion,
+        }
+      : null;
+
+    return NextResponse.json({ ...safe, ExplorationActivity: liteExploration });
   } catch (error) {
     console.error("查询提交详情失败:", error);
     return new Response("查询失败", { status: 500 });

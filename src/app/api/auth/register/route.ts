@@ -69,6 +69,17 @@ export async function POST(req: NextRequest) {
     // TODO: 同步到资源广场网站
     // await fetch("http://www.maoyouhui.org/api/sync-user", {...});
 
+    // 异步填充演示数据（不阻塞 token 返回）
+    // 仅第一个教师注册时执行（注册路由已限定本地部署仅一个教师账号）
+    void (async () => {
+      try {
+        const { seedDemoForNewTeacher } = await import("@/../prisma/seed-demo");
+        await seedDemoForNewTeacher(user.id, user.name);
+      } catch (e) {
+        console.error("[register] 演示数据填充失败（不影响注册）:", e);
+      }
+    })();
+
     const token = await createToken({
       userId: user.id,
       email: user.email,

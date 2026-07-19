@@ -248,8 +248,8 @@ export function parseQuestionsFromAIResponse(
     if (answer === "T" || answer === "F" || answer === "TRUE" || answer === "FALSE") {
       type = "TRUE_FALSE";
       // 标准化答案为 T/F
-      if (answer === "TRUE" || answer === "A") answer = "T";
-      else if (answer === "FALSE" || answer === "B") answer = "F";
+      if (answer === "TRUE") answer = "T";
+      else if (answer === "FALSE") answer = "F";
     }
     // 如果答案含多个字母（逗号分隔或连续），判定为多选题
     else if (answer.length > 1 && !["A","B","C","D"].includes(answer)) {

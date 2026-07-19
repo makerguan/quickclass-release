@@ -53,26 +53,29 @@ export async function GET(
     
     // 已参加作业的学生 ID 集合
     const attemptedUserIds = new Set(filteredAttempts.map(a => a.User.id));
-    // 未完成作业的学生（参加了但没有完成所有题目）
-    const incompleteStudents = filteredAttempts.filter(a => {
-      const totalQuestions = quiz.Question.length;
-      const answeredQuestions = a.QuestionAttempt.length;
-      return answeredQuestions < totalQuestions;
-    }).map(a => ({ name: a.User.name, score: a.score, answered: a.QuestionAttempt.length, total: quiz.Question.length }));
+
+    // 区分已完成和未完成
+    const completedAttempts = filteredAttempts.filter(a => a.QuestionAttempt.length === quiz.Question.length);
+    const incompleteAttempts = filteredAttempts.filter(a => a.QuestionAttempt.length < quiz.Question.length);
+
+    // 未完成作业的学生名单
+    const incompleteStudents = incompleteAttempts.map(a => ({ name: a.User.name, score: a.score, answered: a.QuestionAttempt.length, total: quiz.Question.length, userId: a.User.id }));
     
     // 未参加作业的学生
     const notAttemptedStudents = allStudentsInClass
       .filter(s => !attemptedUserIds.has(s.id))
       .map(s => ({ name: s.name, userId: s.id }));
     
-    const totalStudents = filteredAttempts.length;
+    // ========== 统计仅基于已完成的学生 ==========
+    const totalStudents = completedAttempts.length;
+    const passScore = quiz.passScore ?? 60;
     const classAvgScore = totalStudents > 0
-      ? Math.round(filteredAttempts.reduce((s, a) => s + a.score, 0) / totalStudents)
+      ? Math.round(completedAttempts.reduce((s, a) => s + a.score, 0) / totalStudents)
       : 0;
 
-    // 各题正确率
+    // 各题正确率（分母 = 完成人数）
     const questionStats = quiz.Question.map((q) => {
-      const answered = filteredAttempts.flatMap((a) => a.QuestionAttempt.filter((ans) => ans.questionId === q.id));
+      const answered = completedAttempts.flatMap((a) => a.QuestionAttempt.filter((ans) => ans.questionId === q.id));
       const correct = answered.filter((a) => a.isCorrect).length;
       return {
         questionId: q.id,
@@ -89,33 +92,33 @@ export async function GET(
       .map((qs) => `[${qs.difficulty}] ${qs.content}...（正确率${qs.correctRate}%）`)
       .join("\n");
 
-    // 低分学生（< 60分）
-    const lowScoreStudents = filteredAttempts
-      .filter((a) => a.score < 60)
+    // 低分学生（低于合格线）
+    const lowScoreStudents = completedAttempts
+      .filter((a) => a.score < passScore)
       .map((a) => `${a.User.name}（${a.score}分）`)
       .join("\n");
 
     // ========== 新增丰富数据 ==========
 
-    // 学生分数列表（排序）
-    const studentScores = filteredAttempts
+    // 学生分数列表（排序，仅已完成）
+    const studentScores = completedAttempts
       .map((a) => ({ name: a.User.name, score: a.score, userId: a.User.id }))
       .sort((a, b) => b.score - a.score);
 
-    // 分数段分布
+    // 分数段分布（仅已完成）
     const scoreBuckets = [
       { label: "90-100", min: 90, max: 100, count: 0 },
       { label: "70-89", min: 70, max: 89, count: 0 },
       { label: "60-69", min: 60, max: 69, count: 0 },
       { label: "40-59", min: 40, max: 59, count: 0 },
-      { label: "<40", min: 0, max: 39, count: 0 },
+      { label: "0-39", min: 0, max: 39, count: 0 },
     ];
-    for (const a of filteredAttempts) {
+    for (const a of completedAttempts) {
       const bucket = scoreBuckets.find((b) => a.score >= b.min && a.score <= b.max);
       if (bucket) bucket.count++;
     }
 
-    // 难度维度统计（雷达图数据）
+    // 难度维度统计（雷达图数据，仅已完成）
     const difficultyMap: Record<string, { total: number; correct: number }> = {
       BASIC: { total: 0, correct: 0 },
       INTERMEDIATE: { total: 0, correct: 0 },
@@ -125,7 +128,7 @@ export async function GET(
       const key = q.difficulty as keyof typeof difficultyMap;
       if (difficultyMap[key] !== undefined) {
         difficultyMap[key].total++;
-        const correct = filteredAttempts.flatMap((a) => a.QuestionAttempt.filter((ans) => ans.questionId === q.id && ans.isCorrect)).length;
+        const correct = completedAttempts.flatMap((a) => a.QuestionAttempt.filter((ans) => ans.questionId === q.id && ans.isCorrect)).length;
         difficultyMap[key].correct += correct;
       }
     }
@@ -138,8 +141,8 @@ export async function GET(
         total: v.total,
       }));
 
-    // 每位学生在每题的表现
-    const studentQuestionMatrix = filteredAttempts.map((a) => ({
+    // 每位学生在每题的表现（仅已完成）
+    const studentQuestionMatrix = completedAttempts.map((a) => ({
       userId: a.User.id,
       name: a.User.name,
       score: a.score,
@@ -149,12 +152,27 @@ export async function GET(
       }),
     }));
     
-    // 添加未参加作业的学生（放在最后，不参与排序）
+    // 添加未完成作业的学生（放在最后，标灰）
+    const incompleteMatrix = incompleteStudents.map((s) => ({
+      userId: s.userId,
+      name: s.name,
+      score: s.score,
+      incomplete: true,
+      answered: s.answered,
+      total: s.total,
+      answers: quiz.Question.map((q) => {
+        const attempt = incompleteAttempts.find(a => a.User.id === s.userId);
+        const ans = attempt?.QuestionAttempt.find((an) => an.questionId === q.id);
+        return { questionId: q.id, isCorrect: ans?.isCorrect ?? false, selectedAnswer: ans?.selectedAnswer ?? "", questionType: q.type, incomplete: true };
+      }),
+    }));
+
+    // 添加未参加作业的学生（放在最后）
     const notAttemptedMatrix = notAttemptedStudents.map((s) => ({
       userId: s.userId,
       name: s.name,
-      score: null, // 无分数
-      notAttempted: true, // 标记未参加
+      score: null,
+      notAttempted: true,
       answers: quiz.Question.map((q) => ({
         questionId: q.id,
         isCorrect: false,
@@ -165,7 +183,7 @@ export async function GET(
     }));
 
     const topStudents = studentScores.slice(0, 3);
-    const lowScoreStudentsList = studentScores.filter((s) => s.score < 60);
+    const lowScoreStudentsList = studentScores.filter((s) => s.score < passScore);
 
     const sortedScores = studentScores.map((s) => s.score).sort((a, b) => a - b);
     const median = sortedScores.length > 0 ? sortedScores[Math.floor(sortedScores.length / 2)] : 0;
@@ -178,14 +196,14 @@ export async function GET(
     // 标准差（衡量班级分数离散程度）
     const mean = classAvgScore;
     const variance = totalStudents > 0
-      ? filteredAttempts.reduce((sum, a) => sum + Math.pow(a.score - mean, 2), 0) / totalStudents
+      ? completedAttempts.reduce((sum, a) => sum + Math.pow(a.score - mean, 2), 0) / totalStudents
       : 0;
     const stdDev = Math.round(Math.sqrt(variance) * 10) / 10;
 
     // 每题高频错选项统计
     const questionWrongOptions = quiz.Question.map((q) => {
       const optionCounts: Record<string, number> = {};
-      for (const a of filteredAttempts) {
+      for (const a of completedAttempts) {
         const ans = a.QuestionAttempt.find((an) => an.questionId === q.id);
         if (ans && !ans.isCorrect && ans.selectedAnswer) {
           optionCounts[ans.selectedAnswer] = (optionCounts[ans.selectedAnswer] || 0) + 1;
@@ -203,13 +221,13 @@ export async function GET(
 
     // 题目区分度（该题得分与总分相关系数，衡量题目区分高低分学生的能力）
     const questionDiscrimination = quiz.Question.map((q) => {
-      const questionScores = filteredAttempts.map((a) => {
+      const questionScores = completedAttempts.map((a) => {
         const ans = a.QuestionAttempt.find((an) => an.questionId === q.id);
         if (!ans) return 0;
         const maxScore = q.score || 100 / quiz.Question.length;
-        return ans.score !== undefined ? (ans.score / maxScore) * 100 : (ans.isCorrect ? 100 : 0);
+        return ans.score != null ? (ans.score / maxScore) * 100 : (ans.isCorrect ? 100 : 0);
       });
-      const totalScores = filteredAttempts.map((a) => a.score);
+      const totalScores = completedAttempts.map((a) => a.score);
       const n = questionScores.length;
       if (n === 0) return { questionId: q.id, discrimination: 0 };
       const sum = (arr: number[]) => arr.reduce((s, v) => s + v, 0);
@@ -262,6 +280,7 @@ export async function GET(
       classIds,
       quizId: id,
       quizTitle: quiz.title,
+      passScore,
       totalStudents,
       classAvgScore,
       questionStats,
@@ -270,9 +289,9 @@ export async function GET(
       studentScores,
       scoreBuckets,
       difficultyStats,
-      studentQuestionMatrix: [...studentQuestionMatrix, ...notAttemptedMatrix], // 未参加学生放最后
-      notAttemptedStudents, // 未参加作业的学生名单
-      incompleteStudents, // 未完成作业的学生名单（参加了但题目没做完）
+      studentQuestionMatrix: [...studentQuestionMatrix, ...incompleteMatrix, ...notAttemptedMatrix],
+      notAttemptedStudents,
+      incompleteStudents,
       topStudents,
       lowScoreStudentsList,
       stats: { maxScore, minScore, median, passRate, stdDev },

@@ -1,8 +1,7 @@
 "use client";
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import Markdown from "@/components/Markdown";
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -163,6 +162,10 @@ export default function QuizReportPage() {
   };
 
   const handleGenerateAiReport = async () => {
+    if (!selectedTemplateId) {
+      MessagePlugin.warning("请先选择分析模板");
+      return;
+    }
     setGeneratingReport(true);
     const token = localStorage.getItem("token") || "";
     try {
@@ -350,17 +353,18 @@ export default function QuizReportPage() {
                 {/* 顶部综合指标卡 */}
                 <div className="grid grid-cols-3 md:grid-cols-7 gap-3">
                   {[
-                    { label: "参与人数", value: reportData.totalStudents, color: "text-blue-600", bg: "bg-blue-50" },
+                    { label: "已完成人数", value: reportData.totalStudents, color: "text-blue-600", bg: "bg-blue-50" },
                     { label: "班级均分", value: reportData.classAvgScore, color: "text-green-600", bg: "bg-green-50" },
                     { label: "最高分", value: reportData.stats?.maxScore, color: "text-purple-600", bg: "bg-purple-50" },
                     { label: "最低分", value: reportData.stats?.minScore, color: "text-orange-600", bg: "bg-orange-50" },
                     { label: "中位数", value: reportData.stats?.median, color: "text-teal-600", bg: "bg-teal-50" },
-                    { label: "及格率", value: `${reportData.stats?.passRate ?? 0}%`, color: "text-rose-600", bg: "bg-rose-50" },
+                    { label: "合格率", value: `${reportData.stats?.passRate ?? 0}%`, color: "text-rose-600", bg: "bg-rose-50", sub: `合格线${reportData.passScore ?? 60}分` },
                     { label: "标准差", value: reportData.stats?.stdDev, color: "text-indigo-600", bg: "bg-indigo-50" },
                   ].map((stat) => (
                     <div key={stat.label} className={`${stat.bg} rounded-xl p-3 text-center`}>
                       <div className={`text-2xl font-bold ${stat.color}`}>{stat.value}</div>
                       <div className="text-xs text-gray-400 mt-0.5">{stat.label}</div>
+                      {stat.sub && <div className="text-xs text-gray-300 mt-0.5">{stat.sub}</div>}
                     </div>
                   ))}
                 </div>
@@ -512,6 +516,40 @@ export default function QuizReportPage() {
                     })()}
                   </div>
                 )}
+
+                {/* 未完成/未参加作业的学生 */}
+                {((reportData.incompleteStudents && reportData.incompleteStudents.length > 0) || (reportData.notAttemptedStudents && reportData.notAttemptedStudents.length > 0)) && (
+                  <div className="bg-white rounded-xl shadow-sm p-5">
+                    <div className="font-medium text-gray-700 mb-3 text-sm">未完成 / 未参加作业的学生</div>
+                    <div className="space-y-3">
+                      {reportData.incompleteStudents && reportData.incompleteStudents.length > 0 && (
+                        <div>
+                          <div className="text-xs text-orange-600 mb-2">⚠ 未完成（已答部分题目）· {reportData.incompleteStudents.length}人</div>
+                          <div className="flex flex-wrap gap-2">
+                            {reportData.incompleteStudents.map((s: any) => (
+                              <div key={s.userId || s.name} className="px-3 py-1.5 bg-orange-50 rounded-lg flex items-center gap-2 text-xs">
+                                <span className="font-medium text-orange-700">{s.name}</span>
+                                <span className="text-orange-400">已答{s.answered}/{s.total}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {reportData.notAttemptedStudents && reportData.notAttemptedStudents.length > 0 && (
+                        <div>
+                          <div className="text-xs text-gray-500 mb-2">未参加 · {reportData.notAttemptedStudents.length}人</div>
+                          <div className="flex flex-wrap gap-2">
+                            {reportData.notAttemptedStudents.map((s: any) => (
+                              <div key={s.userId} className="px-3 py-1.5 bg-gray-50 rounded-lg text-xs text-gray-500">
+                                {s.name}
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
               </>
             ) : (
               <div className="text-center py-12 text-gray-400">
@@ -569,6 +607,7 @@ export default function QuizReportPage() {
                     onChange={(e) => setSelectedTemplateId(e.target.value)}
                     className="text-xs border rounded px-2 py-1.5"
                   >
+                    <option value="" disabled>— 请选择模板 —</option>
                     {templates.map((t: any) => (
                       <option key={t.id} value={t.id}>
                         {t.name}{t.isDefault ? " (默认)" : ""}
@@ -576,10 +615,10 @@ export default function QuizReportPage() {
                     ))}
                   </select>
                 )}
-                <button 
-                  onClick={handleGenerateAiReport} 
-                  disabled={generatingReport} 
-                  className="px-3 py-1.5 text-xs bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50"
+                <button
+                  onClick={handleGenerateAiReport}
+                  disabled={generatingReport || !selectedTemplateId}
+                  className="px-3 py-1.5 text-xs bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {generatingReport ? "生成中..." : aiReport ? "重新生成" : "生成报告"}
                 </button>
@@ -623,9 +662,7 @@ export default function QuizReportPage() {
                     </div>
                   ) : (
                     <div className="prose prose-sm max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {aiReport}
-                      </ReactMarkdown>
+                      <Markdown>{aiReport}</Markdown>
                     </div>
                   )}
                 </div>
@@ -686,20 +723,19 @@ export default function QuizReportPage() {
                 <div className="px-5 overflow-x-auto">
                   <table className="w-full text-sm">
                     <tbody>
-                      {/* 已参加作业的学生（参与排序） */}
-                      {getSortedRows(reportData.studentQuestionMatrix.filter((row: any) => !row.notAttempted)).map((row: any) => (
+                      {/* 已完成作业的学生（参与排序） */}
+                      {getSortedRows(reportData.studentQuestionMatrix.filter((row: any) => !row.notAttempted && !row.incomplete)).map((row: any) => (
                         <tr key={row.userId} className="border-b border-gray-50 hover:bg-gray-50">
                           <td className="py-2.5 pr-3 font-medium text-gray-700">{row.name}</td>
                           <td className="py-2.5 pr-3 text-center">
-                            <span className={`font-bold ${row.score >= 90 ? "text-green-600" : row.score >= 60 ? "text-blue-600" : "text-red-500"}`}>{row.score}</span>
+                            <span className={`font-bold ${row.score >= 90 ? "text-green-600" : row.score >= (reportData.passScore ?? 60) ? "text-blue-600" : "text-red-500"}`}>{row.score}</span>
                           </td>
                           <td className="py-2.5 px-2 text-center">
                             <div className="w-16 h-2 bg-gray-100 rounded-full overflow-hidden mx-auto">
-                              <div className={`h-2 rounded-full ${row.score >= 90 ? "bg-green-400" : row.score >= 60 ? "bg-blue-400" : "bg-red-400"}`} style={{ width: (row.score || 0) + "%" }} />
+                              <div className={`h-2 rounded-full ${row.score >= 90 ? "bg-green-400" : row.score >= (reportData.passScore ?? 60) ? "bg-blue-400" : "bg-red-400"}`} style={{ width: (row.score || 0) + "%" }} />
                             </div>
                           </td>
                           {row.answers.map((ans: any, qi: number) => {
-                            const questionType = reportData.questionStats?.[qi]?.type;
                             const isCorrect = ans.isCorrect;
                             return (
                               <td key={qi} className="py-2.5 px-1 text-center">
@@ -712,6 +748,29 @@ export default function QuizReportPage() {
                         </tr>
                       ))}
                       
+                      {/* 未完成作业的学生（不参与排序，标灰） */}
+                      {reportData.studentQuestionMatrix.filter((row: any) => row.incomplete).map((row: any) => (
+                        <tr key={row.userId} className="border-b border-gray-50 bg-orange-50/40">
+                          <td className="py-2.5 pr-3 font-medium text-orange-700">
+                            {row.name}
+                            <span className="ml-2 px-1.5 py-0.5 rounded text-xs bg-orange-100 text-orange-700">未完成 {row.answered}/{row.total}</span>
+                          </td>
+                          <td className="py-2.5 pr-3 text-center text-orange-500">{row.score ?? "-"}</td>
+                          <td className="py-2.5 px-2 text-center">
+                            <div className="w-16 h-2 bg-gray-100 rounded-full overflow-hidden mx-auto">
+                              <div className="h-2 rounded-full bg-orange-300" style={{ width: (row.score || 0) + "%" }} />
+                            </div>
+                          </td>
+                          {row.answers.map((ans: any, qi: number) => (
+                            <td key={qi} className="py-2.5 px-1 text-center">
+                              <div className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${ans.selectedAnswer ? "bg-orange-100 text-orange-600" : "bg-gray-100 text-gray-300"}`}>
+                                {ans.selectedAnswer || "-"}
+                              </div>
+                            </td>
+                          ))}
+                        </tr>
+                      ))}
+
                       {/* 未参加作业的学生（不参与排序，放在最后） */}
                       {reportData.studentQuestionMatrix.filter((row: any) => row.notAttempted).map((row: any) => (
                         <tr key={row.userId} className="border-b border-gray-50 bg-gray-50">

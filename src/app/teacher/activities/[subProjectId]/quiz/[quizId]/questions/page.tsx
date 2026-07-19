@@ -28,6 +28,7 @@ export default function TeacherQuizQuestionsPage() {
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState("");
   const [previewIdx, setPreviewIdx] = useState<number | null>(null);
+  const [hasSubmissions, setHasSubmissions] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -42,6 +43,7 @@ export default function TeacherQuizQuestionsPage() {
         if (!data || !data.id) throw new Error("作业不存在");
         setQuiz(data);
         if (data.questions) setQuestions(data.questions);
+        setHasSubmissions((data._count?.attempts || 0) > 0);
         setLoading(false);
       })
       .catch((err) => {
@@ -74,6 +76,11 @@ export default function TeacherQuizQuestionsPage() {
   const handleSaveQuestions = async () => {
     const errMsg = validateQuestions();
     if (errMsg) { MessagePlugin.warning(errMsg); return; }
+    // 如果有学生提交，禁止保存
+    if (hasSubmissions) {
+      MessagePlugin.warning("已有学生提交作业，无法修改题目。请先清空答题记录。");
+      return;
+    }
     // 如果作业已生效，需确认
     if (quiz?.status === "ACTIVE") {
       const confirmed = window.confirm(
@@ -83,26 +90,36 @@ export default function TeacherQuizQuestionsPage() {
     }
     setSaving(true);
     const token = localStorage.getItem("token") || "";
-    await fetch(`/api/quiz-activities/${quizId}/questions`, {
+    const res = await fetch(`/api/quiz-activities/${quizId}/questions`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ questions }),
     });
     setSaving(false);
-    MessagePlugin.success("保存成功！作业已变为失效状态。");
-    setQuiz((p: any) => ({ ...p, status: "INACTIVE" }));
+    if (res.ok) {
+      MessagePlugin.success("保存成功！作业已变为失效状态。");
+      setQuiz((p: any) => ({ ...p, status: "INACTIVE" }));
+    } else {
+      const err = await res.json().catch(() => ({ error: "保存失败" }));
+      MessagePlugin.error(err.error || "保存失败");
+    }
   };
 
   const handlePublish = async () => {
     if (questions.length === 0) { MessagePlugin.warning("请先添加题目"); return; }
     const token = localStorage.getItem("token") || "";
-    await fetch(`/api/quiz-activities/${quizId}/publish`, {
+    const res = await fetch(`/api/quiz-activities/${quizId}/publish`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}` },
     });
-    setQuiz((p: any) => ({ ...p, status: "ACTIVE" }));
-    MessagePlugin.success("发布成功！");
-    router.push(`/teacher/tasks`);
+    if (res.ok) {
+      setQuiz((p: any) => ({ ...p, status: "ACTIVE" }));
+      MessagePlugin.success("发布成功！");
+      router.push(`/teacher/tasks`);
+    } else {
+      const err = await res.json().catch(() => ({ error: "发布失败" }));
+      MessagePlugin.error(err.error || "发布失败");
+    }
   };
 
   // 导出作业为 JSON
@@ -233,7 +250,8 @@ export default function TeacherQuizQuestionsPage() {
         <div className="mb-4 flex items-center gap-3">
           {quiz.status === "INACTIVE" && <span className="px-3 py-1 rounded-full text-sm bg-orange-100 text-orange-700">失效中</span>}
           {quiz.status === "ACTIVE" && <span className="px-3 py-1 rounded-full text-sm bg-green-100 text-green-700">生效中</span>}
-          {quiz.status === "ACTIVE" && <span className="text-sm text-gray-400">作业生效中，请先失效再编辑</span>}
+          {hasSubmissions && <span className="text-sm text-red-500">已有学生提交，无法修改题目。请先清空答题记录。</span>}
+          {!hasSubmissions && quiz.status === "ACTIVE" && <span className="text-sm text-gray-400">作业生效中，请先失效再编辑</span>}
           {error && <div className="text-red-500 text-sm">{error}</div>}
         </div>
 
@@ -242,8 +260,8 @@ export default function TeacherQuizQuestionsPage() {
           <div className="text-sm text-gray-500">共 {questions.length} 题</div>
           <div className="flex gap-2">
             <button 
-              onClick={() => setQuestions((p) => [...p, { type: "SINGLE_CHOICE", content: "", options: { A: "", B: "", C: "", D: "" }, answer: "A", difficulty: "BASIC" }])} 
-              disabled={quiz?.status === "ACTIVE"}
+              onClick={() => setQuestions((p) => [...p, { type: "SINGLE_CHOICE", content: "", options: { A: "", B: "", C: "", D: "" }, answer: "A", difficulty: "BASIC" }])}
+              disabled={hasSubmissions || quiz?.status === "ACTIVE"}
               className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               + 添加题目
@@ -251,7 +269,7 @@ export default function TeacherQuizQuestionsPage() {
             {questions.length > 0 && (
               <button 
                 onClick={handleSaveQuestions} 
-                disabled={saving || quiz?.status === "ACTIVE"}
+                disabled={saving || hasSubmissions || quiz?.status === "ACTIVE"}
                 className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
                 {saving ? "保存中..." : "保存题目"}
@@ -270,8 +288,8 @@ export default function TeacherQuizQuestionsPage() {
                 q={q}
                 idx={idx}
                 total={questions.length}
-                disabled={quiz?.status === "ACTIVE"}
-                onUpdate={(field, value) => updateQuestion(idx, field, value)}
+                disabled={hasSubmissions || quiz?.status === "ACTIVE"}
+                onUpdate={(field: keyof Question, value: any) => updateQuestion(idx, field, value)}
                 onDelete={() => setQuestions((p) => p.filter((_, i) => i !== idx))}
                 onMoveUp={() => moveUp(idx)}
                 onMoveDown={() => moveDown(idx)}
@@ -302,6 +320,9 @@ function QuestionCard({ q, idx, total, onUpdate, onDelete, onMoveUp, onMoveDown,
           <button type="button" onClick={onMoveDown} disabled={disabled || idx === total - 1} className="w-5 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-xs">▼</button>
         </div>
         <span className="text-xs text-gray-400 mt-1 w-6 text-right">{idx + 1}.</span>
+        {q.type === "MULTIPLE_CHOICE" && (
+          <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">[多选]</span>
+        )}
         <select value={q.difficulty} onChange={(e) => onUpdate("difficulty", e.target.value)} disabled={disabled} className="text-xs border rounded px-2 py-1 disabled:bg-gray-100">
           <option value="BASIC">基础</option><option value="INTERMEDIATE">提升</option><option value="ADVANCED">拓展</option>
         </select>
@@ -368,7 +389,10 @@ function QuestionPreview({ question, onClose }: { question: Question; onClose: (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-4">
-          <span className="text-sm text-gray-400">{isJudge ? "判断题" : isMulti ? "多选题" : "单选题"} · {question.difficulty === "BASIC" ? "基础" : question.difficulty === "INTERMEDIATE" ? "提升" : "拓展"}</span>
+          <div className="flex items-center gap-2">
+            {isMulti && <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">[多选]</span>}
+            <span className="text-sm text-gray-400">{isJudge ? "判断题" : isMulti ? "多选题" : "单选题"} · {question.difficulty === "BASIC" ? "基础" : question.difficulty === "INTERMEDIATE" ? "提升" : "拓展"}</span>
+          </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
         </div>
         <div className="text-base text-gray-800 mb-6 whitespace-pre-line">{question.content}</div>

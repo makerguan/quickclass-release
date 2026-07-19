@@ -49,18 +49,18 @@ export async function GET(
     }
 
     // 映射字段名以匹配前端期望
-    function mapSubProject(sp: Record<string, unknown>) {
+    const mapSubProject = (sp: Record<string, unknown>) => {
       const { PresetConversation, QuizActivity, ExplorationActivity, ...rest } = sp;
       return {
         ...rest,
         presetConversations: PresetConversation,
-        quizActivities: QuizActivity?.map((qa: Record<string, unknown>) => {
+        quizActivities: (QuizActivity as Array<Record<string, unknown>>)?.map((qa) => {
           const { Question, ...qaRest } = qa;
           return { ...qaRest, questions: Question };
         }),
         explorations: ExplorationActivity,
       };
-    }
+    };
     return NextResponse.json({ ...task, subProjects: task.subProjects.map(mapSubProject) });
   } catch (error) {
     console.error("Get task error:", error);
@@ -377,7 +377,7 @@ export async function PUT(
               return pcData;
             }),
           };
-          return tx.subProject.create({ data: spData });
+          return tx.subProject.create({ data: spData as any });
         })
       );
 
@@ -561,8 +561,9 @@ export async function PUT(
 
     const mapSub = (sp: Record<string, unknown>) => {
       const { PresetConversation, QuizActivity, ExplorationActivity, ...r } = sp;
-      return { ...r, presetConversations: PresetConversation, quizActivities: QuizActivity?.map((qa: Record<string, unknown>) => { const { Question, ...qr } = qa; return { ...qr, questions: Question }; }), explorations: ExplorationActivity };
+      return { ...r, presetConversations: PresetConversation, quizActivities: (QuizActivity as Array<Record<string, unknown>>)?.map((qa) => { const { Question, ...qr } = qa; return { ...qr, questions: Question }; }), explorations: ExplorationActivity };
     };
+    if (!updated) return NextResponse.json({ error: "更新失败" }, { status: 500 });
     return NextResponse.json({ ...updated, subProjects: updated.subProjects.map(mapSub) });
   } catch (error) {
     console.error("Update task error:", error);

@@ -195,7 +195,7 @@ export async function POST(req: NextRequest) {
       dialogData += `参与学生：${activeStudents.size}/${students.length}人\n\n`;
       dialogData += conversations.slice(0, 10).map((c) => {
         const msgs = c.Message.map((m) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${m.content.substring(0, 150)}`).join("\n");
-        return `${c.user?.name || "未知"}：\n${msgs}`;
+        return `${c.User?.name || "未知"}：\n${msgs}`;
       }).join("\n\n---\n\n");
       return NextResponse.json({ prompt: promptText, dialogData });
     }

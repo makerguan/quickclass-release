@@ -484,11 +484,11 @@ export default function TeacherSettingsPage() {
         if (data.aiModel !== undefined) updatePayload.aiModel = data.aiModel;
         if (data.aiMaxConcurrent !== undefined) updatePayload.aiMaxConcurrent = data.aiMaxConcurrent;
         if (data.reasoningEnabled !== undefined) updatePayload.reasoningEnabled = data.reasoningEnabled;
+        if (data.insightDataSource !== undefined) updatePayload.insightDataSource = data.insightDataSource;
         // 保留当前的学情配置
         updatePayload.studentWordLimit = studentWordLimit;
         updatePayload.classWordLimit = classWordLimit;
         updatePayload.requireStarRating = requireStarRating;
-        updatePayload.insightDataSource = data.insightDataSource;
 
         console.log("[导入配置] 发送的数据:", updatePayload);
         

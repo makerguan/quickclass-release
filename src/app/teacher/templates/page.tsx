@@ -147,17 +147,23 @@ export default function TemplateSettingsPage() {
 
     try {
       const text = await file.text();
-      const lines = text.split("\n");
-      const name = lines[0]?.trim();
-      const content = lines.slice(1).join("\n").trim();
-
-      if (!name) {
-        MessagePlugin.warning("模板文件格式不正确：第一行为模板名称");
+      const trimmedText = text.trim();
+      if (!trimmedText) {
+        MessagePlugin.warning("模板文件为空");
         e.target.value = "";
         return;
       }
-      if (!content) {
-        MessagePlugin.warning("模板文件格式不正确：缺少模板内容");
+
+      // 模板名使用上传文件的文件名（去掉扩展名），保证导出文件名 = 导入文件名，可往返
+      const dotIndex = file.name.lastIndexOf(".");
+      const fileBaseName = dotIndex > 0 ? file.name.slice(0, dotIndex) : file.name;
+      const name = fileBaseName.trim();
+
+      // 模板内容保存整篇 Markdown 文本
+      const content = trimmedText;
+
+      if (!name) {
+        MessagePlugin.warning("模板文件格式不正确：无法从文件名解析模板名称");
         e.target.value = "";
         return;
       }
@@ -297,7 +303,7 @@ export default function TemplateSettingsPage() {
 
     if (type === "conversation") {
       return [...userInputs];
-    } else if (type === "QUIZ_DESIGN") {
+    } else if (type === ("QUIZ_DESIGN" as string)) {
       return [
         { name: "taskTitle", desc: "课题" },
         { name: "taskGrade", desc: "年级" },

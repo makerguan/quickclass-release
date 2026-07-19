@@ -47,22 +47,25 @@ export async function POST(
     });
     if (!quiz) return NextResponse.json({ error: "作业不存在" }, { status: 404 });
 
-    const totalStudents = quiz.QuizAttempt.length;
+    // 仅统计已完成答题的学生
+    const completedAttempts = quiz.QuizAttempt.filter(a => a.QuestionAttempt.length === quiz.Question.length);
+    const totalStudents = completedAttempts.length;
+    const passScore = quiz.passScore ?? 60;
     const classAvgScore = totalStudents > 0
-      ? Math.round(quiz.QuizAttempt.reduce((s, a) => s + a.score, 0) / totalStudents)
+      ? Math.round(completedAttempts.reduce((s, a) => s + a.score, 0) / totalStudents)
       : 0;
 
-    // 各题正确率详情
+    // 各题正确率详情（分母 = 完成人数）
     const questionStatsRaw = quiz.Question.map((q) => {
-      const answered = quiz.QuizAttempt.flatMap((a) => a.QuestionAttempt.filter((ans) => ans.questionId === q.id));
+      const answered = completedAttempts.flatMap((a) => a.QuestionAttempt.filter((ans) => ans.questionId === q.id));
       const correct = answered.filter((a) => a.isCorrect).length;
       return { id: q.id, content: q.content, difficulty: q.difficulty, correctRate: totalStudents > 0 ? Math.round((correct / totalStudents) * 100) : 0 };
     });
 
     const questionStats = questionStatsRaw.map((qs) => `[${qs.difficulty}] ${qs.content}... 正确率${qs.correctRate}%`).join("\n");
     const weakQuestions = questionStatsRaw.filter((qs) => qs.correctRate < 60).map((qs) => `${qs.content}...（${qs.correctRate}%）`).join("\n");
-    const lowScoreStudents = quiz.QuizAttempt.filter((a) => a.score < 60).map((a) => `${a.User.name}（${a.score}分）`).join("\n");
-    const highScoreStudents = quiz.QuizAttempt.filter((a) => a.score >= 90).map((a) => `${a.User.name}（${a.score}分）`).join("\n");
+    const lowScoreStudents = completedAttempts.filter((a) => a.score < passScore).map((a) => `${a.User.name}（${a.score}分）`).join("\n");
+    const highScoreStudents = completedAttempts.filter((a) => a.score >= 90).map((a) => `${a.User.name}（${a.score}分）`).join("\n");
 
     // 分数分布
     const scoreBuckets = [
@@ -70,7 +73,7 @@ export async function POST(
       { label: "60-69", min: 60, max: 69 }, { label: "40-59", min: 40, max: 59 }, { label: "<40", min: 0, max: 39 },
     ];
     const bucketCounts = scoreBuckets.map((b) => ({
-      label: b.label, count: quiz.QuizAttempt.filter((a) => a.score >= b.min && a.score <= b.max).length,
+      label: b.label, count: completedAttempts.filter((a) => a.score >= b.min && a.score <= b.max).length,
     }));
     const scoreDistribution = bucketCounts.map((b) => `${b.label}分：${b.count}人`).join("\n");
 
@@ -89,8 +92,12 @@ export async function POST(
       templateContent = defaultTemplate?.content || null;
     }
 
-    // 最终使用的提示词：quiz.analysisPrompt 字段优先于模板内容
-    const effectivePrompt = quiz.analysisPrompt || templateContent;
+    // 最终使用的提示词：
+    // - 前端显式传了 templateId → 强制使用所选模板内容（覆盖作业级提示词）
+    // - 未传 templateId → 回退到作业级提示词（quiz.analysisPrompt），再回退到默认模板
+    const effectivePrompt = templateId
+      ? templateContent
+      : (quiz.analysisPrompt || templateContent);
 
     // 检测提示词是否为 HTML 格式（含 HTML 标签或图表指令）
     const isHtmlOutput = effectivePrompt ? (
@@ -109,6 +116,7 @@ export async function POST(
       `作业名称：${quiz.title}`,
       `班级：本班`,
       `参与人数：${totalStudents}人`,
+      `合格线：${passScore}分`,
       `班级平均分：${classAvgScore}分`,
       "",
       "## 各题正确率",
@@ -117,7 +125,7 @@ export async function POST(
       "## 薄弱题目（正确率<60%）",
       weakQuestions || "无",
       "",
-      "## 低分学生（<60分）",
+      `## 低分学生（<${passScore}分）`,
       lowScoreStudents || "无",
       "",
       "## 高分学生（≥90分）",
@@ -143,6 +151,7 @@ export async function POST(
       "totalStudents": String(totalStudents),
       "classSize": String(totalStudents),
       "classAvgScore": `${classAvgScore}分`,
+      "passScore": `${passScore}分`,
       "questionStats": questionStats || "无",
       "weakQuestions": weakQuestions || "无",
       "lowScoreStudents": lowScoreStudents || "无",

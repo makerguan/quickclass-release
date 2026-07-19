@@ -123,18 +123,18 @@ export async function POST(req: NextRequest) {
     });
 
     // 映射字段名以匹配前端期望
-    function mapSubProject(sp: Record<string, unknown>) {
+    const mapSubProject = (sp: Record<string, unknown>) => {
       const { PresetConversation, QuizActivity, ExplorationActivity, ...rest } = sp;
       return {
         ...rest,
         presetConversations: PresetConversation,
-        quizActivities: QuizActivity?.map((qa: Record<string, unknown>) => {
+        quizActivities: (QuizActivity as Array<Record<string, unknown>>)?.map((qa) => {
           const { Question, ...qaRest } = qa;
           return { ...qaRest, questions: Question };
         }),
         explorations: ExplorationActivity,
       };
-    }
+    };
     const result = {
       ...newTask,
       subProjects: newTask.subProjects.map(mapSubProject),

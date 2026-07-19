@@ -28,7 +28,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
   const [currentIndex, setCurrentIndex] = useState(0);
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
-  const [result, setResult] = useState<{ score: number; totalQuestions: number; correctCount: number } | null>(null);
+  const [result, setResult] = useState<{ score: number; totalQuestions: number; correctCount: number; passScore?: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -117,7 +117,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
       const data = await res.json();
       if (res.ok) {
         setSubmitted(true);
-        setResult({ score: data.score, totalQuestions: data.totalQuestions, correctCount: data.correctCount });
+        setResult({ score: data.score, totalQuestions: data.totalQuestions, correctCount: data.correctCount, passScore: data.passScore });
         MessagePlugin.success(`提交成功！得分：${data.score}分`);
         onSubmit();
       } else {
@@ -139,10 +139,10 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
   }
 
   const getOptions = (q: any): Record<string, string> => {
-    const opts = parseOptions(q?.options || {});
-    if (Object.keys(opts).length === 0 && q?.type === "TRUE_FALSE") {
+    if (q?.type === "TRUE_FALSE" || q?.type === "JUDGEMENT") {
       return { T: "正确", F: "错误" };
     }
+    const opts = parseOptions(q?.options || {});
     return opts;
   };
 
@@ -218,6 +218,9 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
             <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold bg-[#0052D9] text-white">
               {currentIndex + 1}
             </div>
+            {currentQ.type === "MULTIPLE_CHOICE" && (
+              <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium mt-1.5">[多选]</span>
+            )}
             <div className="flex-1">
               <div className="text-base font-medium text-[#1A1A1A]">{currentQ.content}</div>
             </div>
@@ -275,6 +278,11 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
             <div className="text-right">
               <div className="text-xl font-bold text-[#0052D9]">{result.score}分</div>
               <div className="text-xs text-[#63666F]">答对 {result.correctCount}/{result.totalQuestions} 题</div>
+              {(result.passScore ?? 60) > 0 && (
+                <div className={`text-xs mt-0.5 ${result.score >= (result.passScore ?? 60) ? "text-green-600" : "text-red-500"}`}>
+                  {result.score >= (result.passScore ?? 60) ? "已合格" : `未合格（合格线${result.passScore ?? 60}分）`}
+                </div>
+              )}
             </div>
           )}
         </div>

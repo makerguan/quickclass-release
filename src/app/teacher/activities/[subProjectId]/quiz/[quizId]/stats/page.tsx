@@ -223,7 +223,7 @@ export default function QuizStatsPage() {
         {reportData && (
           <>
             {/* 核心统计卡片 */}
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div className="bg-white rounded-lg p-4 border border-gray-100">
                 <div className="text-sm text-[#63666F] mb-1">班级平均分</div>
                 <div className="text-2xl font-bold text-[#0052D9]">{reportData.classAvgScore}</div>
@@ -238,8 +238,14 @@ export default function QuizStatsPage() {
                 <div className="text-2xl font-bold text-orange-600">{reportData.stats?.minScore || 0}</div>
               </div>
               <div className="bg-white rounded-lg p-4 border border-gray-100">
-                <div className="text-sm text-[#63666F] mb-1">及格率</div>
+                <div className="text-sm text-[#63666F] mb-1">合格率</div>
                 <div className="text-2xl font-bold text-teal-600">{reportData.stats?.passRate || 0}%</div>
+                <div className="text-xs text-[#63666F] mt-1">合格线{reportData.passScore ?? 60}分</div>
+              </div>
+              <div className="bg-white rounded-lg p-4 border border-gray-100">
+                <div className="text-sm text-[#63666F] mb-1">已完成人数</div>
+                <div className="text-2xl font-bold text-indigo-600">{reportData.totalStudents}</div>
+                <div className="text-xs text-[#63666F] mt-1">人已答完</div>
               </div>
             </div>
 
@@ -256,7 +262,7 @@ export default function QuizStatsPage() {
                     <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} />
                     <Tooltip
-                      formatter={(value: number) => [`${value}人`, "人数"]}
+                      formatter={(value: number) => [`${value}人`, "人数"] as any}
                       contentStyle={{ borderRadius: 8, border: "1px solid #e0e0e0" }}
                     />
                     <Bar dataKey="count" fill="#0052D9" radius={[4, 4, 0, 0]} />
@@ -316,7 +322,7 @@ export default function QuizStatsPage() {
                       formatter={(value: number, name: string, props: any) => [
                         `${value}%（${props.payload.difficulty}）`,
                         "正确率",
-                      ]}
+                      ] as [string, string]}
                       contentStyle={{ borderRadius: 8, border: "1px solid #e0e0e0" }}
                     />
                     <Bar
@@ -414,13 +420,51 @@ export default function QuizStatsPage() {
                 <div className="flex items-center gap-2 mb-4">
                   <ChartBarIcon className="text-[#E34D41]" />
                   <h3 className="font-medium text-[#1A1A1A]">需要关注的学生</h3>
-                  <Tag theme="danger" size="small">&lt; 60分 · {reportData.lowScoreStudentsList.length}人</Tag>
+                  <Tag theme="danger" size="small">&lt; {reportData.passScore ?? 60}分 · {reportData.lowScoreStudentsList.length}人</Tag>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {reportData.lowScoreStudentsList.map((s: StudentScore) => (
                     <div key={s.userId} className="px-3 py-2 bg-red-50 rounded-lg flex items-center gap-2">
                       <span className="text-sm font-medium text-[#E34D41]">{s.name}</span>
                       <span className="text-xs text-red-400">{s.score}分</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+
+            {/* 未完成作业的学生 */}
+            {reportData.incompleteStudents && reportData.incompleteStudents.length > 0 && (
+              <Card>
+                <div className="flex items-center gap-2 mb-4">
+                  <ChartBarIcon className="text-[#ED7B2F]" />
+                  <h3 className="font-medium text-[#1A1A1A]">未完成作业的学生</h3>
+                  <Tag theme="warning" size="small">{reportData.incompleteStudents.length}人</Tag>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {reportData.incompleteStudents.map((s: any) => (
+                    <div key={s.userId || s.name} className="px-3 py-2 bg-orange-50 rounded-lg flex items-center gap-2">
+                      <span className="text-sm font-medium text-[#ED7B2F]">{s.name}</span>
+                      <span className="text-xs text-orange-400">已答{s.answered}/{s.total}题</span>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            )}
+
+            {/* 未参加作业的学生 */}
+            {reportData.notAttemptedStudents && reportData.notAttemptedStudents.length > 0 && (
+              <Card>
+                <div className="flex items-center gap-2 mb-4">
+                  <ChartBarIcon className="text-gray-400" />
+                  <h3 className="font-medium text-[#1A1A1A]">未参加作业的学生</h3>
+                  <Tag theme="default" size="small">{reportData.notAttemptedStudents.length}人</Tag>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {reportData.notAttemptedStudents.map((s: any) => (
+                    <div key={s.userId} className="px-3 py-2 bg-gray-50 rounded-lg flex items-center gap-2">
+                      <span className="text-sm text-gray-500">{s.name}</span>
+                      <span className="text-xs text-gray-400">未参加</span>
                     </div>
                   ))}
                 </div>

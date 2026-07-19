@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
     });
 
     // 服务端上报（不阻塞响应）
-    reportLogin(user);
+    reportLogin({ name: user.name, phone: user.phone || "", email: user.email, school: user.school });
 
     return NextResponse.json({
       token,

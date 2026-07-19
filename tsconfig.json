@@ -23,5 +23,5 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "scripts", "prisma", "fix-id.ts", "check-templates.ts", "test-*.mjs", "*.sql"]
+  "exclude": ["node_modules", "scripts", "prisma", "fix-id.ts", "check-templates.ts", "test-*.mjs", "*.sql", "dist*"]
 }

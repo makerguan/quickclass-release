@@ -19,41 +19,32 @@ const SYSTEM_CONFIG = {
   conversationWarningThreshold: 20000,
 };
 
-async function main() {
-  console.log("开始同步数据...\n");
-
-  // 1. 系统配置 - 使用 upsert
+/**
+ * 同步系统配置（id=system-config-1）
+ * 由 npm run db:seed 调用
+ */
+export async function seedSystemConfig() {
   const config = await prisma.systemConfig.upsert({
     where: { id: "system-config-1" },
     update: { ...SYSTEM_CONFIG, updatedAt: new Date() },
     create: { id: "system-config-1", ...SYSTEM_CONFIG, updatedAt: new Date() },
   });
   console.log("系统配置已同步");
+  return config;
+}
 
-  // 2. 教师 - 查找或创建
+/**
+ * 同步教师专属数据：班级、学生、任务、子项目、预设对话、任务分配、分析模板
+ * @param teacherId 已有教师 ID（不创建/更新教师账号）
+ * @param teacherName 教师姓名（用于日志）
+ *
+ * 由 npm run db:seed 调用，或由新教师注册时通过 prisma/seed-demo.ts 间接调用
+ */
+export async function seedTeacherData(teacherId: string, teacherName: string, includeTemplates = true) {
+  console.log(`开始同步教师 [${teacherName}] 的专属数据...`);
+
   const hashedPassword = await bcrypt.hash("123456", 10);
-  let teacher = await prisma.user.findFirst({
-    where: { role: "TEACHER" },
-  });
-  if (!teacher) {
-    teacher = await prisma.user.create({
-      data: {
-        email: "teacher@quickclass.com",
-        password: hashedPassword,
-        name: "管老师",
-        role: "TEACHER",
-      },
-    });
-    console.log("创建教师: teacher@quickclass.com");
-  } else {
-    // 更新教师信息确保一致
-    teacher = await prisma.user.update({
-      where: { id: teacher.id },
-      data: { name: "管老师" },
-    });
-    console.log("教师已存在，已更新信息");
-  }
-  const teacherId = teacher.id;
+
 
   // 3. 班级 - 使用 upsert 基于 inviteCode
   const cls1 = await prisma.class.upsert({
@@ -159,65 +150,47 @@ async function main() {
     console.log("任务已存在:", task.title);
   }
 
-  // 6. 子项目 - 查找或创建
+  // 6. 子项目 - 查找或创建（仅1个，学生端显示为"对话思考"）
   let sp1 = await prisma.subProject.findFirst({
-    where: { taskId: task.id, title: "认识方程" },
+    where: { taskId: task.id, title: "默认活动" },
   });
   if (!sp1) {
     sp1 = await prisma.subProject.create({
       data: {
         taskId: task.id,
-        title: "认识方程",
-        description: "通过生活实例理解方程的意义",
-        objectives: "能从实际问题中找出未知数，建立等量关系",
-        requirements: "认真阅读材料，完成引导对话",
+        title: "默认活动",
+        description: "通过对话、练习和探究活动学习一元一次方程",
+        objectives: "理解方程概念，掌握解法，能解决实际问题",
+        requirements: "认真完成每个对话活动，积极参与讨论",
         sortOrder: 1,
         enabled: true,
       },
     });
-    console.log("创建子项目: 认识方程");
+    console.log("创建子项目: 默认活动（学生端显示为对话思考）");
   }
 
-  let sp2 = await prisma.subProject.findFirst({
-    where: { taskId: task.id, title: "解方程练习" },
-  });
-  if (!sp2) {
-    sp2 = await prisma.subProject.create({
-      data: {
-        taskId: task.id,
-        title: "解方程练习",
-        description: "掌握一元一次方程的标准解法",
-        objectives: "熟练运用移项、去括号、去分母解方程",
-        requirements: "完成所有练习题，至少达到80%正确率",
-        sortOrder: 2,
-        enabled: true,
-      },
-    });
-    console.log("创建子项目: 解方程练习");
-  }
-
-  // 7. 预设对话 - 查找或创建
+  // 7. 预设对话 - 查找或创建（全部挂在这个子项目下）
   const pcData = [
     {
-      subProjectId: sp1?.id || task.id,
+      subProjectId: sp1.id,
       title: "什么是方程？",
       description: "通过对话帮助你理解方程的基本概念",
       systemPrompt: "你是一位耐心的数学老师，用生动有趣的比喻帮助学生理解方程的概念。",
       sortOrder: 1,
     },
     {
-      subProjectId: sp1?.id || task.id,
+      subProjectId: sp1.id,
       title: "找等量关系",
       description: "练习从实际问题中找出等量关系",
       systemPrompt: "你是一位数学教练，引导学生从生活情境中抽象出等量关系。",
       sortOrder: 2,
     },
     {
-      subProjectId: sp2?.id || task.id,
+      subProjectId: sp1.id,
       title: "移项法则",
       description: "学习解方程的第一步：移项",
       systemPrompt: "你是一位经验丰富的数学教师，用例题讲解移项的原理和注意事项。",
-      sortOrder: 1,
+      sortOrder: 3,
     },
   ];
 
@@ -225,7 +198,7 @@ async function main() {
     const existing = await prisma.presetConversation.findFirst({
       where: { subProjectId: pc.subProjectId, title: pc.title },
     });
-    if (!existing && sp1 && sp2) {
+    if (!existing) {
       await prisma.presetConversation.create({
         data: {
           subProjectId: pc.subProjectId,
@@ -253,58 +226,61 @@ async function main() {
   });
   console.log("任务分配已同步");
 
-  // 9. 分析模板 - 使用 upsert 基于 name + teacherId
+  // 9. 分析模板 - 使用 upsert 基于 name + teacherId（可选，注册时跳过）
+  if (!includeTemplates) {
+    console.log("跳过分析模板创建（includeTemplates=false）");
+  } else {
   const templates = [
     {
       name: "学生个人学情模板",
       type: "student",
       content: `## 学生信息
-姓名：{studentName}
-## 课堂背景
-- 课题：{taskTitle}
-- 目标：{taskDescription}
-## 对话活动信息
-- 对话活动：{pcTitle}
-- 活动目标：{pcDescription}
-## 对话内容
-- 对话记录：{personalDialogContents}
-## 分析维度
-### 一、学习态度与参与度
-分析学生在本对话活动中的参与积极性、提问质量和互动深度。
-### 二、知识点理解分析
-结合对话内容，分析学生对核心概念的理解程度和常见误区。
-### 三、学习优势
-指出该学生在本次学习中的突出表现和亮点。
-### 四、薄弱环节
-指出需要重点关注和改进的方面。
-### 五、个性化建议
-给出2-3条具体可行的学习改进建议。`,
+  姓名：{studentName}
+  ## 课堂背景
+  - 课题：{taskTitle}
+  - 目标：{taskDescription}
+  ## 对话活动信息
+  - 对话活动：{pcTitle}
+  - 活动目标：{pcDescription}
+  ## 对话内容
+  - 对话记录：{personalDialogContents}
+  ## 分析维度
+  ### 一、学习态度与参与度
+  分析学生在本对话活动中的参与积极性、提问质量和互动深度。
+  ### 二、知识点理解分析
+  结合对话内容，分析学生对核心概念的理解程度和常见误区。
+  ### 三、学习优势
+  指出该学生在本次学习中的突出表现和亮点。
+  ### 四、薄弱环节
+  指出需要重点关注和改进的方面。
+  ### 五、个性化建议
+  给出2-3条具体可行的学习改进建议。`,
       isDefault: true,
     },
     {
       name: "学生全班学情模板",
       type: "class",
       content: `请根据对话背景和分析要求分析全班活动情况。
-## 对话背景
-### 课题信息
-- 课题：{taskTitle}
-- 目标：{taskDescription}
-### 对话活动信息
-- 对话活动：{pcTitle}
-- 活动目标：{pcDescription}
-### 对话内容
-- 对话记录：{personalDialogContents}
-## 分析维度
-### 一、班级整体学习状态
-概括班级整体活跃度和参与情况，分析学生讨论的热点话题。
-### 二、共性问题分析
-汇总全班学生在知识点理解上的共同困难和常见误区。
-### 三、突出表现
-指出班级中表现优秀或进步明显的学生及其特点。
-### 四、教学建议
-给出针对班级整体的具体可操作的教学改进建议。
-### 五、重点关注学生名单
-每个维度列出发现较差的5位同学姓名。`,
+  ## 对话背景
+  ### 课题信息
+  - 课题：{taskTitle}
+  - 目标：{taskDescription}
+  ### 对话活动信息
+  - 对话活动：{pcTitle}
+  - 活动目标：{pcDescription}
+  ### 对话内容
+  - 对话记录：{personalDialogContents}
+  ## 分析维度
+  ### 一、班级整体学习状态
+  概括班级整体活跃度和参与情况，分析学生讨论的热点话题。
+  ### 二、共性问题分析
+  汇总全班学生在知识点理解上的共同困难和常见误区。
+  ### 三、突出表现
+  指出班级中表现优秀或进步明显的学生及其特点。
+  ### 四、教学建议
+  给出针对班级整体的具体可操作的教学改进建议。
+  ### 五、重点关注学生名单
+  每个维度列出发现较差的5位同学姓名。`,
       isDefault: true,
     },
     {
@@ -329,27 +305,27 @@ async function main() {
       name: "学生个人学情模板（对话活动）",
       type: "student",
       content: `## 学生信息
-姓名：{studentName}
-## 对话活动信息
-- 活动：{pcTitle}
-## 对话内容
-{personalDialogContents}
-## 分析维度
-### 一、学习态度与参与度
-### 二、知识点理解
-### 三、学习优势
-### 四、薄弱环节
-### 五、个性化建议`,
+  姓名：{studentName}
+  ## 对话活动信息
+  - 活动：{pcTitle}
+  ## 对话内容
+  {personalDialogContents}
+  ## 分析维度
+  ### 一、学习态度与参与度
+  ### 二、知识点理解
+  ### 三、学习优势
+  ### 四、薄弱环节
+  ### 五、个性化建议`,
       isDefault: false,
     },
     {
       name: "学生全班学情模板（对话活动）",
       type: "class",
       content: `## 班级整体学习状态
-## 共性问题分析
-## 突出表现
-## 教学建议
-## 重点关注学生名单`,
+  ## 共性问题分析
+  ## 突出表现
+  ## 教学建议
+  ## 重点关注学生名单`,
       isDefault: false,
     },
   ];
@@ -385,8 +361,41 @@ async function main() {
     }
   }
   console.log("分析模板已同步:", templates.length, "个");
+  }
 
-  // 输出统计
+  return { cls1, cls2, task, sp1 };
+}
+
+async function main() {
+  console.log("开始同步数据...\n");
+
+  await seedSystemConfig();
+
+  // 教师 - 查找或创建（仅开发者 npm run db:seed 使用）
+  const hashedPassword = await bcrypt.hash("123456", 10);
+  let teacher = await prisma.user.findFirst({
+    where: { role: "TEACHER" },
+  });
+  if (!teacher) {
+    teacher = await prisma.user.create({
+      data: {
+        email: "teacher@quickclass.com",
+        password: hashedPassword,
+        name: "管老师",
+        role: "TEACHER",
+      },
+    });
+    console.log("创建教师: teacher@quickclass.com");
+  } else {
+    teacher = await prisma.user.update({
+      where: { id: teacher.id },
+      data: { name: "管老师" },
+    });
+    console.log("教师已存在，已更新信息");
+  }
+
+  await seedTeacherData(teacher.id, teacher.name);
+
   console.log("\n=== 数据统计 ===");
   console.log("用户:", await prisma.user.count());
   console.log("班级:", await prisma.class.count());
@@ -400,6 +409,10 @@ async function main() {
   console.log("登录信息：teacher@quickclass.com / 123456");
 }
 
-main()
-  .catch(console.error)
-  .finally(() => prisma.$disconnect());
+// 仅当直接执行时（npm run db:seed）运行 main()，被导入时不运行
+const isMainModule = process.argv[1]?.endsWith("seed-full.ts");
+if (isMainModule) {
+  main()
+    .catch(console.error)
+    .finally(() => prisma.$disconnect());
+}
