@@ -95,7 +95,18 @@ export default function RegisterForm() {
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async (evt) => {
-      const content = evt.target?.result as string;
+      const buffer = evt.target?.result as ArrayBuffer;
+      // 优先用 UTF-8 解码，失败时回退到 GBK（处理 Windows 系统下载的 GBK 编码文件）
+      let content = "";
+      try {
+        content = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+      } catch {
+        try {
+          content = new TextDecoder("gbk").decode(buffer);
+        } catch {
+          content = new TextDecoder("utf-8").decode(buffer);
+        }
+      }
       try {
         setLoading(true);
         const res = await fetch("/api/auth/import-account", {
@@ -113,7 +124,7 @@ export default function RegisterForm() {
       } catch { MessagePlugin.error("网络错误"); }
       finally { setLoading(false); }
     };
-    reader.readAsText(file);
+    reader.readAsArrayBuffer(file);
   };
 
   const handleDownloadKey = () => {
