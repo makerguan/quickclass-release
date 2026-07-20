@@ -284,9 +284,13 @@ export async function PUT(
               where: { id: { in: affectedConvIds } },
             });
           }
-          // 4. 删 AI 学情分析结果（按 presetConversationId 关联的）
+          // 4. 删 AI 学情分析结果（AIInsight 通过 scopeId 关联 PresetConversation，
+          //    还要限定 type 为 pc_class / pc_student，避免误删其他 scope 的洞察）
           await tx.aIInsight.deleteMany({
-            where: { presetConversationId: { in: removedPcIds } },
+            where: {
+              scopeId: { in: removedPcIds },
+              type: { in: ["pc_class", "pc_student"] },
+            },
           });
           // 5. 最后删 PresetConversation 本身
           await tx.presetConversation.deleteMany({ where: { id: { in: removedPcIds } } });
