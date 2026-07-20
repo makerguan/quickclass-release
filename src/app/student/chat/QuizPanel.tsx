@@ -155,7 +155,12 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
       {questions.map((q, idx) => {
         const qOpts = getOptions(q);
         const userAns = answers[q.id];
-        const isRight = q.answer === userAns;
+        // 多选题：顺序无关，按集合比较（先 trim、大写、过滤空、排序、再 join）
+        const normalizeChoice = (s: string | undefined | null) =>
+          (s || "").split(",").map(x => x.trim().toUpperCase()).filter(Boolean).sort().join(",");
+        const isRight = q.type === "MULTIPLE_CHOICE"
+          ? normalizeChoice(q.answer) === normalizeChoice(userAns)
+          : q.answer === userAns;
         return (
           <div key={q.id} className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
             {/* 题号和题目 */}

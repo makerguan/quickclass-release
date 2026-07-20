@@ -73,8 +73,15 @@ export async function POST(
         const isCorrect = grading?.isCorrect ?? false;
         if (isCorrect) correctCount++;
 
-        const score = grading?.score ?? (isCorrect ? (question.score || 25) : 0);
-        const maxScore = grading?.maxScore ?? (question.score || Math.round(100 / quiz.Question.length));
+        // 计分健壮性：使用 != null 而非 ??，让 0 也能走 fallback
+        // per-question default：question.score=0 时按 N 道题均分（>0）
+        const perQuestionMax = question.score || Math.round(100 / quiz.Question.length);
+        const score = grading?.score != null
+          ? grading.score
+          : (isCorrect ? perQuestionMax : 0);
+        const maxScore = grading?.maxScore != null
+          ? grading.maxScore
+          : perQuestionMax;
         totalRawScore += score;
         maxTotalScore += maxScore;
 

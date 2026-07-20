@@ -266,13 +266,29 @@ export async function PUT(
           .filter((p) => !incomingPcIds.has(p.id))
           .map((p) => p.id);
         if (removedPcIds.length > 0) {
-          // 只解除学生对被移除对话的关联，不删除对话记录
-          // 这样学生的历史对话仍然保留，只是失去与预设对话的关联
-          await tx.conversation.updateMany({
+          // 级联删除：删除被移除对话活动的所有学生对话记录、消息、AI 学情分析结果
+          // 与 QuizActivity/QuizAttempt 的级联清理保持一致
+          // 1. 找出受影响的 Conversation ID 集合
+          const affectedConversations = await tx.conversation.findMany({
             where: { presetConversationId: { in: removedPcIds } },
-            data: { presetConversationId: null },
+            select: { id: true },
           });
-          // 只删除被移除的预设对话，不是全部
+          const affectedConvIds = affectedConversations.map((c) => c.id);
+          // 2. 先删 Messages（避免孤儿消息）
+          if (affectedConvIds.length > 0) {
+            await tx.message.deleteMany({
+              where: { conversationId: { in: affectedConvIds } },
+            });
+            // 3. 再删 Conversations
+            await tx.conversation.deleteMany({
+              where: { id: { in: affectedConvIds } },
+            });
+          }
+          // 4. 删 AI 学情分析结果（按 presetConversationId 关联的）
+          await tx.aIInsight.deleteMany({
+            where: { presetConversationId: { in: removedPcIds } },
+          });
+          // 5. 最后删 PresetConversation 本身
           await tx.presetConversation.deleteMany({ where: { id: { in: removedPcIds } } });
         }
 
