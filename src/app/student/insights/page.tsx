@@ -19,44 +19,6 @@ interface InsightsData {
   classInsight: InsightRecord | null;
 }
 
-/** 剥离 markdown 代码块包裹（如 ```html ... ```） */
-function stripMarkdownCodeBlock(content: string): string {
-  const trimmed = content.trim();
-  const match = trimmed.match(/^```(?:html|HTML)?\s*\n([\s\S]*?)\n```$/);
-  if (match) return match[1].trim();
-  return content;
-}
-
-/** 判断内容是否为 HTML 格式 */
-function isHtmlContent(content: string): boolean {
-  const stripped = stripMarkdownCodeBlock(content);
-  const trimmed = stripped.trim();
-  return trimmed.startsWith('<!DOCTYPE') || 
-         trimmed.startsWith('<html') ||
-         (trimmed.includes('<html') && trimmed.includes('</html>'));
-}
-
-/** 渲染洞察内容 - 支持 HTML 和 Markdown */
-function InsightContent({ content }: { content: string }) {
-  if (isHtmlContent(content)) {
-    const htmlContent = stripMarkdownCodeBlock(content);
-    return (
-      <iframe
-        srcDoc={htmlContent}
-        className="w-full border-none"
-        style={{ minHeight: "400px" }}
-        sandbox="allow-scripts"
-        title="学情分析报告"
-      />
-    );
-  }
-  return (
-    <div className="prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
-      <Markdown>{content}</Markdown>
-    </div>
-  );
-}
-
 export default function StudentInsightsPage() {
   const [data, setData] = useState<InsightsData>({ personalInsights: [], classInsight: null });
   const [loading, setLoading] = useState(true);
@@ -148,8 +110,8 @@ export default function StudentInsightsPage() {
                   </Button>
                 )}
               </div>
-              <div className="bg-[#F7F8FA] p-5 rounded-lg text-sm leading-relaxed min-h-[120px]">
-                <InsightContent content={latestInsight.content} />
+              <div className="bg-[#F7F8FA] p-5 rounded-lg text-sm leading-relaxed prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all">
+                <Markdown>{latestInsight.content}</Markdown>
               </div>
             </Card>
 
@@ -167,8 +129,8 @@ export default function StudentInsightsPage() {
                     生成时间：{formatDate(previousInsight.createdAt)}
                   </p>
                 </div>
-                <div className="bg-[#FFF8F0] p-5 rounded-lg text-sm leading-relaxed border border-[#ED7B2F]/20">
-                  <InsightContent content={previousInsight.content} />
+                <div className="bg-[#FFF8F0] p-5 rounded-lg text-sm leading-relaxed whitespace-pre-wrap border border-[#ED7B2F]/20 break-words">
+                  {previousInsight.content}
                 </div>
               </Card>
             )}
@@ -182,8 +144,8 @@ export default function StudentInsightsPage() {
                     教师对全班同学的学习分析（第 {data.classInsight.version} 版）
                   </p>
                 </div>
-                <div className="bg-[#F0F7FF] p-5 rounded-lg text-sm leading-relaxed border border-[#0052D9]/10">
-                  <InsightContent content={data.classInsight.content} />
+                <div className="bg-[#F0F7FF] p-5 rounded-lg text-sm leading-relaxed whitespace-pre-wrap border border-[#0052D9]/10 break-words">
+                  {data.classInsight.content}
                 </div>
               </Card>
             )}
