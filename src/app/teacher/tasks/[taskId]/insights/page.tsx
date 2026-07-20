@@ -17,9 +17,19 @@ import { usePromptPreview, PromptPreviewDialog } from "@/components/prompt-previ
 
 // ===== 辅助函数 =====
 
+/** 剥离 markdown 代码块包裹（如 ```html ... ```） */
+function stripMarkdownCodeBlock(content: string): string {
+  const trimmed = content.trim();
+  // 匹配 ```html 或 ``` 开头，``` 结尾
+  const match = trimmed.match(/^```(?:html|HTML)?\s*\n([\s\S]*?)\n```$/);
+  if (match) return match[1].trim();
+  return content;
+}
+
 /** 判断内容是否为 HTML 格式 */
 function isHtmlContent(content: string): boolean {
-  const trimmed = content.trim();
+  const stripped = stripMarkdownCodeBlock(content);
+  const trimmed = stripped.trim();
   return trimmed.startsWith('<!DOCTYPE') || 
          trimmed.startsWith('<html') ||
          (trimmed.includes('<html') && trimmed.includes('</html>'));
@@ -28,6 +38,7 @@ function isHtmlContent(content: string): boolean {
 /** 渲染洞察内容 - 支持 HTML 和 Markdown，带全屏按钮 */
 function InsightContent({ content, className = "" }: { content: string; className?: string }) {
   if (isHtmlContent(content)) {
+    const htmlContent = stripMarkdownCodeBlock(content);
     return (
       <div className="relative group">
         <button
@@ -35,7 +46,7 @@ function InsightContent({ content, className = "" }: { content: string; classNam
           onClick={() => {
             const w = window.open('', '_blank');
             if (w) {
-              w.document.write(content);
+              w.document.write(htmlContent);
               w.document.close();
               w.document.title = '学情分析报告';
             }
@@ -44,7 +55,7 @@ function InsightContent({ content, className = "" }: { content: string; classNam
           全屏查看
         </button>
         <iframe
-          srcDoc={content}
+          srcDoc={htmlContent}
           className={`w-full border-none ${className}`}
           style={{ minHeight: "400px" }}
           sandbox="allow-scripts"
