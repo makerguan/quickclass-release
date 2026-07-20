@@ -20,7 +20,7 @@ export const submitButtonCSS = `
 #submitBtn {
   position: fixed;
   bottom: 30px;
-  right: 30px;
+  left: 30px;
   padding: 15px 30px;
   background: #E34D59;
   color: white;
@@ -300,8 +300,9 @@ export function injectSubmitFunctionality(html: string, context: SubmitContext):
     }
   }
 
-  // 4. 检查是否已有追踪脚本
-  const hasTracking = modified.includes("window.__explorationData__");
+  // 4. 检查是否已有追踪脚本（必须是赋值初始化，不能只看字符串匹配，
+  //    否则 AI 伴学里的 `if (window.__explorationData__)` 读取会被误判为已初始化）
+  const hasTracking = /window\.__explorationData__\s*=/.test(modified);
   if (!hasTracking) {
     var trackScript = basicTrackingScript;
       if (modified.includes("</body>")) {
