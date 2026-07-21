@@ -202,15 +202,13 @@ export async function GET(
       orderBy: { version: "desc" },
     });
 
-    // 去重：只保留每个 type + classId + userId 组合的最新版本
-    const latestInsightsMap = new Map<string, typeof allInsights[0]>();
-    for (const insight of allInsights) {
-      const key = `${insight.type}-${insight.classId}-${insight.userId || "class"}`;
-      if (!latestInsightsMap.has(key)) {
-        latestInsightsMap.set(key, insight);
-      }
-    }
-    const insights = Array.from(latestInsightsMap.values());
+    // 拆分：
+    //   - task_class（班级洞察）：返回全部历史版本，前端展示版本切换
+    //   - task_student（学生洞察）：返回全部历史版本，前端按 userId 分组展示版本切换
+    //     "已分析人数" 由前端根据 userId 去重计算
+    const taskClassRaw = allInsights.filter((i) => i.type === "task_class");
+    const taskStudentRaw = allInsights.filter((i) => i.type === "task_student");
+    const insights = [...taskClassRaw, ...taskStudentRaw];
 
     // 解析星星数量：从 content 中提取 ★ 的个数
     const parseStarCount = (content: string): number => {

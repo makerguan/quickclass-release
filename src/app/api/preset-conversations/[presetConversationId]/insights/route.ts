@@ -53,22 +53,17 @@ export async function GET(
       }),
     ]);
 
-    // 分类：班级分析结果和学生分析结果
-    const studentInsights: Array<{ id: string; userId: string; studentName: string; content: string; version: number; createdAt: string }> = [];
-    const seenStudent = new Set<string>();
-    for (const ins of studentInsightsRaw) {
-      if (!seenStudent.has(ins.userId!)) {
-        seenStudent.add(ins.userId!);
-        studentInsights.push({
-          id: ins.id,
-          userId: ins.userId!,
-          studentName: ins.User?.name || "未知",
-          content: ins.content,
-          version: ins.version,
-          createdAt: ins.createdAt.toISOString(),
-        });
-      }
-    }
+    // 学生分析：返回全部历史版本（按 userId 分组后前端展示版本切换）；
+    // "已分析人数" 由前端根据 userId 去重计算
+    const studentInsights: Array<{ id: string; userId: string; studentName: string; content: string; version: number; createdAt: string }> =
+      studentInsightsRaw.map((ins) => ({
+        id: ins.id,
+        userId: ins.userId!,
+        studentName: ins.User?.name || "未知",
+        content: ins.content,
+        version: ins.version,
+        createdAt: ins.createdAt.toISOString(),
+      }));
 
     // 解析星星数量
     const parseStarCount = (content: string): number => {

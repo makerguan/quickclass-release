@@ -36,22 +36,37 @@ function isHtmlContent(content: string): boolean {
          (trimmed.includes("<html") && trimmed.includes("</html>"));
 }
 
-/** 渲染洞察内容 - 支持 HTML 和 Markdown */
-function InsightContent({ content }: { content: string }) {
+/** 渲染洞察内容 - 支持 HTML 和 Markdown，带全屏按钮 */
+function InsightContent({ content, className = "" }: { content: string; className?: string }) {
   if (isHtmlContent(content)) {
     const htmlContent = stripMarkdownCodeBlock(content);
     return (
-      <iframe
-        srcDoc={htmlContent}
-        className="w-full border-none"
-        style={{ minHeight: "400px" }}
-        sandbox="allow-scripts"
-        title="学情分析报告"
-      />
+      <div className="relative group">
+        <button
+          className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-white/80 hover:bg-white text-gray-600 rounded border border-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
+          onClick={() => {
+            const w = window.open('', '_blank');
+            if (w) {
+              w.document.write(htmlContent);
+              w.document.close();
+              w.document.title = '学情分析报告';
+            }
+          }}
+        >
+          全屏查看
+        </button>
+        <iframe
+          srcDoc={htmlContent}
+          className={`w-full border-none ${className}`}
+          style={{ minHeight: "400px" }}
+          sandbox="allow-scripts"
+          title="学情分析报告"
+        />
+      </div>
     );
   }
   return (
-    <div className="prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
+    <div className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
       <Markdown>{content}</Markdown>
     </div>
   );

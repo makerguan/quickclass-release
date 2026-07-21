@@ -162,6 +162,8 @@ export default function TaskInsightsPage() {
   const [loadingStudentId, setLoadingStudentId] = useState<string | null>(null);
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
   const [batchAnalyzing, setBatchAnalyzing] = useState(false);
+  // 学生学情分析版本切换：studentId -> 选中的版本在 versions 数组中的下标（0 表示最新）
+  const [studentVersionIndex, setStudentVersionIndex] = useState<Record<string, number>>({});
 
   // 班级分析收展
   const [expandedPcClass, setExpandedPcClass] = useState(true);  // 默认展开班级分析
@@ -939,7 +941,9 @@ export default function TaskInsightsPage() {
                       </div>
                       <div className="space-y-2">
                         {sortStudents(pcStudents, pcStudentInsights, starSortDesc).map((student) => {
-                          const ins = pcStudentInsights.find((i) => i.userId === student.id);
+                          const versions = pcStudentInsights.filter((i) => i.userId === student.id);
+                          const versionIndex = studentVersionIndex[student.id] || 0;
+                          const ins = versions[versionIndex] || versions[0];
                           const isExpanded = expandedStudentId === student.id;
                           const isAnalyzing = loadingStudentId === student.id;
                           const hasConv = student.convCount > 0;
@@ -947,7 +951,7 @@ export default function TaskInsightsPage() {
                             <div key={student.id} className={`border rounded-lg overflow-hidden ${!hasConv ? "opacity-50" : ""}`}>
                               <div className="flex items-center justify-between px-4 py-3 bg-[#F7F8FA] cursor-pointer"
                                 onClick={() => hasConv && setExpandedStudentId(isExpanded ? null : student.id)}>
-                                <div className="flex items-center gap-2">
+                                <div className="flex items-center gap-2 flex-wrap">
                                   {ins && <StarRating count={ins.starCount || 0} />}
                                   <div className="w-7 h-7 rounded-full bg-[#0052D9]/10 flex items-center justify-center">
                                     <span className="text-[#0052D9] text-xs font-medium">{student.name.charAt(0)}</span>
@@ -955,6 +959,39 @@ export default function TaskInsightsPage() {
                                   <span className="text-sm font-medium">{student.name}</span>
                                   {ins && <Tag theme="success" variant="light" size="small">V{ins.version}</Tag>}
                                   {ins && <span className="text-xs text-[#63666F]">{formatDate(ins.createdAt)}</span>}
+                                  {versions.length > 1 && (
+                                    <div className="flex items-center gap-1 ml-1 pl-2 border-l border-gray-200">
+                                      <span className="text-xs text-gray-400">版本：</span>
+                                      {versions.map((v, i) => (
+                                        <div key={v.id} className="flex items-center gap-0.5">
+                                          <button
+                                            className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                                              i === versionIndex
+                                                ? "bg-[#0052D9] text-white"
+                                                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                            }`}
+                                            onClick={(e) => { e.stopPropagation(); setStudentVersionIndex((p) => ({ ...p, [student.id]: i })); }}
+                                            title={`第 ${v.version} 版 · ${formatDate(v.createdAt)}`}
+                                          >
+                                            v{v.version}
+                                          </button>
+                                          {v.id && (
+                                            <button
+                                              className="text-xs text-red-400 hover:text-red-600 px-0.5"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setPcDeleteVersion({ id: v.id!, version: v.version });
+                                                setPcDeleteVisible(true);
+                                              }}
+                                              title="删除此版本"
+                                            >
+                                              ×
+                                            </button>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
                                   {!hasConv && <Tag theme="default" variant="outline" size="small">无对话</Tag>}
                                   {hasConv && !ins && !requireStarRating && <span className="text-xs text-[#BBBBBB]">未评分</span>}
                                 </div>
@@ -1029,19 +1066,19 @@ export default function TaskInsightsPage() {
                               >
                                 v{v.version}
                               </button>
-                              {v.id && (
-                                <button
-                                  className="text-xs text-red-400 hover:text-red-600 px-0.5"
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setTaskDeleteVersion({ id: v.id!, version: v.version });
-                                    setTaskDeleteVisible(true);
-                                  }}
-                                  title="删除此版本"
-                                >
-                                  ×
-                                </button>
-                              )}
+{v.id && (
+                                            <button
+                                              className="text-xs text-red-400 hover:text-red-600 px-0.5"
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setTaskDeleteVersion({ id: v.id!, version: v.version });
+                                                setTaskDeleteVisible(true);
+                                              }}
+                                              title="删除此版本"
+                                            >
+                                              ×
+                                            </button>
+                                          )}
                             </div>
                           ))}
                         </div>
@@ -1092,7 +1129,7 @@ export default function TaskInsightsPage() {
                 <Card>
                   <div className="flex justify-between items-center mb-4">
                     <h3 className="font-medium text-[#1A1A1A]">
-                      学生分析（{taskStudentInsights.length}/{currentClass.students.filter((s) => s.convCount > 0).length} 人已分析）
+                      学生分析（{new Set(taskStudentInsights.map((i) => i.userId)).size}/{currentClass.students.filter((s) => s.convCount > 0).length} 人已分析）
                     </h3>
                     <div className="flex items-center gap-2">
                       <StarSortButton sortDesc={starSortDesc} onChange={setStarSortDesc} />
@@ -1124,7 +1161,9 @@ export default function TaskInsightsPage() {
                   </div>
                   <div className="space-y-2">
                     {sortStudents(currentClass.students, taskStudentInsights, starSortDesc).map((student) => {
-                      const ins = taskStudentInsights.find((i) => i.userId === student.id);
+                      const versions = taskStudentInsights.filter((i) => i.userId === student.id);
+                      const versionIndex = studentVersionIndex[student.id] || 0;
+                      const ins = versions[versionIndex] || versions[0];
                       const isExpanded = expandedStudentId === student.id;
                       const isLoading = loadingStudentId === student.id;
                       const hasConv = student.convCount > 0;
@@ -1132,7 +1171,7 @@ export default function TaskInsightsPage() {
                         <div key={student.id} className={`border rounded-lg overflow-hidden ${!hasConv ? "opacity-50" : ""}`}>
                           <div className="flex items-center justify-between px-4 py-3 bg-[#F7F8FA] cursor-pointer"
                             onClick={() => hasConv && setExpandedStudentId(isExpanded ? null : student.id)}>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               {ins && <StarRating count={ins.starCount || 0} />}
                               <div className="w-7 h-7 rounded-full bg-[#0052D9]/10 flex items-center justify-center">
                                 <span className="text-[#0052D9] text-xs font-medium">{student.name.charAt(0)}</span>
@@ -1142,6 +1181,39 @@ export default function TaskInsightsPage() {
                               {!hasConv && <Tag theme="default" variant="outline" size="small">无对话</Tag>}
                               {hasConv && !ins && !requireStarRating && <span className="text-xs text-[#BBBBBB]">未评分</span>}
                               {hasConv && <span className="text-xs text-[#63666F]">{formatLastActive(student.lastActiveAt)}</span>}
+                              {versions.length > 1 && (
+                                <div className="flex items-center gap-1 ml-1 pl-2 border-l border-gray-200">
+                                  <span className="text-xs text-gray-400">版本：</span>
+                                  {versions.map((v, i) => (
+                                    <div key={v.id} className="flex items-center gap-0.5">
+                                      <button
+                                        className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
+                                          i === versionIndex
+                                            ? "bg-[#0052D9] text-white"
+                                            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                        }`}
+                                        onClick={(e) => { e.stopPropagation(); setStudentVersionIndex((p) => ({ ...p, [student.id]: i })); }}
+                                        title={`第 ${v.version} 版 · ${formatDate(v.createdAt)}`}
+                                      >
+                                        v{v.version}
+                                      </button>
+                                      {v.id && (
+                                        <button
+                                          className="text-xs text-red-400 hover:text-red-600 px-0.5"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setTaskDeleteVersion({ id: v.id!, version: v.version });
+                                            setTaskDeleteVisible(true);
+                                          }}
+                                          title="删除此版本"
+                                        >
+                                          ×
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-center gap-2">
                               {hasConv && (
@@ -1162,7 +1234,7 @@ export default function TaskInsightsPage() {
                             </div>
                           </div>
 {isExpanded && ins && !requireStarRating && (
-                                          <div className="px-4 py-3">
+                                          <div key={ins.id} className="px-4 py-3">
                                             <InsightContent content={ins.content} />
                                           </div>
                                         )}
@@ -1314,7 +1386,8 @@ export default function TaskInsightsPage() {
                 const res = await fetch(`/api/insights/${pcDeleteVersion.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
                 if (res.ok) {
                   MessagePlugin.success("版本已删除");
-                  setPcClassInsightVersions((prev) => prev.filter((v) => v.id !== pcDeleteVersion.id));
+                  const deletedId = pcDeleteVersion.id;
+                  setPcClassInsightVersions((prev) => prev.filter((v) => v.id !== deletedId));
                   // 如果删的是当前显示的版本，切换到第一个
                   setPcClassInsightVersions((prev) => {
                     if (prev.length > 0) {
@@ -1327,6 +1400,8 @@ export default function TaskInsightsPage() {
                     }
                     return prev;
                   });
+                  // 同步清理对话级学生洞察
+                  setPcStudentInsights((prev) => prev.filter((v) => v.id !== deletedId));
                 } else {
                   MessagePlugin.error("删除失败");
                 }
@@ -1365,8 +1440,9 @@ export default function TaskInsightsPage() {
                 const res = await fetch(`/api/insights/${taskDeleteVersion.id}`, { method: "DELETE", headers: { Authorization: `Bearer ${token}` } });
                 if (res.ok) {
                   MessagePlugin.success("版本已删除");
+                  const deletedId = taskDeleteVersion.id;
                   setTaskClassInsightVersions((prev) => {
-                    const updated = prev.filter((v) => v.id !== taskDeleteVersion.id);
+                    const updated = prev.filter((v) => v.id !== deletedId);
                     if (updated.length > 0) {
                       const newIdx = Math.min(taskClassVersionIndex, updated.length - 1);
                       setTaskClassVersionIndex(newIdx);
@@ -1376,6 +1452,15 @@ export default function TaskInsightsPage() {
                       setTaskClassVersionIndex(0);
                     }
                     return updated;
+                  });
+                  // 同步清理学生洞察（对话级 + 任务级）
+                  setPcStudentInsights((prev) => prev.filter((v) => v.id !== deletedId));
+                  setTaskStudentInsights((prev) => prev.filter((v) => v.id !== deletedId));
+                  // 重置该学生的版本选择为最新
+                  setStudentVersionIndex((prev) => {
+                    const next = { ...prev };
+                    // 删除可能影响到的所有学生都重置为 0
+                    return next;
                   });
                 } else {
                   MessagePlugin.error("删除失败");
