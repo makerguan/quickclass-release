@@ -2688,68 +2688,7 @@ export default function TeacherTasksPage() {
                         <div className="flex items-center justify-between mb-2">
                           <h4 className="font-medium text-sm text-[#63666F]">课堂作业</h4>
                           <div className="flex gap-2">
-                            <input
-                              type="file"
-                              accept=".json"
-                              className="hidden"
-                              id="import-quiz-input"
-                              onChange={async (e) => {
-                                const file = e.target.files?.[0];
-                                if (!file) return;
-                                const reader = new FileReader();
-                                reader.onload = async (ev) => {
-                                  try {
-                                    const data = JSON.parse(ev.target?.result as string);
-                                    let importedQuestions: any[] = [];
-                                    if (Array.isArray(data)) importedQuestions = data;
-                                    else if (data.questions && Array.isArray(data.questions)) importedQuestions = data.questions;
-                                    else throw new Error("JSON 格式不正确");
-
-                                    // 从文件名提取标题
-                                    const title = file.name.replace(/\.json$/i, "") || "导入作业";
-                                    const token = localStorage.getItem("token") || "";
-
-                                    // 创建作业
-                                    const desc = data.description || "";
-                                    const createRes = await fetch("/api/quiz-activities", {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                                      body: JSON.stringify({ subProjectId: quizPanelSpId || task.subProjects[0]?.id, title, description: desc, autoGenerate: false }),
-                                    });
-                                    const created = await createRes.json();
-                                    if (!createRes.ok) throw new Error(created.error || "创建失败");
-
-                                    // 导入题目
-                                    const questionsRes = await fetch(`/api/quiz-activities/${created.id}/questions`, {
-                                      method: "PUT",
-                                      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                                      body: JSON.stringify({ questions: importedQuestions }),
-                                    });
-                                    if (!questionsRes.ok) {
-                                      const errData = await questionsRes.json().catch(() => ({}));
-                                      throw new Error(errData.message || "导入题目失败");
-                                    }
-
-                                    // 刷新列表
-                                    if (quizPanelSpId || task.subProjects[0]?.id) {
-                                      const refreshRes = await fetch(`/api/quiz-activities?subProjectId=${quizPanelSpId || task.subProjects[0]?.id}`, {
-                                        headers: { Authorization: `Bearer ${token}` },
-                                      });
-                                      const refreshData = await refreshRes.json();
-                                      setQuizzes(Array.isArray(refreshData) ? refreshData : []);
-                                    }
-                                    MessagePlugin.success(`已导入作业「${title}」，共 ${importedQuestions.length} 题`);
-                                  } catch (err: any) {
-                                    MessagePlugin.error("导入失败: " + (err.message || "文件格式不正确"));
-                                  }
-                                };
-                                reader.readAsText(file);
-                                e.target.value = "";
-                              }}
-                            />
-                            <label htmlFor="import-quiz-input" className="px-3 py-1.5 border border-gray-300 rounded-lg text-xs cursor-pointer hover:bg-gray-50 text-gray-600">
-                              导入作业
-                            </label>
+                            {/* 导入作业功能已隐藏 */}
                             <Button theme="primary" variant="outline" size="small" icon={<EditIcon />} onClick={() => { setQuizDesignId(null); setQuizDesignTitle(""); setQuizDesignDesc(""); setQuizDesignTemplateContent(""); setQuizDesignQuestions([]); setSelectedQuizTemplateId(""); setQuizDesignMode(true); if (!quizPanelVisible && task.subProjects.length > 0) openQuizPanel(task.subProjects[0].id!, task); else if (quizPanelVisible && task.subProjects.length > 0) { setQuizPanelSpId(task.subProjects[0].id!); openQuizPanel(task.subProjects[0].id!, task); } else { setQuizPanelVisible(true); } }}>新建作业</Button>
                           </div>
                         </div>
