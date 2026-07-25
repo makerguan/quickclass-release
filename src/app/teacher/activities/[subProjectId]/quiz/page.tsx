@@ -17,6 +17,9 @@ export default function TeacherQuizListPage() {
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [templates, setTemplates] = useState<any[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState("");
+  const [templateContent, setTemplateContent] = useState("");
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -29,14 +32,41 @@ export default function TeacherQuizListPage() {
       .catch(console.error);
   }, [subProjectId, router]);
 
+  const fetchTemplates = async () => {
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch("/api/analysis-templates", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setTemplates((data.all || []).filter((t: any) => t.type === "QUIZ_DESIGN"));
+      }
+    } catch {
+      console.error("获取作业设计模板失败");
+    }
+  };
+
   const handleCreate = async () => {
     if (!newTitle.trim()) return;
+    if (autoGenerate && !selectedTemplateId) {
+      MessagePlugin.warning("请先选择作业设计模板");
+      return;
+    }
     setCreating(true);
     const token = localStorage.getItem("token") || "";
     const res = await fetch("/api/quiz-activities", {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ subProjectId, title: newTitle, description: newDesc, autoGenerate, passScore: newPassScore }),
+      body: JSON.stringify({
+        subProjectId,
+        title: newTitle,
+        description: newDesc,
+        autoGenerate,
+        quizDesignTemplateId: selectedTemplateId || null,
+        quizDesignTemplateContent: templateContent || null,
+        passScore: newPassScore,
+      }),
     });
     const data = await res.json();
     if (res.ok) {
@@ -50,9 +80,11 @@ export default function TeacherQuizListPage() {
       setNewTitle("");
       setNewDesc("");
       setNewPassScore(60);
-      router.push(`/teacher/activities/${subProjectId}/quiz/${data.id}`);
+      setSelectedTemplateId("");
+      setTemplateContent("");
+      router.push(`/teacher/activities/${subProjectId}/quiz/${data.id}/questions`);
     } else {
-      MessagePlugin.error(data.error || "创建失败");
+      MessagePlugin.error(data.error || data.message || "创建失败");
     }
     setCreating(false);
   };
@@ -105,7 +137,7 @@ export default function TeacherQuizListPage() {
           <div className="text-sm text-gray-400">管理作业题目和发布</div>
         </div>
         <button
-          onClick={() => setShowModal(true)}
+          onClick={() => { setShowModal(true); fetchTemplates(); }}
           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
         >
           + 新建作业
@@ -175,6 +207,35 @@ export default function TeacherQuizListPage() {
               onChange={(e) => setNewDesc(e.target.value)}
               rows={3}
             />
+            <div className="mb-3">
+              <div className="text-xs text-gray-500 mb-1">作业设计模板</div>
+              <select
+                className="w-full border rounded-lg px-3 py-2 text-sm"
+                value={selectedTemplateId}
+                onChange={(e) => {
+                  setSelectedTemplateId(e.target.value);
+                  const tpl = templates.find((t: any) => t.id === e.target.value);
+                  setTemplateContent(tpl?.content || "");
+                }}
+              >
+                <option value="">请选择模板...</option>
+                {templates.map((t: any) => (
+                  <option key={t.id} value={t.id}>{t.name}</option>
+                ))}
+              </select>
+              {!selectedTemplateId && (
+                <div className="mt-2 p-2 bg-yellow-50 rounded-lg text-xs text-yellow-700">
+                  还没有作业设计模板？请前往「模板设置」页面创建后再新建作业。
+                </div>
+              )}
+            </div>
+            <textarea
+              className="w-full border rounded-lg px-3 py-2 mb-3 text-sm"
+              placeholder="作业设计提示词（选择模板后自动填入，可修改）"
+              value={templateContent}
+              onChange={(e) => setTemplateContent(e.target.value)}
+              rows={5}
+            />
             <div className="flex items-center gap-3 mb-4">
               <label className="text-sm text-gray-600">合格线分值</label>
               <input
@@ -189,7 +250,7 @@ export default function TeacherQuizListPage() {
             </div>
             <div className="flex gap-3 justify-end">
               <button onClick={() => setShowModal(false)} className="px-4 py-2 text-gray-500 text-sm">取消</button>
-              <button onClick={handleCreate} disabled={creating || !newTitle.trim()} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50">
+              <button onClick={handleCreate} disabled={creating || !newTitle.trim() || (autoGenerate && !selectedTemplateId)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50">
                 {creating ? "创建中..." : "创建"}
               </button>
             </div>

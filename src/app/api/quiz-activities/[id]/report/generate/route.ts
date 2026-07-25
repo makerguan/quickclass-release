@@ -175,11 +175,6 @@ export async function POST(
       model: aiConfig.model,
       messages: [{ role: "user", content: prompt }],
     };
-    
-    // 只有当 wordLimit 存在时才设置 max_tokens
-    if (wordLimit) {
-      requestBody.max_tokens = Math.round(wordLimit * 1.5);
-    }
 
     const aiResponse = await fetch(`${aiConfig.baseURL}/chat/completions`, {
       method: "POST",

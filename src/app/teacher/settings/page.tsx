@@ -44,6 +44,7 @@ export default function TeacherSettingsPage() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [showBackupDialog, setShowBackupDialog] = useState(false);
   const [backupFileName, setBackupFileName] = useState("");
+  const [versionInfo, setVersionInfo] = useState<{ version: string; buildTime?: string } | null>(null);
 
   // 学情分析约束配置
   const [requireStarRating, setRequireStarRating] = useState(false);
@@ -88,8 +89,21 @@ export default function TeacherSettingsPage() {
   useEffect(() => {
     fetchConfig();
     fetchUserProfile();
+    fetchVersion();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const fetchVersion = async () => {
+    try {
+      const res = await fetch("/api/version");
+      if (res.ok) {
+        const data = await res.json();
+        setVersionInfo(data);
+      }
+    } catch {
+      // 忽略版本获取失败
+    }
+  };
 
   const fetchConfig = async () => {
     setLoading(true);
@@ -546,8 +560,20 @@ export default function TeacherSettingsPage() {
       <div className="max-w-3xl space-y-4 pb-8">
         {/* Page header */}
         <div>
-          <h1 className="text-2xl font-bold text-[#1A1A1A]">系统设置</h1>
-          <p className="text-[#63666F] mt-1">配置 AI 服务和管理系统参数</p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-[#1A1A1A]">系统设置</h1>
+              <p className="text-[#63666F] mt-1">配置 AI 服务和管理系统参数</p>
+            </div>
+            {versionInfo && (
+              <div className="text-right">
+                <div className="text-sm font-medium text-[#0052D9]">{versionInfo.version}</div>
+                <div className="text-xs text-[#63666F]">
+                  {versionInfo.buildTime ? new Date(versionInfo.buildTime).toLocaleDateString("zh-CN") : ""}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* 对话记录预警提示 */}

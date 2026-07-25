@@ -255,9 +255,6 @@ export async function POST(
       model: aiConfig.model,
       messages: [{ role: "user", content: prompt }],
     };
-    if (wordLimit) {
-      requestBody.max_tokens = Math.round(wordLimit * 1.5);
-    }
 
     const aiResponse = await fetch(`${aiConfig.baseURL}/chat/completions`, {
       method: "POST",

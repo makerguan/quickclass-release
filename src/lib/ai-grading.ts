@@ -116,7 +116,6 @@ async function gradeByAI(
     body: JSON.stringify({
       model: aiConfig.model,
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 2000,
     }),
   });
 
@@ -234,7 +233,6 @@ export async function generateTeachingAdvice(
     body: JSON.stringify({
       model: aiConfig.model,
       messages: [{ role: "user", content: prompt }],
-      max_tokens: 1500,
     }),
   });
 

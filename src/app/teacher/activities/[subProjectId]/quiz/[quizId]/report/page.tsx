@@ -8,6 +8,7 @@ import {
 } from "recharts";
 import { Switch, MessagePlugin, Dialog } from "tdesign-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
+import { useAppVersion } from "@/lib/useAppVersion";
 
 interface Question {
   id?: string;
@@ -21,6 +22,7 @@ interface Question {
 }
 
 export default function QuizReportPage() {
+  const appVersion = useAppVersion();
   const params = useParams();
   const router = useRouter();
   const subProjectId = params.subProjectId as string;
@@ -568,7 +570,7 @@ export default function QuizReportPage() {
                 <div className="font-medium text-gray-700 text-sm">✨ AI 学情分析报告</div>
                 {aiReport && aiReportVersions.length > 0 && (
                   <span className="text-xs text-[#63666F]">
-                    · 第 {aiReportVersions[aiReportVersionIndex]?.version} 版 · {aiReportVersions[aiReportVersionIndex]?.createdAt ? new Date(aiReportVersions[aiReportVersionIndex].createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''}
+                    · 第 {aiReportVersions[aiReportVersionIndex]?.version} 版 · {appVersion}
                   </span>
                 )}
                 {/* 版本切换 + 删除 */}

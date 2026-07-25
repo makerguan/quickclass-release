@@ -79,7 +79,6 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model: aiConfig.model,
         messages: [{ role: "user", content: prompt }],
-        max_tokens: 50000,
       }),
     });
 
@@ -96,9 +95,20 @@ export async function POST(req: NextRequest) {
     }
 
     if (!aiResponse.ok) {
-      const err = aiData.error?.message || aiData.message || JSON.stringify(aiData);
-      console.error("AI 出题失败:", err);
-      return NextResponse.json({ message: "AI 出题失败：" + err }, { status: 500 });
+      const errCode = aiData.error?.code || "";
+      const errMsg = aiData.error?.message || aiData.message || JSON.stringify(aiData);
+
+      // 检测 max_tokens 上限错误：提示用户更换更高级的模型
+      if (errCode.includes("InvalidParameter") && /max_tokens.*should be/i.test(errMsg)) {
+        console.error("AI 出题失败 (max_tokens 上限):", errMsg);
+        return NextResponse.json({
+          message: "当前 AI 模型的单次输出长度上限较低，无法完整生成题目。建议在【系统设置】中更换为支持更长输出的模型，API Key 也建议同步更换。",
+          code: "MAX_TOKENS_LIMIT"
+        }, { status: 400 });
+      }
+
+      console.error("AI 出题失败:", errMsg);
+      return NextResponse.json({ message: "AI 出题失败：" + errMsg }, { status: 500 });
     }
 
     const choice = aiData.choices?.[0];

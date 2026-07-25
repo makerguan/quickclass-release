@@ -6,6 +6,7 @@ import { RefreshIcon, UserIcon, ChartBarIcon, InfoCircleIcon } from "tdesign-ico
 import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import { usePromptPreview, PromptPreviewDialog } from "@/components/prompt-preview";
+import { useAppVersion } from "@/lib/useAppVersion";
 
 // ===== 辅助函数 =====
 
@@ -79,6 +80,7 @@ interface StudentInsight {
 }
 
 export default function TeacherInsightsPage() {
+  const appVersion = useAppVersion();
   const [classes, setClasses] = useState<ClassInfo[]>([]);
   const [selectedClassId, setSelectedClassId] = useState<string>("");
   const [loading, setLoading] = useState(false);
@@ -198,16 +200,7 @@ export default function TeacherInsightsPage() {
     }
   };
 
-  const formatDate = (dateStr: string) => {
-    const date = new Date(dateStr);
-    return date.toLocaleDateString("zh-CN", {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
+
 
   const selectedClass = classes.find((c) => c.id === selectedClassId);
 
@@ -343,7 +336,7 @@ export default function TeacherInsightsPage() {
                     <div className="flex items-center justify-between mb-2">
                       <h4 className="font-medium text-[#1A1A1A]">{insight.taskTitle}</h4>
                       <Tag theme="success" variant="outline" size="small">
-                        V{insight.version} · {formatDate(insight.createdAt)}
+                        V{insight.version} · {appVersion}
                       </Tag>
                     </div>
                     <div className="prose prose-sm max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all text-gray-600">
@@ -387,7 +380,7 @@ export default function TeacherInsightsPage() {
                       </Tag>
                     </div>
                     <div className="text-xs text-[#63666F] mb-2">
-                      {formatDate(insight.createdAt)}
+                      {appVersion}
                     </div>
                     <div className="prose prose-sm max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all text-gray-600">
                       <InsightContent content={`${insight.content.slice(0, 200)}${insight.content.length > 200 ? "..." : ""}`} />

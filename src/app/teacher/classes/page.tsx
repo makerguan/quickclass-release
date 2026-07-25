@@ -201,6 +201,50 @@ export default function TeacherClassesPage() {
     reader.onload = (e) => {
       try {
         const data = e.target?.result;
+
+        // 对于 CSV 文件，需要处理编码问题（Windows 可能用 GBK 编码）
+        if (file.name.toLowerCase().endsWith(".csv")) {
+          const buffer = data as ArrayBuffer;
+          // 优先用 UTF-8 解码，失败时回退到 GBK
+          let content = "";
+          try {
+            content = new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+          } catch {
+            try {
+              content = new TextDecoder("gbk").decode(buffer);
+            } catch {
+              content = new TextDecoder("utf-8").decode(buffer);
+            }
+          }
+
+          // 解析 CSV 内容
+          const lines = content.trim().split("\n").filter(line => line.trim());
+          const students: { name: string; studentNo: string | null; password: string | null }[] = [];
+
+          // 跳过标题行
+          for (let i = 1; i < lines.length; i++) {
+            const parts = lines[i].split(",").map(p => p.trim());
+            if (parts.length > 0 && parts[0]) {
+              const name = parts[0].replace(/\s+/g, "");
+              const studentNo = parts.length > 1 && parts[1] ? parts[1] : null;
+              const password = parts.length > 2 && parts[2] ? parts[2] : null;
+              if (name) {
+                students.push({ name, studentNo, password });
+              }
+            }
+          }
+
+          if (students.length > 0) {
+            const text = students.map(s => `${s.name},${s.studentNo || ""},${s.password || ""}`).join("\n");
+            setImportText(text);
+            MessagePlugin.success(`成功解析 ${students.length} 条学生数据`);
+          } else {
+            MessagePlugin.warning("未解析到学生数据");
+          }
+          return;
+        }
+
+        // Excel 文件（.xlsx, .xls）使用 binary string
         const workbook = XLSX.read(data, { type: "binary" });
         const sheetName = workbook.SheetNames[0];
         const worksheet = workbook.Sheets[sheetName];
@@ -233,7 +277,13 @@ export default function TeacherClassesPage() {
         MessagePlugin.error("解析文件失败");
       }
     };
-    reader.readAsBinaryString(file);
+
+    // CSV 用 ArrayBuffer，Excel 用 binary string
+    if (file.name.toLowerCase().endsWith(".csv")) {
+      reader.readAsArrayBuffer(file);
+    } else {
+      reader.readAsBinaryString(file);
+    }
   };
 
   const parseImportText = (text: string): { name: string; studentNo: string | null; password: string | null }[] => {

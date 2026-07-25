@@ -5,6 +5,7 @@ import { Card } from "tdesign-react";
 import { ChartBarIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import StudentLayout from "@/components/layout/StudentLayout";
+import { useAppVersion } from "@/lib/useAppVersion";
 
 interface InsightRecord {
   id: string;
@@ -16,6 +17,7 @@ interface InsightRecord {
 }
 
 export default function StudentEvaluationPage() {
+  const appVersion = useAppVersion();
   const [insights, setInsights] = useState<InsightRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -40,10 +42,7 @@ export default function StudentEvaluationPage() {
     }
   };
 
-  const formatDate = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日 ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-  };
+
 
   return (
     <StudentLayout>
@@ -81,7 +80,7 @@ export default function StudentEvaluationPage() {
                     </span>
                   </h3>
                   <p className="text-xs text-[#63666F] mt-1">
-                    生成时间：{formatDate(insight.createdAt)}
+                    版本 {appVersion}
                   </p>
                 </div>
               </div>
