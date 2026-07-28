@@ -173,9 +173,11 @@ export async function generatePaperDocx(doc: PaperContent): Promise<Buffer> {
       heading: HeadingLevel.HEADING_1,
       spacing: { before: 400, after: 200 },
     }));
-    doc.references.forEach((ref, i) => {
+    // 注意：ref 已经是 "[N] 内容" 格式（由 parseReferences + sortReferencesByCitation 输出），
+    // 这里不要再额外拼接 [N]，否则会变成 "[1] [1] 作者..." 这种双编号
+    doc.references.forEach((ref) => {
       children.push(new Paragraph({
-        children: [new TextRun({ text: `[${i + 1}] ${ref}`, size: 22 })],
+        children: [new TextRun({ text: ref, size: 22 })],
         spacing: { after: 100 },
         indent: { left: 480, hanging: 240 },
       }));

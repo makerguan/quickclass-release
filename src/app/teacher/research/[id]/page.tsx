@@ -16,6 +16,8 @@ import {
   RefreshIcon,
   ChevronLeftIcon,
   FileWordIcon,
+  CheckCircleIcon,
+  ErrorCircleIcon,
 } from "tdesign-icons-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import Link from "next/link";
@@ -29,6 +31,27 @@ import {
   getResearchMethodColor,
   getResearchMethodBg,
 } from "@/lib/research/constants";
+
+interface ReferenceAuditItem {
+  index: number;
+  raw: string;
+  status: "VERIFIED" | "OFFICIAL" | "REMOVED_DUPLICATE" | "REMOVED";
+  reason?: string;
+  matchedDoi?: string;
+  matchedTitle?: string;
+  source?: string;
+  confidence?: number;
+}
+
+interface ReferencesAuditReport {
+  total: number;
+  verified: number;
+  official: number;
+  duplicates: number;
+  removed: number;
+  items: ReferenceAuditItem[];
+  checkedAt: string;
+}
 
 interface ResearchProject {
   id: string;
@@ -53,6 +76,9 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
   const [progress, setProgress] = useState(0);
   const [streamedText, setStreamedText] = useState("");
   const [showRaw, setShowRaw] = useState(false);
+  const [auditReport, setAuditReport] = useState<ReferencesAuditReport | null>(null);
+  const [showAuditDialog, setShowAuditDialog] = useState(false);
+  const [reverifying, setReverifying] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   const loadProject = async () => {
@@ -67,6 +93,13 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
         setProject(data);
         if (data.selectedIndex !== null) setSelectedIndex(data.selectedIndex);
         if (data.contentText) setStreamedText(data.contentText);
+        // 解析核查审计报告
+        if (data.content) {
+          try {
+            const c = JSON.parse(data.content);
+            if (c.referencesAudit) setAuditReport(c.referencesAudit);
+          } catch {}
+        }
       } else {
         MessagePlugin.error("项目不存在");
         router.push("/teacher/research");
@@ -156,6 +189,34 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
   const handleCopy = () => {
     navigator.clipboard.writeText(streamedText || project?.contentText || "");
     MessagePlugin.success("已复制到剪贴板");
+  };
+
+  const handleReverify = async () => {
+    if (!project) return;
+    setReverifying(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(
+        `/api/research/projects/${project.id}/reverify-references`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        }
+      );
+      const data = await res.json();
+      if (res.ok) {
+        MessagePlugin.success(
+          `核查完成：保留 ${data.report.verified + data.report.official} 篇，删除 ${data.report.removed} 篇（重复 ${data.report.duplicates}）`
+        );
+        await loadProject();
+      } else {
+        MessagePlugin.error(data.error || "核查失败");
+      }
+    } catch (e) {
+      MessagePlugin.error("核查失败");
+    } finally {
+      setReverifying(false);
+    }
   };
 
   const typeLabel = (type: string) => (type === "PAPER" ? "论文" : "课题");
@@ -352,6 +413,16 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                 复制 Markdown
               </Button>
               {isCompleted && !generating && (
+                <Button
+                  variant="outline"
+                  icon={<CheckCircleIcon />}
+                  loading={reverifying}
+                  onClick={handleReverify}
+                >
+                  重新核查参考文献
+                </Button>
+              )}
+              {isCompleted && !generating && (
                 <Button variant="text" icon={<RefreshIcon />} onClick={handleGenerate}>
                   重新生成
                 </Button>
@@ -364,6 +435,62 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                 查看原始 Markdown
               </Button>
             </div>
+          </div>
+        )}
+
+        {/* 参考文献核查报告 */}
+        {isCompleted && auditReport && (
+          <div className="bg-white rounded-lg border border-gray-200 p-6 mt-4">
+            <h2 className="font-semibold text-lg mb-4 flex items-center gap-2">
+              <span className="w-6 h-6 rounded-full bg-[#E37318] text-white text-sm flex items-center justify-center">
+                3
+              </span>
+              参考文献核查
+              <span className="text-xs text-gray-400 font-normal">
+                （核查时间：{new Date(auditReport.checkedAt).toLocaleString("zh-CN")}）
+              </span>
+            </h2>
+
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
+              <div className="rounded-lg border border-gray-200 p-3 bg-gray-50">
+                <div className="text-xs text-gray-500">原始文献</div>
+                <div className="text-2xl font-semibold text-gray-700">{auditReport.total}</div>
+              </div>
+              <div className="rounded-lg border border-green-200 p-3 bg-green-50">
+                <div className="text-xs text-green-700">DOI 核实</div>
+                <div className="text-2xl font-semibold text-green-700">{auditReport.verified}</div>
+              </div>
+              <div className="rounded-lg border border-blue-200 p-3 bg-blue-50">
+                <div className="text-xs text-blue-700">官方文献</div>
+                <div className="text-2xl font-semibold text-blue-700">{auditReport.official}</div>
+              </div>
+              <div className="rounded-lg border border-orange-200 p-3 bg-orange-50">
+                <div className="text-xs text-orange-700">重复合并</div>
+                <div className="text-2xl font-semibold text-orange-700">{auditReport.duplicates}</div>
+              </div>
+              <div className="rounded-lg border border-red-200 p-3 bg-red-50">
+                <div className="text-xs text-red-700">查不到已删除</div>
+                <div className="text-2xl font-semibold text-red-700">{auditReport.removed}</div>
+              </div>
+            </div>
+
+            {auditReport.removed > 0 && (
+              <div className="rounded-lg bg-red-50 border border-red-200 p-3 mb-3 text-sm text-red-700 flex items-start gap-2">
+                <ErrorCircleIcon style={{ marginTop: 2, flexShrink: 0 }} />
+                <div>
+                  已按规则删除 {auditReport.removed} 条查不到的参考文献（疑似虚构），
+                  并已同步重写正文 [N] 引用编号。如需恢复，请重新生成论文/课题。
+                </div>
+              </div>
+            )}
+
+            <Button
+              variant="outline"
+              size="small"
+              onClick={() => setShowAuditDialog(true)}
+            >
+              查看核查明细
+            </Button>
           </div>
         )}
       </div>
@@ -383,6 +510,69 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
           readonly
           style={{ fontFamily: "monospace", fontSize: 12 }}
         />
+      </Dialog>
+
+      <Dialog
+        header="参考文献核查明细"
+        visible={showAuditDialog}
+        onClose={() => setShowAuditDialog(false)}
+        width={900}
+        footer={
+          <Button onClick={() => setShowAuditDialog(false)}>关闭</Button>
+        }
+      >
+        {auditReport && (
+          <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+            {auditReport.items.map((item) => {
+              const                 statusMeta = {
+                VERIFIED: { label: "已核实", color: "green", icon: <CheckCircleIcon /> },
+                OFFICIAL: { label: "官方文件", color: "blue", icon: <CheckCircleIcon /> },
+                REMOVED_DUPLICATE: { label: "重复已合并", color: "orange", icon: <ErrorCircleIcon /> },
+                REMOVED: { label: "查不到已删除", color: "red", icon: <ErrorCircleIcon /> },
+              }[item.status];
+              return (
+                <div
+                  key={item.index}
+                  className={`rounded-lg border p-3 ${
+                    item.status === "VERIFIED" || item.status === "OFFICIAL"
+                      ? "border-green-200 bg-green-50"
+                      : item.status === "REMOVED_DUPLICATE"
+                      ? "border-orange-200 bg-orange-50"
+                      : "border-red-200 bg-red-50"
+                  }`}
+                >
+                  <div className="flex items-start gap-2">
+                    <Tag
+                      size="small"
+                      theme={statusMeta.color as any}
+                      variant="light"
+                    >
+                      [{item.index}] {statusMeta.label}
+                    </Tag>
+                  </div>
+                  <div className="text-sm text-gray-700 mt-1.5 break-all">
+                    {item.raw}
+                  </div>
+                  {item.reason && (
+                    <div className="text-xs text-gray-500 mt-1">
+                      原因：{item.reason}
+                    </div>
+                  )}
+                  {item.matchedDoi && (
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      命中 DOI：<span className="font-mono">{item.matchedDoi}</span>
+                    </div>
+                  )}
+                  {item.matchedTitle && (
+                    <div className="text-xs text-gray-500 mt-0.5">
+                      命中标题：{item.matchedTitle}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </Dialog>
     </TeacherLayout>
   );

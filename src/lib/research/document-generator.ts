@@ -2,6 +2,15 @@ import { streamText } from "ai";
 import { createDashScopeClient } from "@/lib/ai";
 import { aiQueue } from "@/lib/ai-queue";
 import type { ResearchDataSnapshot } from "./data-collector";
+import {
+  verifyAndFilterReferences,
+  renumberBodyText,
+  type ReferencesAuditReport,
+} from "./references-verifier";
+import {
+  fetchCandidateReferences,
+  buildCandidatePromptSection,
+} from "./reference-fetcher";
 
 export interface PaperContent {
   docType: "PAPER";
@@ -10,6 +19,8 @@ export interface PaperContent {
   keywords: string[];
   sections: { title: string; content: string }[];
   references: string[];
+  /** 参考文献真实性核查审计报告（用于 UI 展示核查明细） */
+  referencesAudit?: ReferencesAuditReport;
 }
 
 export interface ProposalContent {
@@ -17,6 +28,7 @@ export interface ProposalContent {
   title: string;
   sections: { title: string; content: string }[];
   references: string[];
+  referencesAudit?: ReferencesAuditReport;
 }
 
 // ── Token 估算（中文约 1.8 字符/token，英文约 4 字符/token） ──
@@ -51,10 +63,19 @@ const OUTPUT_TOKEN_BUFFER = 12_000;
 export async function* streamPaperGeneration(
   title: string,
   data: ResearchDataSnapshot,
-  paperStyle?: "PRACTICE_RESEARCH" | "CASE_ANALYSIS"
+  paperStyle?: "PRACTICE_RESEARCH" | "CASE_ANALYSIS",
+  keywords?: string
 ): AsyncGenerator<string, PaperContent, void> {
   const { chatModel } = await createDashScopeClient();
-  const prompt = await buildPaperPrompt(title, data, paperStyle);
+  // 预取真实文献候选，注入 prompt（让 AI 优先引用真实文献），同时传给 parsePaperContent 用于核查
+  console.log("=== 预取文献候选 ===");
+  console.log("title:", title, "| keywords:", keywords);
+  const candidates = await fetchCandidateReferences(title || "", keywords || "", 20);
+  console.log("候选文献返回数量:", candidates.length);
+  if (candidates.length > 0) {
+    candidates.slice(0, 3).forEach((c, i) => console.log(`  候选[${i+1}]: ${c.title?.slice(0, 60)}`));
+  }
+  const prompt = await buildPaperPrompt(title, data, paperStyle, keywords, candidates);
 
   const result = await aiQueue.enqueue(async () => {
     return streamText({
@@ -70,16 +91,19 @@ export async function* streamPaperGeneration(
     yield chunk;
   }
 
-  return parsePaperContent(fullText, title);
+  return await parsePaperContent(fullText, title, candidates);
 }
 
 export async function* streamProposalGeneration(
   title: string,
   data: ResearchDataSnapshot,
-  researchMethod?: string
+  researchMethod?: string,
+  keywords?: string
 ): AsyncGenerator<string, ProposalContent, void> {
   const { chatModel } = await createDashScopeClient();
-  const prompt = await buildProposalPrompt(title, data, researchMethod);
+  // 预取真实文献候选，注入 prompt，同时传给 parseProposalContent 用于核查
+  const candidates = await fetchCandidateReferences(title || "", keywords || "", 15);
+  const prompt = await buildProposalPrompt(title, data, researchMethod, keywords, candidates);
 
   const result = await aiQueue.enqueue(async () => {
     return streamText({
@@ -96,7 +120,7 @@ export async function* streamProposalGeneration(
     yield chunk;
   }
 
-  return parseProposalContent(fullText, title);
+  return await parseProposalContent(fullText, title, candidates);
 }
 
 // ── 数据节构建（mode = "full" 全量 / "stats-only" 仅统计摘要） ──
@@ -254,22 +278,25 @@ async function buildDataSectionsAdaptive(data: ResearchDataSnapshot): Promise<{
 async function buildPaperPrompt(
   title: string,
   data: ResearchDataSnapshot,
-  paperStyle?: "PRACTICE_RESEARCH" | "CASE_ANALYSIS"
+  paperStyle?: "PRACTICE_RESEARCH" | "CASE_ANALYSIS",
+  keywords?: string,
+  candidates: any[] = []
 ): Promise<string> {
   const { text: dataSection, mode } = await buildDataSectionsAdaptive(data);
   const modeNote = mode === "stats-only"
     ? "\n> 注：以下数据为统计摘要版。对话原文和报告正文因超出模型窗口上限未包含。论文中的具体案例可基于统计特征合理推导。"
     : "";
+  const candidateSection = buildCandidatePromptSection(candidates);
 
   if (paperStyle === "CASE_ANALYSIS") {
-    return buildPracticeCasePaperPrompt(title, dataSection, modeNote);
+    return buildPracticeCasePaperPrompt(title, dataSection, modeNote, candidateSection);
   }
   // 默认为 PRACTICE_RESEARCH（含未指定）
-  return buildPracticeResearchPaperPrompt(title, dataSection, modeNote);
+  return buildPracticeResearchPaperPrompt(title, dataSection, modeNote, candidateSection);
 }
 
 // ── 实践研究类（6 要素：引言→理论依据→实施路径→案例分析→效果评价→结语） ──
-function buildPracticeResearchPaperPrompt(title: string, dataSection: string, modeNote: string): string {
+function buildPracticeResearchPaperPrompt(title: string, dataSection: string, modeNote: string, candidateSection: string = ""): string {
   return `基于以下真实数据和选定题目，撰写一份完整的"实践研究类"教育学术论文初稿。
 本论文适用于整体性教学改革（学段/单元/课程层级的实践探索），需呈现完整的研究过程与教学效果。
 
@@ -347,9 +374,7 @@ ${dataSection}${modeNote}
 章节内容...
 [SECTION_END]
 [REFERENCES_START]
-[1] 参考文献1
-[2] 参考文献2
-...
+${candidateSection || "[1] 参考文献1\n[2] 参考文献2\n..."}
 [REFERENCES_END]
 
 # 写作要求
@@ -370,6 +395,14 @@ ${dataSection}${modeNote}
 - 参考文献必须使用 **GB/T 7714 格式**，每条独立成行
 - 参考文献必须包含 20-30 篇，覆盖：课程标准文件、教育学经典著作、学科教学期刊、近 5 年实证研究
 - 编号规则：从 [1] 开始严格递增，禁止重复编号（如 [1][1]）、禁止跳号（如 [1][3]）
+
+## ⚠️ 参考文献真实性（必须遵守，系统会核查）
+- **必须优先使用上方"真实可引用文献候选"中的文献**：从候选列表中挑选与论文主题最相关的文献，直接作为参考文献输出，编号格式为 [1]、[2]...
+- **禁止虚构文献**：不得编造作者、标题、期刊名、卷期、页码、DOI、ISBN 等任何信息。
+- **不确定的文献不得输出**：若不能确认文献真实存在，应在文中删除该引用并改述。
+- **数量以"核实通过"为准，宁缺勿滥**：宁可只有 10 条真实文献，也不要 30 条混入虚构。
+- 优先引用：① 课程标准/政策文件（[S]）；② 教育学经典著作（[M]，请给出真实存在的书）；③ 真实 DOI/ISBN 可查的期刊/著作；④ 近 5 年实证研究。
+- 系统中所有文献会通过 Crossref 等学术数据库二次核查，查不到的会自动删除并重写正文引用编号。
 - 参考文献示例：
   - 期刊：[1] 王蔷. 英语课程标准的关键能力解读[J]. 中小学外语教学, 2022, 45(3): 1-8.
   - 著作：[2] 皮亚杰. 儿童智力的起源[M]. 北京: 教育科学出版社, 1990: 25.
@@ -387,7 +420,7 @@ ${dataSection}${modeNote}
 }
 
 // ── 案例分析类（6 章节：引言→理论依据→教学设计原则→教学案例展示→教学反思→结语） ──
-function buildPracticeCasePaperPrompt(title: string, dataSection: string, modeNote: string): string {
+function buildPracticeCasePaperPrompt(title: string, dataSection: string, modeNote: string, candidateSection: string = ""): string {
   return `基于以下真实数据和选定题目，撰写一份完整的"案例分析类"教育学术论文初稿。
 本论文适用于单课时/单案例的精读与剖析，聚焦一个或数个典型教学案例的深度分析。
 
@@ -442,6 +475,8 @@ ${dataSection}${modeNote}
 ## 参考文献
 不少于15篇，GB/T 7714 格式。
 
+${candidateSection}
+
 # 输出格式（严格遵守标记）
 [ABSTRACT_START]
 摘要内容...
@@ -474,9 +509,7 @@ ${dataSection}${modeNote}
 章节内容...
 [SECTION_END]
 [REFERENCES_START]
-[1] 参考文献1
-[2] 参考文献2
-...
+${candidateSection || "[1] 参考文献1\n[2] 参考文献2\n..."}
 [REFERENCES_END]
 
 # 写作要求
@@ -497,6 +530,13 @@ ${dataSection}${modeNote}
 - 参考文献必须使用 **GB/T 7714 格式**，每条独立成行
 - 参考文献必须包含 15-25 篇，覆盖：课标文件、教育学经典著作、案例研究方法论、学科教学期刊
 - 编号规则：从 [1] 开始严格递增，禁止重复编号（如 [1][1]）、禁止跳号
+
+## ⚠️ 参考文献真实性（必须遵守，系统会核查）
+- **禁止虚构文献**：不得编造作者、标题、期刊名、卷期、页码、DOI、ISBN 等任何信息。
+- **不确定的文献不得输出**：若不能确认文献真实存在，应在文中删除该引用并改述。
+- **数量以"核实通过"为准，宁缺勿滥**：宁可只有 8 条真实文献，也不要 25 条混入虚构。
+- 优先引用：① 课标/政策文件（[S]）；② 真实存在的教育学经典著作（[M]）；③ 真实 DOI/ISBN 可查的期刊；④ 近 5 年实证研究。
+- 所有文献会通过 Crossref 等学术数据库二次核查，查不到的会自动删除并重写正文引用编号。
 - 参考文献示例：
   - 期刊：[1] 王蔷. 英语课程标准的关键能力解读[J]. 中小学外语教学, 2022, 45(3): 1-8.
   - 著作：[2] Stake R E. The Art of Case Study Research[M]. Thousand Oaks: SAGE, 1995: 25.
@@ -516,12 +556,15 @@ ${dataSection}${modeNote}
 async function buildProposalPrompt(
   title: string,
   data: ResearchDataSnapshot,
-  researchMethod?: string
+  researchMethod?: string,
+  keywords?: string,
+  candidates: any[] = []
 ): Promise<string> {
   const { text: dataSection, mode } = await buildDataSectionsAdaptive(data);
   const modeNote = mode === "stats-only"
     ? "\n> 注：以下数据为统计摘要版。对话原文和报告正文因超出模型窗口上限未包含。方案中的具体案例可基于统计特征合理推导。"
     : "";
+  const candidateSection = buildCandidatePromptSection(candidates);
 
   const methodGuide = researchMethod ? getMethodGuide(researchMethod) : "";
 
@@ -716,6 +759,14 @@ ${researchMethod ? `> 重要：本课题采用 \`${researchMethod}\` 方法，�
 - 参考文献必须使用 **GB/T 7714 格式**，每条独立成行
 - 参考文献必须包含 **10 篇**（3 条国外文献 + 7 条国内文献），覆盖：课程标准文件、教育学经典著作、学科教学期刊、近 5 年实证研究
 - 编号规则：从 [1] 开始严格递增，**禁止重复编号**（如 [1][1]）、**禁止跳号**（如 [1][3]）
+
+## ⚠️ 参考文献真实性（必须遵守，系统会核查）
+- **必须优先使用上方"真实可引用文献候选"中的文献**：从候选列表中挑选与课题主题最相关的文献，直接作为参考文献输出，编号格式为 [1]、[2]...
+- **禁止虚构文献**：不得编造作者、标题、期刊名、卷期、页码、DOI、ISBN 等任何信息。
+- **不确定的文献不得输出**：若不能确认文献真实存在，应在文中删除该引用并改述。
+- **数量以"核实通过"为准，宁缺勿滥**：宁可只有 5 条真实文献，也不要凑数。
+- 优先引用：① 课标/政策文件（[S]）；② 真实存在的教育学经典著作（[M]）；③ 真实 DOI/ISBN 可查的期刊；④ 近 5 年实证研究。
+- 所有文献会通过 Crossref 等学术数据库二次核查，查不到的会自动删除并重写正文引用编号。
 - 参考文献示例：
   - 期刊：[1] 王蔷. 英语课程标准的关键能力解读[J]. 中小学外语教学, 2022, 45(3): 1-8.
   - 著作：[2] 皮亚杰. 儿童智力的起源[M]. 北京: 教育科学出版社, 1990: 25.
@@ -837,10 +888,7 @@ ${researchMethod ? `> 重要：本课题采用 \`${researchMethod}\` 方法，�
 ……
 [SECTION_END]
 [REFERENCES_START]
-[1] 文献1
-[2] 文献2
-...
-[10] 文献10
+${candidateSection || "[1] 文献1\n[2] 文献2\n...\n[10] 文献10"}
 [REFERENCES_END]
 
 # 写作要求
@@ -1034,7 +1082,7 @@ function extractText(text: string, start: string, end: string): string {
   return text.substring(s + start.length, e).trim();
 }
 
-function parsePaperContent(text: string, title: string): PaperContent {
+async function parsePaperContent(text: string, title: string, candidates: any[] = []): Promise<PaperContent> {
   const abstract = extractText(text, "[ABSTRACT_START]", "[ABSTRACT_END]");
   const keywordsRaw = extractText(text, "[KEYWORDS_START]", "[KEYWORDS_END]");
   const keywords = keywordsRaw.split("；").map(s => s.trim()).filter(Boolean);
@@ -1059,15 +1107,34 @@ function parsePaperContent(text: string, title: string): PaperContent {
     referencesRaw, sections, [abstract, ...keywords]
   );
 
+  // 参考文献真实性核查：剔除查不到的（避免假文献）+ 同步重写正文 [N] 编号
+  console.log("=== 参考文献核查前（论文）===");
+  console.log("候选文献数量:", candidates.length);
+  console.log("AI生成参考文献数量:", reorderedRefs.length);
+  reorderedRefs.forEach((r, i) => {
+    const preview = typeof r === "string" ? r.slice(0, 80) : JSON.stringify(r).slice(0, 80);
+    console.log(`  [${i+1}] ${preview}`);
+  });
+  const verification = await verifyAndFilterReferences(reorderedRefs);
+  const verifiedRefs = verification.kept;
+  const verifiedSections = newSections.map((s) => ({
+    title: renumberBodyText(s.title, verification.oldToNew),
+    content: renumberBodyText(s.content, verification.oldToNew),
+  }));
+  const verifiedExtras = replacedExtras.map((t) =>
+    renumberBodyText(t, verification.oldToNew),
+  );
+
   return {
     docType: "PAPER",
     title,
-    abstract: replacedExtras[0] || abstract,
-    keywords: replacedExtras.slice(1).length > 0
-      ? replacedExtras.slice(1).join("；").split("；").map(s => s.trim()).filter(Boolean)
+    abstract: verifiedExtras[0] || abstract,
+    keywords: verifiedExtras.slice(1).length > 0
+      ? verifiedExtras.slice(1).join("；").split("；").map(s => s.trim()).filter(Boolean)
       : keywords,
-    sections: newSections,
-    references: reorderedRefs,
+    sections: verifiedSections,
+    references: verifiedRefs,
+    referencesAudit: verification.report,
   };
 }
 
@@ -1229,7 +1296,7 @@ function sortReferencesByCitation(
   return { reorderedRefs, newSections, replacedExtras };
 }
 
-function parseProposalContent(text: string, title: string): ProposalContent {
+async function parseProposalContent(text: string, title: string, candidates: any[] = []): Promise<ProposalContent> {
   const sections: { title: string; content: string }[] = [];
 
   // 容错解析：以 [SECTION_START] 作为强分隔符，每个 SECTION_START 后内容直到下一个 [SECTION_START] 或 [REFERENCES_START] 或文末
@@ -1273,5 +1340,26 @@ function parseProposalContent(text: string, title: string): ProposalContent {
   // 按"文中引用顺序"重排 references + 重写正文 [N] 编号
   const { reorderedRefs, newSections } = sortReferencesByCitation(referencesRaw, sections);
 
-  return { docType: "PROPOSAL", title, sections: newSections, references: reorderedRefs };
+  // 参考文献真实性核查：剔除查不到的（避免假文献）+ 同步重写正文 [N] 编号
+  console.log("=== 参考文献核查前（课题方案）===");
+  console.log("候选文献数量:", candidates.length);
+  console.log("AI生成参考文献数量:", reorderedRefs.length);
+  reorderedRefs.forEach((r, i) => {
+    const preview = typeof r === "string" ? r.slice(0, 80) : JSON.stringify(r).slice(0, 80);
+    console.log(`  [${i+1}] ${preview}`);
+  });
+  const verification = await verifyAndFilterReferences(reorderedRefs);
+  const verifiedRefs = verification.kept;
+  const verifiedSections = newSections.map((s) => ({
+    title: renumberBodyText(s.title, verification.oldToNew),
+    content: renumberBodyText(s.content, verification.oldToNew),
+  }));
+
+  return {
+    docType: "PROPOSAL",
+    title,
+    sections: verifiedSections,
+    references: verifiedRefs,
+    referencesAudit: verification.report,
+  };
 }
