@@ -46,6 +46,46 @@ function cleanMarkdown(text: string): string {
 }
 
 /**
+ * 容错拆分：当 AI 未按 [SECTION_START] 规范输出、而是用中文序号标题
+ * （一）（二）…（八）作为章节分隔时，按行首的中文序号标题重新拆分。
+ */
+function splitProposalBlob(blob: string, firstTitle: string): { title: string; content: string }[] {
+  const lines = blob.split("\n");
+  const idxs: number[] = [];
+  lines.forEach((ln, i) => { if (/^（[一二三四五六七八九十]）/.test(ln.trim())) idxs.push(i); });
+  if (idxs.length === 0) return [];
+  const out: { title: string; content: string }[] = [];
+  const firstHeaderIdx = idxs[0];
+  const lead = lines.slice(0, firstHeaderIdx).join("\n").trim();
+  if (lead) {
+    out.push({ title: firstTitle, content: lead });
+    for (let i = 0; i < idxs.length; i++) {
+      const end = i + 1 < idxs.length ? idxs[i + 1] : lines.length;
+      out.push({ title: lines[idxs[i]].trim(), content: lines.slice(idxs[i] + 1, end).join("\n").trim() });
+    }
+  } else {
+    for (let i = 0; i < idxs.length; i++) {
+      const end = i + 1 < idxs.length ? idxs[i + 1] : lines.length;
+      out.push({ title: lines[idxs[i]].trim(), content: lines.slice(idxs[i] + 1, end).join("\n").trim() });
+    }
+  }
+  return out;
+}
+
+/**
+ * 归一化 sections：若 sections 不足 2 段（说明解析失败、内容堆在单条），
+ * 尝试从单条 blob 的 content 中按中文序号标题重新拆分。
+ */
+function normalizeProposalSections(doc: ProposalContent): ProposalContent {
+  if (doc.sections && doc.sections.length >= 2) return doc;
+  const blob = doc.sections && doc.sections.length === 1 ? doc.sections[0].content : "";
+  if (!blob) return doc;
+  const split = splitProposalBlob(blob, doc.sections?.[0]?.title || "（一）研究缘起");
+  if (split.length >= 2) return { ...doc, sections: split };
+  return doc;
+}
+
+/**
  * 拆注文本：[N] 形式的参考文献序号渲染为上标，其余保持普通字号
  * - 例："xxx[1]yyy[2]" → [TextRun("xxx"), TextRun("[1]", super), TextRun("yyy"), TextRun("[2]", super)]
  */
@@ -672,7 +712,8 @@ export async function generateProposalDocxFromTemplate(
   ];
 
   // ── 主表格 ──
-  const mainTable = buildMainTable(doc, options.frameworkDiagram);
+  const normalizedDoc = normalizeProposalSections(doc);
+  const mainTable = buildMainTable(normalizedDoc, options.frameworkDiagram);
 
   // ── 页眉页脚 ──
   const header = new Header({

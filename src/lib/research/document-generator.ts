@@ -1296,6 +1296,33 @@ function sortReferencesByCitation(
   return { reorderedRefs, newSections, replacedExtras };
 }
 
+/**
+ * 容错拆分：当 AI 未按 [SECTION_START] 规范输出、而是用中文序号标题
+ * （一）（二）…（八）作为章节分隔时，按行首的中文序号标题重新拆分。
+ */
+function splitProposalBlob(blob: string, firstTitle: string): { title: string; content: string }[] {
+  const lines = blob.split("\n");
+  const idxs: number[] = [];
+  lines.forEach((ln, i) => { if (/^（[一二三四五六七八九十]）/.test(ln.trim())) idxs.push(i); });
+  if (idxs.length === 0) return [];
+  const out: { title: string; content: string }[] = [];
+  const firstHeaderIdx = idxs[0];
+  const lead = lines.slice(0, firstHeaderIdx).join("\n").trim();
+  if (lead) {
+    out.push({ title: firstTitle, content: lead });
+    for (let i = 0; i < idxs.length; i++) {
+      const end = i + 1 < idxs.length ? idxs[i + 1] : lines.length;
+      out.push({ title: lines[idxs[i]].trim(), content: lines.slice(idxs[i] + 1, end).join("\n").trim() });
+    }
+  } else {
+    for (let i = 0; i < idxs.length; i++) {
+      const end = i + 1 < idxs.length ? idxs[i + 1] : lines.length;
+      out.push({ title: lines[idxs[i]].trim(), content: lines.slice(idxs[i] + 1, end).join("\n").trim() });
+    }
+  }
+  return out;
+}
+
 async function parseProposalContent(text: string, title: string, candidates: any[] = []): Promise<ProposalContent> {
   const sections: { title: string; content: string }[] = [];
 
@@ -1331,6 +1358,19 @@ async function parseProposalContent(text: string, title: string, candidates: any
     if (nl > 0) {
       sections.push({ title: block.substring(0, nl).trim(), content: block.substring(nl + 1).trim() });
     }
+  }
+
+  // 容错2：若 [SECTION_START] 拆分不足 2 段，改用中文序号标题（一）（二）…（八）拆分
+  if (sections.length < 2) {
+    const cleaned = text
+      .replace(/\[FRAMEWORK_JSON_START\][\s\S]*?\[FRAMEWORK_JSON_END\]/g, "")
+      .replace(/\[SECTION_END\]/g, "")
+      .replace(/\[SECTION_START\]/g, "")
+      .replace(/\[REFERENCES_START\][\s\S]*?(\[REFERENCES_END\]|$)/g, "")
+      .replace(/\[FRAMEWORK_FIGURE_START\][\s\S]*?\[FRAMEWORK_FIGURE_END\]/g, "")
+      .trim();
+    const fromHeaders = splitProposalBlob(cleaned, "（一）研究缘起");
+    if (fromHeaders.length >= 2) sections = fromHeaders;
   }
 
   // 解析参考文献
