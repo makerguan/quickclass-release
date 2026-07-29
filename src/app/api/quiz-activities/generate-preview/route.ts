@@ -79,6 +79,7 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model: aiConfig.model,
         messages: [{ role: "user", content: prompt }],
+        max_tokens: 50000,
       }),
     });
 
@@ -97,6 +98,15 @@ export async function POST(req: NextRequest) {
     if (!aiResponse.ok) {
       const errCode = aiData.error?.code || "";
       const errMsg = aiData.error?.message || aiData.message || JSON.stringify(aiData);
+
+      // 检测 API Key 无效错误：给出中文提示
+      if (aiResponse.status === 401 || errCode.includes("invalid_api_key") || /incorrect api key|invalid api key/i.test(errMsg)) {
+        console.error("AI 出题失败 (API Key 无效):", errMsg);
+        return NextResponse.json({
+          message: "AI 服务的 API Key 无效或已失效。请前往【系统设置】填写你自己的有效 API Key（如阿里云百炼或 DeepSeek），保存后重试。",
+          code: "INVALID_API_KEY"
+        }, { status: 400 });
+      }
 
       // 检测 max_tokens 上限错误：提示用户更换更高级的模型
       if (errCode.includes("InvalidParameter") && /max_tokens.*should be/i.test(errMsg)) {

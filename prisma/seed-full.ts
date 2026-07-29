@@ -3,11 +3,8 @@ import bcrypt from "bcryptjs";
 
 const prisma = new PrismaClient();
 
-// 系统配置的期望值
+// 系统配置的期望值（不含 AI 配置：API Key 由用户在【系统设置】中自行填写，seed 不覆盖）
 const SYSTEM_CONFIG = {
-  aiBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-  aiApiKey: "sk-f0d70dd6e3b64334b958a319f38f4c03",
-  aiModel: "qwen3-35b-a3b",
   insightDataSource: "CONVERSATIONS",
   requireStarRating: false,
   studentWordLimit: 100,
@@ -19,17 +16,25 @@ const SYSTEM_CONFIG = {
   conversationWarningThreshold: 20000,
 };
 
+// 仅首次创建时的 AI 默认值（不含 API Key，用户需在系统设置中配置）
+const AI_DEFAULTS = {
+  aiBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+  aiApiKey: null as string | null,
+  aiModel: "qwen3-35b-a3b",
+};
+
 /**
  * 同步系统配置（id=system-config-1）
  * 由 npm run db:seed 调用
+ * 注意：update 分支不碰 aiBaseUrl/aiApiKey/aiModel，避免覆盖用户已配置的 AI 服务
  */
 export async function seedSystemConfig() {
   const config = await prisma.systemConfig.upsert({
     where: { id: "system-config-1" },
     update: { ...SYSTEM_CONFIG, updatedAt: new Date() },
-    create: { id: "system-config-1", ...SYSTEM_CONFIG, updatedAt: new Date() },
+    create: { id: "system-config-1", ...AI_DEFAULTS, ...SYSTEM_CONFIG, updatedAt: new Date() },
   });
-  console.log("系统配置已同步");
+  console.log("系统配置已同步（AI API Key 请在【系统设置】中配置）");
   return config;
 }
 
