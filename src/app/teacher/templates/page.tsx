@@ -89,7 +89,6 @@ export default function TemplateSettingsPage() {
   const [explorationAnalysisTemplates, setExplorationAnalysisTemplates] = useState<AnalysisTemplate[]>([]);
   const [templateVariables, setTemplateVariables] = useState<{
     conversation: { class: TemplateVariable[]; student: TemplateVariable[] };
-    subProject: { class: TemplateVariable[]; student: TemplateVariable[] };
     task: { class: TemplateVariable[]; student: TemplateVariable[] };
   } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -450,7 +449,6 @@ export default function TemplateSettingsPage() {
 
 ## 任务信息
 - 对话活动：{pcTitle}
-- 学习活动：{spTitle}
 - 参与学生：{activeCount}/{totalStudents}人
 
 ## 学生对话汇总
@@ -811,7 +809,7 @@ export default function TemplateSettingsPage() {
 
   return (
     <TeacherLayout>
-      <div className="max-w-5xl space-y-6 pb-8">
+      <div className="space-y-6 pb-8">
           <div>
             <h1 className="text-2xl font-bold text-[#1A1A1A]">模板设置</h1>
             <p className="text-sm text-[#63666F] mt-1">

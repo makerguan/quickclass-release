@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { injectSubmitFunctionality, removeSubmitFunctionality } from "@/lib/prompts/exploration-submit";
 import type { SubmitContext } from "@/lib/prompts/exploration-submit";
-import { AI_COMPANION_VERSION, injectAiCompanion, removeAiCompanion, upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
+import { removeAiCompanion, upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
 
 // GET: 获取单个探究详情（含 aiCompanionPrompt）
 export async function GET(
@@ -33,16 +33,13 @@ export async function GET(
     }
 
     // 兜底升级：教师预览 / 第三方调用也可能命中旧版 AI 伴学 HTML
+    // 只在内存中自愈注入，不持久化回 DB（保持 htmlContent 纯净）
     let upgradeWarnings: string[] | undefined;
     if (item.enableAiCompanion) {
       const upgrade = upgradeAiCompanionIfNeeded(item.htmlContent, { explorationId: id });
       if (upgrade.changed) {
         upgradeWarnings = upgrade.warnings;
         item.htmlContent = upgrade.html;
-        // 后台持久化，不阻塞响应
-        prisma.explorationActivity
-          .update({ where: { id }, data: { htmlContent: upgrade.html } })
-          .catch((e) => console.error("[GET/exploration-activity] 持久化AI伴学升级失败", id, e));
       }
     }
 
@@ -95,7 +92,6 @@ export async function PUT(
     const existingSubs = await prisma.explorationSubmission.count({ where: { explorationId: id } });
     const updateData: Record<string, unknown> = {};
     let injectWarnings: string[] | undefined;
-    let aiCompanionWarnings: string[] | undefined;
     let htmlContentChanged = false;
 
     // 基础字段
@@ -147,49 +143,27 @@ export async function PUT(
     }
 
     // AI伴学启用/禁用处理（在提交功能注入之后，避免互相覆盖）
-    if (enableAiCompanion === true && !item.enableAiCompanion) {
-      // 启用AI伴学 → 注入UI
-      const html = (updateData.htmlContent as string) || item.htmlContent;
-      const result = injectAiCompanion(html, { explorationId: id });
-      updateData.htmlContent = result.html;
-      aiCompanionWarnings = result.warnings;
-      updateData.enableAiCompanion = true;
-    } else if (enableAiCompanion === true && item.enableAiCompanion) {
-      // 已启用但HTML可能未注入 或 有重复注入 或 缺少新版本特性（兜底：检测注入完整性）
-      const html = (updateData.htmlContent as string) || item.htmlContent;
-      const hasNewFeatures = html.includes("AI_COMPANION_HISTORY") && html.includes("AI_COMPANION_READY") && html.includes("ac-clear");
-      // 检测是否有重复注入（多个button或panel）
-      const buttonCount = (html.match(/<button id="ai-companion-trigger"/g) || []).length;
-      const panelCount = (html.match(/<div id="ai-companion-panel"/g) || []).length;
-      const hasDuplicate = buttonCount > 1 || panelCount > 1;
-      // 检测是否包含当前版本渲染器（Markdown + KaTeX）— 老版本或有解析问题的版本会重新注入
-      const hasLatestRenderer = html.includes("renderMarkdownToElement")
-        && html.includes("window.katex.renderToString")
-        && html.includes(AI_COMPANION_VERSION);
-      if (!hasNewFeatures || hasDuplicate || !hasLatestRenderer) {
-        // 先移除所有AI伴学代码（包括重复的），再注入新版
-        const cleanedHtml = html.includes("__AI_COMPANION_INJECTED__") || html.includes("ai-companion-trigger") || html.includes("AI学习伙伴")
-          ? removeAiCompanion(html)
-          : html;
-        const result = injectAiCompanion(cleanedHtml, { explorationId: id });
-        updateData.htmlContent = result.html;
-        aiCompanionWarnings = result.warnings;
-      }
+    // 不再在 PUT 时持久化注入/清理 AI 伴学代码到 htmlContent：
+    // - 启用时只记录标志位，学生读取路径通过 upgradeAiCompanionIfNeeded 在内存中自愈注入
+    // - 禁用时仍调用 removeAiCompanion 清理由历史残留的注入标记（存量兼容，对纯净稿是 no-op）
+    // - 禁用时不清空 aiCompanionPrompt，保留提示词以便下次开启时复用
+    if (enableAiCompanion === true) {
       updateData.enableAiCompanion = true;
     } else if (enableAiCompanion === false) {
-      // 禁用AI伴学（即使状态已不一致也清理HTML中的代码）
       const html = (updateData.htmlContent as string) || item.htmlContent;
       if (html.includes("__AI_COMPANION_INJECTED__") || html.includes("ai-companion-trigger") || html.includes("#ai-companion-root")) {
         updateData.htmlContent = removeAiCompanion(html);
       }
       updateData.enableAiCompanion = false;
+      // 关闭时只关功能，不删除提示词
     } else if (enableAiCompanion === undefined) {
-      // 未传 enableAiCompanion：保持当前值不变
       updateData.enableAiCompanion = item.enableAiCompanion;
     }
 
-    // HTML内容变化且已启用AI伴学 → 清空旧提示词（需重新生成）
-    if (htmlContentChanged && item.enableAiCompanion && aiCompanionPrompt === undefined) {
+    // AI伴学提示词：HTML内容变化且AI伴学启用时，清空旧提示词触发重新生成
+    // 考虑两种场景：(1) 伴学已开启+改HTML (2) 本次同时开启伴学+改HTML
+    const effectiveAiCompanion = enableAiCompanion === true ? true : item.enableAiCompanion;
+    if (htmlContentChanged && effectiveAiCompanion && aiCompanionPrompt === undefined) {
       updateData.aiCompanionPrompt = null;
     }
 
@@ -198,28 +172,9 @@ export async function PUT(
       data: updateData as any,
     });
 
-    // 兜底：若返回前 html 仍非当前版本（教师编辑路径未触发切换分支），再升级一次并异步持久化
-    let finalHtmlWarnings: string[] | undefined;
-    if (updated.enableAiCompanion) {
-      const guard = upgradeAiCompanionIfNeeded(updated.htmlContent, { explorationId: id });
-      if (guard.changed) {
-        finalHtmlWarnings = guard.warnings;
-        updated.htmlContent = guard.html;
-        prisma.explorationActivity
-          .update({ where: { id }, data: { htmlContent: guard.html } })
-          .catch((e) => console.error("[PUT/exploration-activity] 兜底持久化AI伴学升级失败", id, e));
-      }
-    }
-
     const response: Record<string, unknown> = { ...updated };
     if (injectWarnings && injectWarnings.length > 0) {
       response._injectWarnings = injectWarnings;
-    }
-    if (aiCompanionWarnings && aiCompanionWarnings.length > 0) {
-      response._aiCompanionWarnings = aiCompanionWarnings;
-    }
-    if (finalHtmlWarnings && finalHtmlWarnings.length > 0) {
-      response._aiCompanionWarnings = [...(aiCompanionWarnings || []), ...finalHtmlWarnings];
     }
 
     return NextResponse.json(response);

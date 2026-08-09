@@ -104,6 +104,8 @@ export default function ExplorationPanel({
     };
 
     const handleAiCompanionMessage = async (e: MessageEvent) => {
+      // 校验消息来源为当前 iframe，防止多实例/异常消息串台
+      if (e.source !== null && e.source !== iframeRef.current?.contentWindow) return;
       if (!e.data?.type) return;
       const token = localStorage.getItem("token") || "";
 

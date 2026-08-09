@@ -41,8 +41,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               controller.enqueue(encoder.encode(chunk));
               genResult = await gen.next();
             }
-            // genResult.value contains the return value (PaperContent)
-            const contentData = genResult.value || { docType: "PAPER", title: selectedTitle.title, abstract: "", keywords: [], sections: [{ title: "正文", content: fullText }], references: [] };
+            // genResult.value contains the return value (Promise<PaperContent>)
+            const contentData = (await genResult.value) || { docType: "PAPER", title: selectedTitle.title, abstract: "", keywords: [], sections: [{ title: "正文", content: fullText }], references: [] };
             await saveDocument(id, project, selectedTitle, selectedIndex, fullText, JSON.stringify(contentData), startTime, { paperStyle });
           } else {
             const researchMethod = selectedTitle.researchMethod as string | undefined;
@@ -54,7 +54,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               controller.enqueue(encoder.encode(chunk));
               genResult = await gen.next();
             }
-            const contentData = genResult.value || { docType: "PROPOSAL", title: selectedTitle.title, sections: [{ title: "正文", content: fullText }] };
+            const contentData = (await genResult.value) || { docType: "PROPOSAL", title: selectedTitle.title, sections: [{ title: "正文", content: fullText }] };
             await saveDocument(id, project, selectedTitle, selectedIndex, fullText, JSON.stringify(contentData), startTime, { researchMethod });
           }
         } catch (e: any) {

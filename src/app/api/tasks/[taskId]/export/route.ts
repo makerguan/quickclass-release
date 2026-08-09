@@ -36,6 +36,9 @@ export async function GET(
             ExplorationActivity: {
               orderBy: { sortOrder: "asc" },
             },
+            ProjectSubmission: {
+              orderBy: { sortOrder: "asc" },
+            },
           },
         },
       },
@@ -53,17 +56,43 @@ export async function GET(
     });
     const teacherName = teacher?.name || "未知";
 
-    // 构建导出数据（与课堂生成提示词模板结构一致）
+    // 读取被引用的知识库内容（随课堂导出，导入时建库+引用）
+    let referencedKnowledgeBases: { name: string; content: string }[] = [];
+    if (task.knowledgeBaseIds) {
+      try {
+        const kbIds: string[] = JSON.parse(task.knowledgeBaseIds);
+        if (Array.isArray(kbIds) && kbIds.length > 0) {
+          const kbs = await prisma.knowledgeBase.findMany({
+            where: { id: { in: kbIds }, teacherId: task.teacherId },
+            select: { name: true, content: true },
+          });
+          referencedKnowledgeBases = kbs.map((kb) => ({
+            name: kb.name,
+            content: kb.content || "",
+          }));
+        }
+      } catch {
+        referencedKnowledgeBases = [];
+      }
+    }
+
+    // 取第一个学习活动（课堂只有一个）
+    const sp = task.subProjects[0];
+    // 保留中文，仅将文件名非法字符（\ / : * ? " < > | 及换行/制表/控制字符）替换为下划线
+    const safeTitle = task.title
+      .replace(/[\\/:*?"<>|\r\n\t]/g, "_")
+      .replace(/[，。、？！：；""''【】（）]/g, "_")
+      .replace(/\s+/g, "_")
+      .replace(/_+/g, "_")
+      .replace(/^_|_$/g, "")
+      .substring(0, 30);
+    const filename = `${safeTitle}_${new Date().toISOString().split("T")[0]}.json`;
+
     const exportData = {
       version: "1.0",
       exportedAt: new Date().toISOString(),
-      _filename: [
-        teacherName,
-        task.grade || "未知年级",
-        task.subject || "未知学科",
-        task.title,
-        new Date().toISOString().split("T")[0],
-      ].join("_").replace(/[\/\\?%*:|"<>]/g, "") + ".json",
+      _filename: filename,
+      referencedKnowledgeBases,
       task: {
         title: `${task.title}_来源于_${teacherName}`,
         description: task.description || "",
@@ -74,56 +103,53 @@ export async function GET(
         knowledgeBase: task.knowledgeBase || "",
         analysisPrompt: task.analysisPrompt || "",
         classAnalysisPrompt: task.classAnalysisPrompt || "",
-        subProjects: task.subProjects.map((sp) => ({
-          title: sp.title,
-          presetConversations: sp.PresetConversation.map((pc) => ({
-            title: pc.title,
-            description: pc.description || "",
-            systemPrompt: pc.systemPrompt || "",
-            analysisPrompt: pc.analysisPrompt || "",
-            classAnalysisPrompt: pc.classAnalysisPrompt || "",
+        // 四类活动内容，直接挂在课堂下（不嵌套学习活动）
+        presetConversations: (sp?.PresetConversation || []).map((pc) => ({
+          title: pc.title,
+          description: pc.description || "",
+          systemPrompt: pc.systemPrompt || "",
+          analysisPrompt: pc.analysisPrompt || "",
+          classAnalysisPrompt: pc.classAnalysisPrompt || "",
+        })),
+        quizActivities: (sp?.QuizActivity || []).map((qa) => ({
+          title: qa.title,
+          description: qa.description || "",
+          analysisPrompt: qa.analysisPrompt || "",
+          questions: qa.Question.map((q) => ({
+            type: q.type,
+            content: q.content,
+            options: q.options || "",
+            answer: q.answer,
+            score: q.score,
+            difficulty: q.difficulty,
+            explanation: q.explanation || "",
+            order: q.order,
           })),
-          quizActivities: sp.QuizActivity.map((qa) => ({
-            title: qa.title,
-            description: qa.description || "",
-            analysisPrompt: qa.analysisPrompt || "",
-            questions: qa.Question.map((q) => ({
-              type: q.type,
-              content: q.content,
-              options: q.options || "",
-              answer: q.answer,
-              score: q.score,
-              difficulty: q.difficulty,
-              explanation: q.explanation || "",
-              order: q.order,
-            })),
-          })),
-          explorations: sp.ExplorationActivity.map((e) => ({
-            title: e.title,
-            description: e.description || "",
-            // 导出时升级到当前 AI 伴学版本，避免把旧版 HTML 灌回导入端
-            htmlContent: (() => {
-              if (!e.enableAiCompanion) return e.htmlContent || "";
-              const up = upgradeAiCompanionIfNeeded(e.htmlContent, { explorationId: e.id });
-              if (up.changed) {
-                prisma.explorationActivity
-                  .update({ where: { id: e.id }, data: { htmlContent: up.html } })
-                  .catch((err) => console.error("[GET /export] 持久化AI伴学升级失败", e.id, err));
-              }
-              return up.html;
-            })(),
-            designPrompt: e.designPrompt || "",
-            analysisPrompt: e.analysisPrompt || "",
-          })),
+        })),
+        explorations: (sp?.ExplorationActivity || []).map((e) => ({
+          title: e.title,
+          description: e.description || "",
+          htmlContent: (() => {
+            if (!e.enableAiCompanion) return e.htmlContent || "";
+            return upgradeAiCompanionIfNeeded(e.htmlContent, { explorationId: e.id }).html;
+          })(),
+          designPrompt: e.designPrompt || "",
+          analysisPrompt: e.analysisPrompt || "",
+          enableSubmission: e.enableSubmission ?? false,
+          enableAiCompanion: e.enableAiCompanion ?? false,
+          aiCompanionPrompt: e.aiCompanionPrompt || "",
+        })),
+        projectSubmissions: (sp?.ProjectSubmission || []).map((ps) => ({
+          title: ps.title,
+          description: ps.description || "",
+          category: ps.category || "general",
+          visibleToClass: ps.visibleToClass ?? false,
+          allowLike: ps.allowLike ?? false,
+          fileSizeLimit: ps.fileSizeLimit ?? 10,
         })),
       },
     };
 
-    // 生成文件名
-    const safeTitle = task.title.replace(/[^\x00-\x7F]/g, "_").replace(/[，。、？！：；""''【】（）\s]/g, "_").substring(0, 20);
-    const filename = `${safeTitle}_${new Date().toISOString().split("T")[0]}.json`;
-
-    // 直接返回导出数据（前端负责下载）
     return NextResponse.json(exportData);
   } catch (error) {
     console.error("Export task error:", error);

@@ -172,7 +172,7 @@ export default function QuizStatsPage() {
 
   return (
     <TeacherLayout>
-      <div className="max-w-6xl space-y-6 pb-8">
+      <div className="space-y-6 pb-8">
         {/* 顶部导航 */}
         <div className="flex items-center gap-3">
           <Button

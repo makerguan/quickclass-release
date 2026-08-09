@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
-import { Button, Card, Dialog, Input, MessagePlugin, Tag, Progress } from "tdesign-react";
+import { Button, Card, Dialog, Input, MessagePlugin, Tag, Progress, Pagination, InputNumber } from "tdesign-react";
 import { AddIcon, DeleteIcon, FileIcon, BrowseIcon, CheckCircleIcon, StopCircleIcon } from "tdesign-icons-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 
@@ -17,6 +17,7 @@ interface KnowledgeBase {
   status: string;
   enabled: boolean;
   createdAt: string;
+  referencedBy?: { id: string; title: string }[];
 }
 
 function formatFileSize(bytes: number): string {
@@ -32,6 +33,9 @@ function getContentPercent(content: string): number {
 export default function KnowledgeBasePage() {
   const [list, setList] = useState<KnowledgeBase[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [search, setSearch] = useState("");
   const [formVisible, setFormVisible] = useState(false);
   const [editing, setEditing] = useState<KnowledgeBase | null>(null);
   const [formName, setFormName] = useState("");
@@ -39,6 +43,8 @@ export default function KnowledgeBasePage() {
   const [formContentLength, setFormContentLength] = useState(0);
   const [saving, setSaving] = useState(false);
   const [previewKb, setPreviewKb] = useState<KnowledgeBase | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<KnowledgeBase | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -173,6 +179,7 @@ export default function KnowledgeBasePage() {
   };
 
   const handleDelete = async (id: string) => {
+    setDeleting(true);
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`/api/knowledge-base?id=${id}`, {
@@ -181,32 +188,51 @@ export default function KnowledgeBasePage() {
       });
       if (res.ok) {
         MessagePlugin.success("已删除");
+        setDeleteTarget(null);
         fetchList();
       } else {
         MessagePlugin.error("删除失败");
       }
     } catch {
       MessagePlugin.error("网络错误");
+    } finally {
+      setDeleting(false);
     }
   };
 
+  // 搜索过滤：模糊匹配知识库名称和文件名
+  const filteredList = search.trim()
+    ? list.filter(
+        (kb) =>
+          kb.name.toLowerCase().includes(search.toLowerCase()) ||
+          (kb.fileName && kb.fileName.toLowerCase().includes(search.toLowerCase()))
+      )
+    : list;
+
+  const totalPages = Math.max(1, Math.ceil(filteredList.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedList = filteredList.slice((safePage - 1) * pageSize, safePage * pageSize);
+
   return (
     <TeacherLayout>
-      <div className="max-w-5xl space-y-6 pb-8">
+      <div className="space-y-6 pb-8">
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-xl font-semibold text-[#1A1A1A]">📚 知识库管理</h2>
-            <p className="text-[#63666F] text-sm mt-1">
-              上传文档作为知识库，上传即可被课堂引用。对话时知识库全文注入 AI，确保零信息丢失
-            </p>
-            <div className="mt-2 p-3 bg-[#F0F7FF] rounded-lg text-xs text-[#63666F] space-y-1">
-              <p><span className="font-medium text-[#0052D9]">📖 使用说明：</span>点击「新建知识库」上传 .md/.txt 文档（单个课堂引用不超过 50,000 字符），在课堂管理中引用已启用的知识库</p>
-              <p><span className="font-medium text-[#0052D9]">💡 特点：</span>全量注入 AI 上下文，无需向量检索，零信息丢失</p>
-            </div>
+
           </div>
-          <Button theme="primary" icon={<AddIcon />} onClick={openCreate}>
-            新建知识库
-          </Button>
+          <div className="flex items-center gap-2">
+            <Input
+              value={search}
+              onChange={(v) => { setSearch(v as string); setCurrentPage(1); }}
+              placeholder="搜索知识库名称或文件名"
+              className="w-48"
+              clearable
+            />
+            <Button theme="primary" icon={<AddIcon />} onClick={openCreate}>
+              新建知识库
+            </Button>
+          </div>
         </div>
 
         {loading ? (
@@ -221,7 +247,7 @@ export default function KnowledgeBasePage() {
           </Card>
         ) : (
           <div className="space-y-3">
-            {list.map((kb) => {
+            {pagedList.map((kb) => {
               const percent = getContentPercent(kb.content);
               const isOverLimit = kb.content.length > MAX_CONTENT_LENGTH;
               return (
@@ -271,6 +297,16 @@ export default function KnowledgeBasePage() {
                       <p className="text-xs text-gray-400 mt-0.5">
                         创建于 {new Date(kb.createdAt).toLocaleDateString("zh-CN")}
                       </p>
+                      {kb.referencedBy && kb.referencedBy.length > 0 && (
+                        <div className="mt-1.5 flex items-start gap-1 text-xs text-[#63666F]">
+                          <Tag theme="warning" variant="light" size="small">
+                            被 {kb.referencedBy.length} 个课堂引用
+                          </Tag>
+                          <span className="leading-5 mt-0.5">
+                            {kb.referencedBy.map((t) => t.title).join("、")}
+                          </span>
+                        </div>
+                      )}
                     </div>
                     <div className="flex items-center gap-1 ml-4 shrink-0">
                       <Button
@@ -305,13 +341,47 @@ export default function KnowledgeBasePage() {
                         variant="text"
                         size="small"
                         icon={<DeleteIcon />}
-                        onClick={() => handleDelete(kb.id)}
+                        onClick={() => setDeleteTarget(kb)}
                       />
                     </div>
                   </div>
                 </Card>
               );
             })}
+          </div>
+        )}
+
+        {/* 使用说明 */}
+        <div className="p-3 bg-[#F0F7FF] rounded-lg text-xs text-[#63666F]">
+          <p><span className="font-medium text-[#0052D9]">📖 使用说明：</span>点击「新建知识库」上传 .md/.txt 文档（单个课堂引用不超过 50,000 字符），在课堂管理中引用已启用的知识库</p>
+        </div>
+
+        {/* 分页 */}
+        {list.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm text-[#63666F]">
+              <span>每页</span>
+              <InputNumber
+                value={pageSize}
+                min={1}
+                max={100}
+                theme="column"
+                onChange={(val) => {
+                  const n = Math.max(1, Math.min(100, Number(val) || 1));
+                  setPageSize(n);
+                  setCurrentPage(1);
+                }}
+                style={{ width: 72 }}
+              />
+              <span>个知识库，共 {filteredList.length} 个</span>
+            </div>
+            <Pagination
+              total={filteredList.length}
+              pageSize={pageSize}
+              current={safePage}
+              showJumper
+              onChange={(pageInfo) => setCurrentPage(pageInfo.current)}
+            />
           </div>
         )}
 
@@ -424,6 +494,41 @@ export default function KnowledgeBasePage() {
                   {previewKb.content}
                 </pre>
               </div>
+            </div>
+          )}
+        </Dialog>
+
+        {/* 删除确认对话框 */}
+        <Dialog
+          header="删除知识库"
+          visible={!!deleteTarget}
+          onClose={() => setDeleteTarget(null)}
+          onConfirm={() => deleteTarget && handleDelete(deleteTarget.id)}
+          confirmBtn={{ content: "确定删除", theme: "danger", loading: deleting }}
+          cancelBtn={{ content: "取消", disabled: deleting }}
+          width={520}
+          destroyOnClose
+        >
+          {deleteTarget && (
+            <div className="space-y-3 text-sm text-[#1A1A1A]">
+              <p>
+                确定删除知识库「<span className="font-medium">{deleteTarget.name}</span>」吗？此操作不可恢复。
+              </p>
+              {deleteTarget.referencedBy && deleteTarget.referencedBy.length > 0 ? (
+                <div className="p-3 bg-[#FFF3E8] border border-[#FFC69C] rounded-lg">
+                  <p className="text-[#D25F00] font-medium mb-1">
+                    ⚠ 该知识库正被以下 {deleteTarget.referencedBy.length} 个课堂引用：
+                  </p>
+                  <p className="text-[#63666F]">
+                    {deleteTarget.referencedBy.map((t) => t.title).join("、")}
+                  </p>
+                  <p className="text-[#63666F] mt-1">
+                    删除后这些课堂将无法正常使用该知识库（课堂配置不会自动清理）。
+                  </p>
+                </div>
+              ) : (
+                <p className="text-[#63666F]">该知识库当前未被任何课堂引用。</p>
+              )}
             </div>
           )}
         </Dialog>

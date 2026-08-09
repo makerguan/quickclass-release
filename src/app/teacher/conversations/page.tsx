@@ -470,7 +470,7 @@ export default function TeacherConversationsPage() {
 
   return (
     <TeacherLayout>
-      <div className="max-w-5xl space-y-6 pb-8">
+      <div className="space-y-6 pb-8">
         {/* 页面标题 */}
         <div>
           <h1 className="text-2xl font-bold text-[#1A1A1A]">对话记录</h1>

@@ -206,7 +206,7 @@ export default function TeacherInsightsPage() {
 
   return (
     <TeacherLayout>
-      <div className="max-w-6xl space-y-6 pb-8">
+      <div className="space-y-6 pb-8">
         {/* 页面头部 */}
         <div className="flex justify-between items-center">
           <div>

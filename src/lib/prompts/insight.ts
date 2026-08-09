@@ -91,9 +91,6 @@ export function buildConstraintsSection(
 export interface ConversationTemplateVars {
   pcTitle: string;
   pcDescription?: string;
-  spTitle: string;
-  spObjectives: string;
-  spRequirements: string;
   activeCount: number;
   totalStudents: number;
   studentName?: string;
@@ -182,9 +179,6 @@ export function replaceConversationVars(
   const base: Record<string, string | number> = {
     pcTitle: vars.pcTitle,
     pcDescription: vars.pcDescription || "",
-    spTitle: vars.spTitle,
-    spObjectives: vars.spObjectives,
-    spRequirements: vars.spRequirements,
     activeCount: vars.activeCount,
     totalStudents: vars.totalStudents,
     // 数据变量（模板引用）
@@ -369,9 +363,6 @@ export function buildConversationClassPrompt(params: BuildConversationClassParam
     {
       pcTitle: params.pcTitle,
       pcDescription: params.pcDescription,
-      spTitle: params.spTitle,
-      spObjectives: params.spObjectives,
-      spRequirements: params.spRequirements,
       activeCount: params.activeCount,
       totalStudents: params.totalStudents,
       // 旧参数映射到新变量（模板引用 {班级对话活动分析报告}）
@@ -398,9 +389,6 @@ export function buildConversationStudentPrompt(params: BuildConversationStudentP
     {
       pcTitle: params.pcTitle,
       pcDescription: params.pcDescription,
-      spTitle: params.spTitle,
-      spObjectives: params.spObjectives,
-      spRequirements: params.spRequirements,
       activeCount: params.activeCount ?? 1,
       totalStudents: params.totalStudents ?? 1,
       studentName: params.studentName,

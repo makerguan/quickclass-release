@@ -74,7 +74,7 @@ export default function ResearchListPage() {
 
   return (
     <TeacherLayout>
-      <div className="p-6 max-w-6xl mx-auto">
+      <div className="p-6 w-full">
         <div className="flex items-center justify-between mb-6">
           <div>
             <h1 className="text-2xl font-bold text-[#1A1A1A]">教学研究</h1>
@@ -158,7 +158,7 @@ export default function ResearchListPage() {
                               const url = URL.createObjectURL(blob);
                               const a = document.createElement("a");
                               a.href = url;
-                              a.download = `${p.projectName}-${typeLabel(p.projectType)}.docx`;
+                              a.download = `${p.selectedTitle || p.projectName}.docx`;
                               a.click();
                               URL.revokeObjectURL(url);
                             }

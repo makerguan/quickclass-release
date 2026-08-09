@@ -17,7 +17,7 @@ declare global {
  * 提交按钮 CSS 样式
  */
 export const submitButtonCSS = `
-#submitBtn {
+#quickclass-submit-root #submitBtn {
   position: fixed;
   bottom: 30px;
   left: 30px;
@@ -32,8 +32,8 @@ export const submitButtonCSS = `
   z-index: 10000;
   font-weight: bold;
 }
-#submitBtn:hover { background: #C44050; }
-#submitBtn:disabled { background: #ccc; cursor: not-allowed; }
+#quickclass-submit-root #submitBtn:hover { background: #C44050; }
+#quickclass-submit-root #submitBtn:disabled { background: #ccc; cursor: not-allowed; }
 `.trim();
 
 export const submitMessageScript = `
@@ -171,7 +171,7 @@ function recordAction(type, target, value) {
 /**
  * 提交按钮 HTML
  */
-export const submitButtonHTML = `<button id="submitBtn" onclick="submitResults()">提交</button>`;
+export const submitButtonHTML = `<div id="quickclass-submit-root"><button id="submitBtn" onclick="submitResults()">提交</button></div>`;
 // ===== 提交 =====
 async function submitResults() {
   if (!confirm("确认提交？提交后将无法修改。")) return;
@@ -288,8 +288,8 @@ export function injectSubmitFunctionality(html: string, context: SubmitContext):
     }
   }
 
-  // 3. 注入 CSS（如果没有 submitBtn 相关样式）
-  if (!modified.includes("#submitBtn") && !modified.includes("submitBtn")) {
+  // 3. 注入 CSS（如果未注入过提交功能）
+  if (!modified.includes("quickclass-submit-root")) {
     if (modified.includes("</head>")) {
       modified = modified.replace("</head>", "<style>" + submitButtonCSS + "</style></head>");
     } else if (modified.includes("<body")) {
@@ -323,9 +323,9 @@ export function injectSubmitFunctionality(html: string, context: SubmitContext):
     }
   }
 
-  // 6. 检查是否已有提交按钮
+  // 6. 检查是否已有提交按钮（通过 root 包裹层判断）
   var finalBtnHtml = suffix ? submitButtonHTML.replace(/submitResults/g, "submitResults" + suffix) : submitButtonHTML;
-  if (!modified.includes('id="submitBtn"') && !modified.includes("id='submitBtn'")) {
+  if (!modified.includes("quickclass-submit-root")) {
     if (modified.includes("</body>")) {
       modified = modified.replace("</body>", finalBtnHtml + "</body>");
     } else {
@@ -347,10 +347,22 @@ export function injectSubmitFunctionality(html: string, context: SubmitContext):
 export function removeSubmitFunctionality(html: string): string {
   let modified = html;
 
-  // 移除提交按钮
+  // 移除提交按钮包裹层（新版）或独立按钮（旧版兼容）
+  const rootIdx = modified.indexOf('id="quickclass-submit-root"');
+  if (rootIdx > -1) {
+    let divStart = rootIdx;
+    while (divStart > 0 && modified.substring(divStart, divStart + 4) !== '<div') divStart--;
+    let depth = 0, endIdx = -1;
+    for (let i = divStart; i < modified.length; i++) {
+      if (modified.substring(i, i + 4) === '<div') depth++;
+      if (modified.substring(i, i + 6) === '</div>') { depth--; if (depth === 0) { endIdx = i + 6; break; } }
+    }
+    if (endIdx > -1) modified = modified.substring(0, divStart) + modified.substring(endIdx);
+  }
   modified = modified.replace(/<button[^>]*id=["']submitBtn["'][^>]*>.*?<\/button>/gi, "");
 
-  // 移除 CSS（只移除 submitBtn 相关的）
+  // 移除提交按钮CSS（新版style标签 + 旧版单规则兼容）
+  modified = modified.replace(/<style>\s*#quickclass-submit-root[\s\S]*?<\/style>/gi, "");
   modified = modified.replace(/#submitBtn\{[^}]*\}/g, "");
 
   // 移除提交函数 submitResults

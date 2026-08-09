@@ -6,11 +6,14 @@ import {
   verifyAndFilterReferences,
   renumberBodyText,
   type ReferencesAuditReport,
+  type RefStatus,
 } from "./references-verifier";
 import {
   fetchCandidateReferences,
   buildCandidatePromptSection,
+  type RealReferenceCandidate,
 } from "./reference-fetcher";
+import { validateCitations, type CitationValidationReport } from "./citation-validator";
 
 export interface PaperContent {
   docType: "PAPER";
@@ -398,6 +401,7 @@ ${candidateSection || "[1] 参考文献1\n[2] 参考文献2\n..."}
 
 ## ⚠️ 参考文献真实性（必须遵守，系统会核查）
 - **必须优先使用上方"真实可引用文献候选"中的文献**：从候选列表中挑选与论文主题最相关的文献，直接作为参考文献输出，编号格式为 [1]、[2]...
+- **正文中必须引用至少 10 条候选文献**：每条候选文献至少被引用 1 次，确保参考文献不是摆设
 - **禁止虚构文献**：不得编造作者、标题、期刊名、卷期、页码、DOI、ISBN 等任何信息。
 - **不确定的文献不得输出**：若不能确认文献真实存在，应在文中删除该引用并改述。
 - **数量以"核实通过"为准，宁缺勿滥**：宁可只有 10 条真实文献，也不要 30 条混入虚构。
@@ -532,6 +536,8 @@ ${candidateSection || "[1] 参考文献1\n[2] 参考文献2\n..."}
 - 编号规则：从 [1] 开始严格递增，禁止重复编号（如 [1][1]）、禁止跳号
 
 ## ⚠️ 参考文献真实性（必须遵守，系统会核查）
+- **必须优先使用上方"真实可引用文献候选"中的文献**：从候选列表中挑选与论文主题最相关的文献，直接作为参考文献输出，编号格式为 [1]、[2]...
+- **正文中必须引用至少 8 条候选文献**：每条候选文献至少被引用 1 次，确保参考文献不是摆设
 - **禁止虚构文献**：不得编造作者、标题、期刊名、卷期、页码、DOI、ISBN 等任何信息。
 - **不确定的文献不得输出**：若不能确认文献真实存在，应在文中删除该引用并改述。
 - **数量以"核实通过"为准，宁缺勿滥**：宁可只有 8 条真实文献，也不要 25 条混入虚构。
@@ -1116,14 +1122,74 @@ async function parsePaperContent(text: string, title: string, candidates: any[] 
     console.log(`  [${i+1}] ${preview}`);
   });
   const verification = await verifyAndFilterReferences(reorderedRefs);
-  const verifiedRefs = verification.kept;
-  const verifiedSections = newSections.map((s) => ({
+  let verifiedRefs = verification.kept;
+  let verifiedSections = newSections.map((s) => ({
     title: renumberBodyText(s.title, verification.oldToNew),
     content: renumberBodyText(s.content, verification.oldToNew),
   }));
-  const verifiedExtras = replacedExtras.map((t) =>
+  let verifiedExtras = replacedExtras.map((t) =>
     renumberBodyText(t, verification.oldToNew),
   );
+
+  // 候选文献替换：如果验证后保留的文献太少，用候选文献替换 AI 编造的
+  if (candidates.length > 0 && verifiedRefs.length < candidates.length * 0.5) {
+    console.log("=== 候选文献替换触发（论文）===");
+    console.log(`验证后仅保留 ${verifiedRefs.length} 条，候选文献有 ${candidates.length} 条，执行替换`);
+    const replaced = replaceRefsWithCandidates(
+      verifiedRefs, verifiedSections, verifiedExtras, candidates
+    );
+    verifiedRefs = replaced.refs;
+    verifiedSections = replaced.sections;
+    verifiedExtras = replaced.extras;
+    // 替换后，旧审计报告不再准确，重建一个简化版
+    const replacedReport: ReferencesAuditReport = {
+      total: verifiedRefs.length,
+      verified: verifiedRefs.length,
+      official: 0,
+      duplicates: 0,
+      removed: 0,
+      items: verifiedRefs.map((r, i) => ({
+        index: i + 1,
+        raw: r.replace(/^\[\d+\]\s*/, ""),
+        status: "VERIFIED" as RefStatus,
+        reason: "候选文献替换（真实文献）",
+        source: "crossref" as const,
+        confidence: 1,
+      })),
+      checkedAt: new Date().toISOString(),
+    };
+    verification.report = replacedReport;
+  }
+
+  // 引用合理性审核：判断每条 [N] 引用是否真的支持了论点
+  console.log("=== 引用合理性审核（论文）===");
+  const citationValidation = await validateCitations(
+    verifiedSections,
+    verifiedRefs,
+    verifiedExtras,
+  );
+  console.log(`引用审核结果：共 ${citationValidation.total} 条，合理 ${citationValidation.verified}，可疑 ${citationValidation.suspicious}，不合理 ${citationValidation.unverified}`);
+
+  // 将引用审核结果合并到审计报告中
+  const auditReport = verification.report;
+  if (citationValidation.total > 0) {
+    auditReport.citationValidation = {
+      total: citationValidation.total,
+      verified: citationValidation.verified,
+      suspicious: citationValidation.suspicious,
+      unverified: citationValidation.unverified,
+      checkedAt: citationValidation.checkedAt,
+    };
+    // 把引用审核状态写入每条审计项
+    for (const item of auditReport.items) {
+      const cv = citationValidation.items.find((c) => c.refIndex === item.index);
+      if (cv) {
+        item.citationStatus = cv.status;
+        item.citationReason = cv.reason;
+        item.citationContext = cv.context;
+      }
+    }
+  }
 
   return {
     docType: "PAPER",
@@ -1134,7 +1200,7 @@ async function parsePaperContent(text: string, title: string, candidates: any[] 
       : keywords,
     sections: verifiedSections,
     references: verifiedRefs,
-    referencesAudit: verification.report,
+    referencesAudit: auditReport,
   };
 }
 
@@ -1297,8 +1363,46 @@ function sortReferencesByCitation(
 }
 
 /**
+ * 候选文献替换：当 AI 编造的参考文献被核查删除后，用候选文献替换
+ *
+ * 策略：
+ * 1. 保留核查通过的文献（保持原编号）
+ * 2. 用候选文献填充空缺（追加到末尾，从下一个可用编号开始）
+ * 3. 保持正文引用不变（已通过的引用保留，被删的引用指向新追加的候选文献）
+ *
+ * @param verifiedRefs 核查后保留的参考文献
+ * @param sections 核查后重写编号的章节
+ * @param extras 核查后重写编号的额外文本（摘要/关键词）
+ * @param candidates 候选文献列表（来自 Crossref 预取）
+ */
+function replaceRefsWithCandidates(
+  verifiedRefs: string[],
+  sections: { title: string; content: string }[],
+  extras: string[],
+  candidates: RealReferenceCandidate[],
+): { refs: string[]; sections: { title: string; content: string }[]; extras: string[] } {
+  // 候选文献的纯文本（不含 [N] 前缀）
+  const candidateTexts = candidates.map((c) => c.formatted);
+
+  // 去重：排除与已保留文献内容相似的候选文献
+  const deduped = candidateTexts.filter((ct) => {
+    const ctShort = ct.slice(0, 60).toLowerCase();
+    return !verifiedRefs.some((vr) => vr.slice(0, 60).toLowerCase().includes(ctShort.slice(0, 30)));
+  });
+
+  // 新编号从 verifiedRefs.length + 1 开始
+  const newRefs = [...verifiedRefs];
+  const newCandidates = deduped.map((ct, i) => `[${verifiedRefs.length + i + 1}] ${ct}`);
+  newRefs.push(...newCandidates);
+
+  return { refs: newRefs, sections, extras };
+}
+
+/**
  * 容错拆分：当 AI 未按 [SECTION_START] 规范输出、而是用中文序号标题
  * （一）（二）…（八）作为章节分隔时，按行首的中文序号标题重新拆分。
+ * @param blob 待拆分的文本（可能是单条大 section 的 content，也可能是清洗后的全文）
+ * @param firstTitle 当（一）标题已被提前剥离为 title 时，用于回填第一段的标题
  */
 function splitProposalBlob(blob: string, firstTitle: string): { title: string; content: string }[] {
   const lines = blob.split("\n");
@@ -1309,12 +1413,14 @@ function splitProposalBlob(blob: string, firstTitle: string): { title: string; c
   const firstHeaderIdx = idxs[0];
   const lead = lines.slice(0, firstHeaderIdx).join("\n").trim();
   if (lead) {
+    // （一）标题已被提前剥离，lead 是（一）的正文
     out.push({ title: firstTitle, content: lead });
     for (let i = 0; i < idxs.length; i++) {
       const end = i + 1 < idxs.length ? idxs[i + 1] : lines.length;
       out.push({ title: lines[idxs[i]].trim(), content: lines.slice(idxs[i] + 1, end).join("\n").trim() });
     }
   } else {
+    // lead 为空：第一个 header 本身就是（一）
     for (let i = 0; i < idxs.length; i++) {
       const end = i + 1 < idxs.length ? idxs[i + 1] : lines.length;
       out.push({ title: lines[idxs[i]].trim(), content: lines.slice(idxs[i] + 1, end).join("\n").trim() });
@@ -1324,7 +1430,7 @@ function splitProposalBlob(blob: string, firstTitle: string): { title: string; c
 }
 
 async function parseProposalContent(text: string, title: string, candidates: any[] = []): Promise<ProposalContent> {
-  const sections: { title: string; content: string }[] = [];
+  let sections: { title: string; content: string }[] = [];
 
   // 容错解析：以 [SECTION_START] 作为强分隔符，每个 SECTION_START 后内容直到下一个 [SECTION_START] 或 [REFERENCES_START] 或文末
   const startRegex = /\[SECTION_START\]/g;
@@ -1389,17 +1495,71 @@ async function parseProposalContent(text: string, title: string, candidates: any
     console.log(`  [${i+1}] ${preview}`);
   });
   const verification = await verifyAndFilterReferences(reorderedRefs);
-  const verifiedRefs = verification.kept;
-  const verifiedSections = newSections.map((s) => ({
+  let verifiedRefs = verification.kept;
+  let verifiedSections = newSections.map((s) => ({
     title: renumberBodyText(s.title, verification.oldToNew),
     content: renumberBodyText(s.content, verification.oldToNew),
   }));
+
+  // 候选文献替换：如果验证后保留的文献太少，用候选文献替换 AI 编造的
+  if (candidates.length > 0 && verifiedRefs.length < candidates.length * 0.5) {
+    console.log("=== 候选文献替换触发（课题方案）===");
+    console.log(`验证后仅保留 ${verifiedRefs.length} 条，候选文献有 ${candidates.length} 条，执行替换`);
+    const replaced = replaceRefsWithCandidates(
+      verifiedRefs, verifiedSections, [], candidates
+    );
+    verifiedRefs = replaced.refs;
+    verifiedSections = replaced.sections;
+    // 替换后重建审计报告
+    const replacedReport: ReferencesAuditReport = {
+      total: verifiedRefs.length,
+      verified: verifiedRefs.length,
+      official: 0,
+      duplicates: 0,
+      removed: 0,
+      items: verifiedRefs.map((r, i) => ({
+        index: i + 1,
+        raw: r.replace(/^\[\d+\]\s*/, ""),
+        status: "VERIFIED" as RefStatus,
+        reason: "候选文献替换（真实文献）",
+        source: "crossref" as const,
+        confidence: 1,
+      })),
+      checkedAt: new Date().toISOString(),
+    };
+    verification.report = replacedReport;
+  }
+
+  // 引用合理性审核：判断每条 [N] 引用是否真的支持了论点
+  console.log("=== 引用合理性审核（课题方案）===");
+  const citationValidation = await validateCitations(verifiedSections, verifiedRefs);
+  console.log(`引用审核结果：共 ${citationValidation.total} 条，合理 ${citationValidation.verified}，可疑 ${citationValidation.suspicious}，不合理 ${citationValidation.unverified}`);
+
+  // 将引用审核结果合并到审计报告中
+  const auditReport = verification.report;
+  if (citationValidation.total > 0) {
+    auditReport.citationValidation = {
+      total: citationValidation.total,
+      verified: citationValidation.verified,
+      suspicious: citationValidation.suspicious,
+      unverified: citationValidation.unverified,
+      checkedAt: citationValidation.checkedAt,
+    };
+    for (const item of auditReport.items) {
+      const cv = citationValidation.items.find((c) => c.refIndex === item.index);
+      if (cv) {
+        item.citationStatus = cv.status;
+        item.citationReason = cv.reason;
+        item.citationContext = cv.context;
+      }
+    }
+  }
 
   return {
     docType: "PROPOSAL",
     title,
     sections: verifiedSections,
     references: verifiedRefs,
-    referencesAudit: verification.report,
+    referencesAudit: auditReport,
   };
 }

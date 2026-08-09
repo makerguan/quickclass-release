@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
-import { injectAiCompanion, upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
+import { upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
 
 export async function GET(req: NextRequest) {
   try {
@@ -29,14 +29,12 @@ export async function GET(req: NextRequest) {
     });
 
     // 教师预览场景的兜底升级：每个启用了 AI 伴学的探究都跑一遍惰性升级
+    // 只在内存中自愈注入，不持久化回 DB（保持 htmlContent 纯净）
     const upgradedItems = items.map((it) => {
       if (!it.enableAiCompanion) return it;
       const upgrade = upgradeAiCompanionIfNeeded(it.htmlContent, { explorationId: it.id });
       if (!upgrade.changed) return it;
       it.htmlContent = upgrade.html;
-      prisma.explorationActivity
-        .update({ where: { id: it.id }, data: { htmlContent: upgrade.html } })
-        .catch((e) => console.error("[GET /exploration-activities] 持久化AI伴学升级失败", it.id, e));
       return it;
     });
 
@@ -90,15 +88,10 @@ export async function POST(req: NextRequest) {
       },
     });
 
-    // 如果启用AI伴学，注入UI代码到HTML
+    // AI 伴学 UI 不再在保存时持久化注入到 HTML 原稿（避免污染），
+    // 改为学生读取路径通过 upgradeAiCompanionIfNeeded 在内存中自愈注入
     let savedItem = item;
-    if (enableAiCompanion) {
-      const result = injectAiCompanion(item.htmlContent, { explorationId: item.id });
-      savedItem = await prisma.explorationActivity.update({
-        where: { id: item.id },
-        data: { htmlContent: result.html },
-      });
-    }
+    // enableAiCompanion 标志位已在上面 create 时写入，无需额外注入
 
     return NextResponse.json(savedItem);
   } catch (error) {

@@ -121,7 +121,13 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
         MessagePlugin.success(`提交成功！得分：${data.score}分`);
         onSubmit();
       } else {
-        MessagePlugin.error(data.error || "提交失败");
+        // 如果是"已提交"错误（403），说明后端已有完整记录，锁定界面
+        if (res.status === 403) {
+          setSubmitted(true);
+          MessagePlugin.warning("作业已提交过，无需重复提交");
+        } else {
+          MessagePlugin.error(data.error || "提交失败");
+        }
       }
     } catch {
       MessagePlugin.error("提交失败");

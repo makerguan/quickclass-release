@@ -28,6 +28,17 @@ export default function QuizReportPage() {
   const subProjectId = params.subProjectId as string;
   const quizId = params.quizId as string;
 
+  // 剥离 AI 返回内容中可能的 ```html ... ``` 包裹
+  const stripMarkdownCodeBlock = (text: string) => {
+    if (!text) return text;
+    const mdBlockMatch = text.match(/^\s*```(?:html|HTML)?\s*\n?([\s\S]*?)\n?\s*```\s*$/);
+    if (mdBlockMatch) return mdBlockMatch[1].trim();
+    // fallback：移除首尾的 ``` 标记
+    let cleaned = text.replace(/^\s*```(?:html|HTML)?\s*\n?/, "");
+    cleaned = cleaned.replace(/\n?\s*```\s*$/, "");
+    return cleaned.trim() || text;
+  };
+
   const [quiz, setQuiz] = useState<any>(null);
   const [reportData, setReportData] = useState<any>(null);
   const [loading, setLoading] = useState(true);
@@ -293,7 +304,7 @@ export default function QuizReportPage() {
         {/* 头部 */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <button onClick={() => router.push("/teacher/tasks")} className="text-sm text-gray-400 hover:text-gray-600 mb-1">← 返回课堂管理</button>
+            <button onClick={() => router.push("/teacher/tasks")} className="text-sm text-gray-400 hover:text-gray-600 mb-1">← 返回课堂列表</button>
             <h1 className="text-xl font-semibold text-gray-800">{quiz.title} · 课堂作业报告</h1>
             <div className="text-sm text-gray-400">{quiz.description || "无说明"}</div>
           </div>
@@ -629,24 +640,21 @@ export default function QuizReportPage() {
             
             {/* 报告内容 */}
             <div className="p-4">
-              {aiReport ? (
-                <div className="text-sm text-gray-700 leading-relaxed">
-                  {/* 检测是否为 HTML 内容 */}
-                  {aiReport.includes('<!DOCTYPE') ||
-                   aiReport.includes('<html') ||
-                   aiReport.includes('<div') ||
-                   aiReport.includes('echarts') ||
-                   aiReport.includes('ECharts') ||
-                   aiReport.includes('chart') ||
-                   aiReport.toLowerCase().includes('html') ? (
-                    // 使用 iframe 隔离 HTML 样式，带全屏按钮
+              {aiReport ? (() => {
+                  // 先剥离可能的 markdown 代码块标记
+                  const cleanReport = stripMarkdownCodeBlock(aiReport);
+                  const isHtml = cleanReport.includes('<!DOCTYPE') ||
+                    cleanReport.includes('<html') ||
+                    (cleanReport.includes('<div') && cleanReport.includes('</div>'));
+
+                  return isHtml ? (
                     <div className="relative group">
                       <button
                         className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-white/80 hover:bg-white text-gray-600 rounded border border-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
                         onClick={() => {
                           const w = window.open('', '_blank');
                           if (w) {
-                            w.document.write(aiReport);
+                            w.document.write(cleanReport);
                             w.document.close();
                             w.document.title = '作业 AI 分析报告';
                           }
@@ -655,7 +663,7 @@ export default function QuizReportPage() {
                         全屏查看
                       </button>
                       <iframe
-                        srcDoc={aiReport}
+                        srcDoc={cleanReport}
                         className="w-full border-none"
                         style={{ minHeight: "400px" }}
                         sandbox="allow-scripts"
@@ -664,11 +672,10 @@ export default function QuizReportPage() {
                     </div>
                   ) : (
                     <div className="prose prose-sm max-w-none">
-                      <Markdown>{aiReport}</Markdown>
+                      <Markdown>{cleanReport}</Markdown>
                     </div>
-                  )}
-                </div>
-              ) : (
+                  );
+                })() : (
                 <div className="text-center py-12 text-gray-400">
                   点击「生成报告」按钮生成 AI 学情分析报告
                 </div>

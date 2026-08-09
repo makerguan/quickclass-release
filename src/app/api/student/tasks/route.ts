@@ -39,6 +39,10 @@ export async function GET(req: NextRequest) {
               select: { id: true, title: true, description: true, htmlContent: true, enableSubmission: true, enableAiCompanion: true, questionsJson: true },
               orderBy: { sortOrder: "asc" },
             },
+            ProjectSubmission: {
+              where: { enabled: true },
+              orderBy: { sortOrder: "asc" },
+            },
           },
           orderBy: { sortOrder: "asc" },
         },
@@ -86,6 +90,15 @@ export async function GET(req: NextRequest) {
           questions: qa.Question,
         })),
         explorations: sp.ExplorationActivity,
+        projectSubmissions: sp.ProjectSubmission?.map(ps => ({
+          id: ps.id,
+          title: ps.title,
+          description: ps.description,
+          category: ps.category,
+          visibleToClass: ps.visibleToClass,
+          allowLike: ps.allowLike,
+          fileSizeLimit: ps.fileSizeLimit,
+        })),
       })),
     }));
 

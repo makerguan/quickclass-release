@@ -167,7 +167,6 @@ export async function GET(req: NextRequest) {
       include: {
         SubProject: { select: { id: true, title: true, task: { select: { id: true, title: true } } } },
         Question: { orderBy: { order: "asc" } },
-        _count: { select: { QuizAttempt: true } },
       },
       // 排序：生效中(ACTIVE) > 失效中(INACTIVE) > 草稿(INACTIVE)
       orderBy: [
@@ -177,8 +176,21 @@ export async function GET(req: NextRequest) {
       ],
     });
 
-    // 查询所有作业的 AI 分析报告
     const quizIds = quizzes.map((q) => q.id);
+
+    // 批量统计答题人数：直接查所有 QuizAttempt 的 quizActivityId，JS 里计数（SQLite 上最可靠）
+    const attemptCountMap = new Map<string, number>();
+    if (quizIds.length > 0) {
+      const allAttempts = await prisma.quizAttempt.findMany({
+        where: { quizActivityId: { in: quizIds } },
+        select: { quizActivityId: true },
+      });
+      for (const a of allAttempts) {
+        attemptCountMap.set(a.quizActivityId, (attemptCountMap.get(a.quizActivityId) || 0) + 1);
+      }
+    }
+
+    // 查询所有作业的 AI 分析报告
     const insights = await prisma.aIInsight.findMany({
       where: { type: "quiz_class", scopeId: { in: quizIds } },
       orderBy: { version: "desc" },
@@ -191,12 +203,12 @@ export async function GET(req: NextRequest) {
 
     const quizzesWithInsights = quizzes.map((q) => {
       const ins = latestInsightMap.get(q.id);
-      const { SubProject, Question, _count, ...rest } = q;
+      const { SubProject, Question, ...rest } = q;
       return {
         ...rest,
         subProject: SubProject,
         questions: Question,
-        _count: { attempts: _count.QuizAttempt },
+        _count: { attempts: attemptCountMap.get(q.id) || 0 },
         hasAIAnalysis: !!ins,
         aiAnalysisVersion: ins?.version || null,
       };

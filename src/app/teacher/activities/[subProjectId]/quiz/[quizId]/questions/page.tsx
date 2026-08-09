@@ -210,102 +210,102 @@ export default function TeacherQuizQuestionsPage() {
   };
 
   if (loading) return <div className="p-6 text-center">加载中...</div>;
-  if (error) return (
-    <TeacherLayout>
+  if (error) {
+    const content = (
       <div className="p-6 text-center">
         <div className="text-red-500 mb-4">{error}</div>
         <button onClick={() => router.push("/teacher/tasks")} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">返回</button>
       </div>
-    </TeacherLayout>
-  );
+    );
+    return <TeacherLayout>{content}</TeacherLayout>;
+  }
   if (!quiz) return <div className="p-6 text-center">作业不存在</div>;
 
-  return (
-    <TeacherLayout>
-      <div className="p-6 max-w-6xl mx-auto">
-        {/* 头部 */}
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <button onClick={() => router.push("/teacher/tasks")} className="text-sm text-gray-400 hover:text-gray-600 mb-1">← 返回课堂管理</button>
-            <h1 className="text-xl font-semibold text-gray-800">{quiz.title} - 题目管理</h1>
-            <div className="text-sm text-gray-400">{quiz.description || "无说明"}</div>
-          </div>
-          <div className="flex gap-2">
-            {quiz.status === "INACTIVE" && questions.length > 0 && (
-              <button onClick={handlePublish} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm">
-                快速生效
-              </button>
-            )}
-            <button onClick={handleExportQuestions} className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm">
-              导出作业
+  const mainContent = (
+    <div className="p-6 max-w-6xl mx-auto">
+      {/* 头部 */}
+      <div className="flex items-center justify-between mb-6">
+        <div>
+          <button onClick={() => router.push("/teacher/tasks")} className="text-sm text-gray-400 hover:text-gray-600 mb-1">← 返回课堂管理</button>
+          <h1 className="text-xl font-semibold text-gray-800">{quiz.title} - 题目管理</h1>
+          <div className="text-sm text-gray-400">{quiz.description || "无说明"}</div>
+        </div>
+        <div className="flex gap-2">
+          {quiz.status === "INACTIVE" && questions.length > 0 && (
+            <button onClick={handlePublish} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm">
+              快速生效
             </button>
-            <label className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm cursor-pointer">
-              {importing ? "导入中..." : "导入作业"}
-              <input type="file" accept=".json" onChange={handleImportQuestions} className="hidden" />
-            </label>
-          </div>
+          )}
+          <button onClick={handleExportQuestions} className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm">
+            导出作业
+          </button>
+          <label className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm cursor-pointer">
+            {importing ? "导入中..." : "导入作业"}
+            <input type="file" accept=".json" onChange={handleImportQuestions} className="hidden" />
+          </label>
         </div>
-
-        {/* 状态标签 + 只读提示 */}
-        <div className="mb-4 flex items-center gap-3">
-          {quiz.status === "INACTIVE" && <span className="px-3 py-1 rounded-full text-sm bg-orange-100 text-orange-700">失效中</span>}
-          {quiz.status === "ACTIVE" && <span className="px-3 py-1 rounded-full text-sm bg-green-100 text-green-700">生效中</span>}
-          {hasSubmissions && <span className="text-sm text-red-500">已有学生提交，无法修改题目。请先清空答题记录。</span>}
-          {!hasSubmissions && quiz.status === "ACTIVE" && <span className="text-sm text-gray-400">作业生效中，请先失效再编辑</span>}
-          {error && <div className="text-red-500 text-sm">{error}</div>}
-        </div>
-
-        {/* 题目列表 */}
-        <div className="mb-4 flex justify-between items-center">
-          <div className="text-sm text-gray-500">共 {questions.length} 题</div>
-          <div className="flex gap-2">
-            <button 
-              onClick={() => setQuestions((p) => [...p, { type: "SINGLE_CHOICE", content: "", options: { A: "", B: "", C: "", D: "" }, answer: "A", difficulty: "BASIC" }])}
-              disabled={hasSubmissions || quiz?.status === "ACTIVE"}
-              className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              + 添加题目
-            </button>
-            {questions.length > 0 && (
-              <button 
-                onClick={handleSaveQuestions} 
-                disabled={saving || hasSubmissions || quiz?.status === "ACTIVE"}
-                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
-                {saving ? "保存中..." : "保存题目"}
-              </button>
-            )}
-          </div>
-        </div>
-
-        {questions.length === 0 ? (
-          <div className="text-center py-12 text-gray-400 bg-white rounded-xl border">暂无题目，点击"+ 添加题目"创建</div>
-        ) : (
-          <div className="space-y-4">
-            {questions.map((q, idx) => (
-              <QuestionCard
-                key={idx}
-                q={q}
-                idx={idx}
-                total={questions.length}
-                disabled={hasSubmissions || quiz?.status === "ACTIVE"}
-                onUpdate={(field: keyof Question, value: any) => updateQuestion(idx, field, value)}
-                onDelete={() => setQuestions((p) => p.filter((_, i) => i !== idx))}
-                onMoveUp={() => moveUp(idx)}
-                onMoveDown={() => moveDown(idx)}
-                onPreview={() => setPreviewIdx(idx)}
-              />
-            ))}
-          </div>
-        )}
-
-        {/* 预览弹窗 */}
-        {previewIdx !== null && (
-          <QuestionPreview question={questions[previewIdx]} onClose={() => setPreviewIdx(null)} />
-        )}
       </div>
-    </TeacherLayout>
+
+      {/* 状态标签 + 只读提示 */}
+      <div className="mb-4 flex items-center gap-3">
+        {quiz.status === "INACTIVE" && <span className="px-3 py-1 rounded-full text-sm bg-orange-100 text-orange-700">失效中</span>}
+        {quiz.status === "ACTIVE" && <span className="px-3 py-1 rounded-full text-sm bg-green-100 text-green-700">生效中</span>}
+        {hasSubmissions && <span className="text-sm text-red-500">已有学生提交，无法修改题目。请先清空答题记录。</span>}
+        {!hasSubmissions && quiz.status === "ACTIVE" && <span className="text-sm text-gray-400">作业生效中，请先失效再编辑</span>}
+        {error && <div className="text-red-500 text-sm">{error}</div>}
+      </div>
+
+      {/* 题目列表 */}
+      <div className="mb-4 flex justify-between items-center">
+        <div className="text-sm text-gray-500">共 {questions.length} 题</div>
+        <div className="flex gap-2">
+          <button 
+            onClick={() => setQuestions((p) => [...p, { type: "SINGLE_CHOICE", content: "", options: { A: "", B: "", C: "", D: "" }, answer: "A", difficulty: "BASIC" }])}
+            disabled={hasSubmissions || quiz?.status === "ACTIVE"}
+            className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            + 添加题目
+          </button>
+          {questions.length > 0 && (
+            <button 
+              onClick={handleSaveQuestions} 
+              disabled={saving || hasSubmissions || quiz?.status === "ACTIVE"}
+              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            >
+              {saving ? "保存中..." : "保存题目"}
+            </button>
+          )}
+        </div>
+      </div>
+
+      {questions.length === 0 ? (
+        <div className="text-center py-12 text-gray-400 bg-white rounded-xl border">暂无题目，点击"+ 添加题目"创建</div>
+      ) : (
+        <div className="space-y-4">
+          {questions.map((q, idx) => (
+            <QuestionCard
+              key={idx}
+              q={q}
+              idx={idx}
+              total={questions.length}
+              disabled={hasSubmissions || quiz?.status === "ACTIVE"}
+              onUpdate={(field: keyof Question, value: any) => updateQuestion(idx, field, value)}
+              onDelete={() => setQuestions((p) => p.filter((_, i) => i !== idx))}
+              onMoveUp={() => moveUp(idx)}
+              onMoveDown={() => moveDown(idx)}
+              onPreview={() => setPreviewIdx(idx)}
+            />
+          ))}
+        </div>
+      )}
+
+      {/* 预览弹窗 */}
+      {previewIdx !== null && (
+        <QuestionPreview question={questions[previewIdx]} onClose={() => setPreviewIdx(null)} />
+      )}
+    </div>
   );
+  return <TeacherLayout>{mainContent}</TeacherLayout>;
 }
 
 /* ---- 题目卡片组件 ---- */

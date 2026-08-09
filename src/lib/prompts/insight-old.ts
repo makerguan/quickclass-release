@@ -15,9 +15,6 @@ export interface InsightConfig {
 export interface BuildConversationClassParams {
   pcTitle: string;
   pcDescription?: string;
-  spTitle: string;
-  spObjectives: string;
-  spRequirements: string;
   activeCount: number;
   totalStudents: number;
   dialogContents: string;
@@ -29,9 +26,6 @@ export interface BuildConversationClassParams {
 export interface BuildConversationStudentParams {
   pcTitle: string;
   pcDescription?: string;
-  spTitle: string;
-  spObjectives: string;
-  spRequirements: string;
   activeCount?: number;
   totalStudents?: number;
   studentName: string;

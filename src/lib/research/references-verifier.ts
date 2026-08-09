@@ -46,6 +46,12 @@ export interface ReferenceAuditItem {
   source?: "crossref" | "openalex" | "official" | "duplicate";
   /** 0-1，标题匹配的相似度 */
   confidence?: number;
+  /** 引用合理性审核状态 */
+  citationStatus?: "VERIFIED" | "SUSPICIOUS" | "UNVERIFIED";
+  /** 引用合理性审核说明 */
+  citationReason?: string;
+  /** 引用所在上下文 */
+  citationContext?: string;
 }
 
 export interface ReferencesAuditReport {
@@ -56,6 +62,14 @@ export interface ReferencesAuditReport {
   removed: number;
   items: ReferenceAuditItem[];
   checkedAt: string;
+  /** 引用合理性审核报告 */
+  citationValidation?: {
+    total: number;
+    verified: number;
+    suspicious: number;
+    unverified: number;
+    checkedAt: string;
+  };
 }
 
 export interface VerificationResult {

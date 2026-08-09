@@ -32,7 +32,10 @@ export async function GET(
         knowledgeBase: true, teacherId: true, analysisPrompt: true,
         grade: true, subject: true,
         subProjects: {
-          include: { PresetConversation: { orderBy: { sortOrder: "asc" } } },
+          include: {
+            PresetConversation: { orderBy: { sortOrder: "asc" } },
+            ExplorationActivity: { select: { id: true } },
+          },
           orderBy: { sortOrder: "asc" },
         },
       },
@@ -296,7 +299,10 @@ export async function POST(
       where: { id: taskId },
       include: {
         subProjects: {
-          include: { PresetConversation: { orderBy: { sortOrder: "asc" } } },
+          include: {
+            PresetConversation: { orderBy: { sortOrder: "asc" } },
+            ExplorationActivity: { select: { id: true } },
+          },
           orderBy: { sortOrder: "asc" },
         },
       },
@@ -357,7 +363,9 @@ export async function POST(
       subProjects: task.subProjects.map((sp) => ({
         ...sp,
         presetConversations: sp.PresetConversation,
+        explorationActivities: sp.ExplorationActivity,
         PresetConversation: undefined,
+        ExplorationActivity: undefined,
       })),
     };
 
@@ -475,14 +483,23 @@ async function generateTaskClassInsight(
 ): Promise<string> {
   const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
   const allPCs = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title })));
+  const explorationIds = task.subProjects.flatMap((sp) => sp.explorationActivities.map((e: any) => e.id));
 
-  const [students, conversations] = await Promise.all([
+  const [students, conversations, companionMessages] = await Promise.all([
     prisma.user.findMany({ where: { classId, role: "STUDENT" }, select: { id: true, name: true } }),
     prisma.conversation.findMany({
       where: { classId, presetConversationId: { in: presetIds } },
       include: { User: { select: { name: true } }, Message: { orderBy: { createdAt: "asc" }, select: { role: true, content: true } } },
       orderBy: { updatedAt: "desc" },
     }),
+    // AI 伴学对话记录
+    explorationIds.length > 0
+      ? prisma.aiCompanionMessage.findMany({
+          where: { explorationId: { in: explorationIds } },
+          include: { User: { select: { name: true } } },
+          orderBy: { createdAt: "asc" },
+        })
+      : Promise.resolve([]),
   ]);
 
   const useSubInsights = dataSource === "TASK_INSIGHTS";
@@ -549,6 +566,8 @@ async function generateTaskClassInsight(
 
   // 拼接所有学生的完整对话内容
   const dialogContents = buildDialogContents(conversations, students, allPCs);
+  const companionDialogContents = buildCompanionDialogContents(companionMessages, students);
+  const combinedDialogContents = [dialogContents, companionDialogContents].filter(Boolean).join("\n\n");
 
   // 直接对话数据分析
   const presetStats = new Map<string, { completedStudents: Set<string>; totalMessages: number }>();
@@ -606,7 +625,7 @@ async function generateTaskClassInsight(
     pcStudentInsights: [],
     customSection,
     useSubInsights: false,
-    dialogContents,
+    dialogContents: combinedDialogContents,
     quizStats: await buildClassQuizStats(task.id, classId),
     personalDialogAnalysisReport: "",
     classDialogAnalysisReport: "",
@@ -645,6 +664,7 @@ async function generateTaskStudentInsight(
     subProjects: Array<{
       id: string; title: string; objectives: string; requirements: string; analysisPrompt?: string | null;
       presetConversations: Array<{ id: string; title: string; description?: string | null }>;
+      explorationActivities: Array<{ id: string }>;
     }>;
   },
   classId: string,
@@ -655,19 +675,35 @@ async function generateTaskStudentInsight(
 ): Promise<string> {
   const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
   const allPCs = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title })));
+  const explorationIds = task.subProjects.flatMap((sp) => sp.explorationActivities.map((e) => e.id));
 
-  const [student, conversations] = await Promise.all([
+  const [student, conversations, companionMessages] = await Promise.all([
     prisma.user.findUnique({ where: { id: studentId }, select: { id: true, name: true } }),
     prisma.conversation.findMany({
       where: { classId, userId: studentId, presetConversationId: { in: presetIds } },
       include: { PresetConversation: { select: { title: true } }, Message: { orderBy: { createdAt: "asc" }, select: { role: true, content: true } } },
       orderBy: { updatedAt: "desc" },
     }),
+    explorationIds.length > 0
+      ? prisma.aiCompanionMessage.findMany({
+          where: { explorationId: { in: explorationIds }, userId: studentId },
+          orderBy: { createdAt: "asc" },
+        })
+      : Promise.resolve([]),
   ]);
 
   if (!student) throw new Error("学生不存在");
 
   const useSubInsights = dataSource === "TASK_INSIGHTS";
+
+  // 该学生的 AI 伴学对话
+  const companionStudentContents = companionMessages.length > 0
+    ? `## AI伴学对话\n${companionMessages.map((m) => {
+        const roleLabel = m.role === "user" ? "学生" : "AI";
+        const time = m.createdAt.toLocaleString();
+        return `[${time}] ${roleLabel}：${m.content}`;
+      }).join("\n")}`
+    : "";
 
   if (useSubInsights) {
     const pcStudentInsights: Array<{ pcTitle: string; content: string }> = [];
@@ -692,7 +728,7 @@ const prompt = buildTaskStudentPrompt({
   knowledgeBase: task.knowledgeBase ?? undefined,
   studentName: student.name,
   pcStudentInsights,
-  dialogContents: "",
+  dialogContents: companionStudentContents,
   presetCompletion: "",
   customSection,
   useSubInsights: true,
@@ -718,6 +754,8 @@ const prompt = buildTaskStudentPrompt({
     return `对话${i + 1}（${presetTitle}）：\n${msgs}`;
   }).join("\n\n");
 
+  const combinedDialogContents = [dialogContents, companionStudentContents].filter(Boolean).join("\n\n");
+
   const completedPresetIds = new Set(conversations.map((c) => c.presetConversationId).filter(Boolean) as string[]);
   const totalPresetCount = presetIds.length;
 
@@ -741,7 +779,7 @@ const prompt = buildTaskStudentPrompt({
   knowledgeBase: task.knowledgeBase ?? undefined,
   studentName: student.name,
   pcStudentInsights: [],
-  dialogContents,
+  dialogContents: combinedDialogContents,
   presetCompletion,
   customSection,
   useSubInsights: false,
@@ -781,14 +819,23 @@ async function generateTaskClassInsightWithTemplate(
 ): Promise<string> {
   const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
   const allPCs = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title })));
+  const explorationIds = task.subProjects.flatMap((sp) => sp.explorationActivities.map((e: any) => e.id));
 
-  const [students, conversations] = await Promise.all([
+  const [students, conversations, companionMessages] = await Promise.all([
     prisma.user.findMany({ where: { classId, role: "STUDENT" }, select: { id: true, name: true } }),
     prisma.conversation.findMany({
       where: { classId, presetConversationId: { in: presetIds } },
       include: { User: { select: { name: true } }, Message: { orderBy: { createdAt: "asc" }, select: { role: true, content: true } } },
       orderBy: { updatedAt: "desc" },
     }),
+    // AI 伴学对话记录
+    explorationIds.length > 0
+      ? prisma.aiCompanionMessage.findMany({
+          where: { explorationId: { in: explorationIds } },
+          include: { User: { select: { name: true } } },
+          orderBy: { createdAt: "asc" },
+        })
+      : Promise.resolve([]),
   ]);
 
   const useSubInsights = dataSource === "TASK_INSIGHTS";
@@ -861,6 +908,8 @@ async function generateTaskClassInsightWithTemplate(
   }).join("\n\n");
 
   const dialogContents = buildDialogContents(conversations, students, allPCs);
+  const companionDialogContents = buildCompanionDialogContents(companionMessages, students);
+  const combinedDialogContents = [dialogContents, companionDialogContents].filter(Boolean).join("\n\n");
 
   // 始终构建包含完整数据段（含 dialogContents）的提示词，
   // 模板内容作为 customSection 追加到数据段中。
@@ -877,7 +926,7 @@ async function generateTaskClassInsightWithTemplate(
     pcStudentInsights: useSubInsights ? pcStudentInsights : [],
     customSection,
     useSubInsights,
-    dialogContents: useSubInsights ? undefined : dialogContents,
+    dialogContents: useSubInsights ? undefined : combinedDialogContents,
     quizStats: await buildClassQuizStats(task.id, classId),
     personalDialogAnalysisReport: useSubInsights && pcStudentInsights.length > 0
       ? pcStudentInsights.map((p) => `【${p.pcTitle} - ${p.studentName}】\n${p.content}`).join("\n\n")
@@ -923,6 +972,7 @@ async function generateTaskStudentInsightWithTemplate(
     subProjects: Array<{
       id: string; title: string; objectives: string; requirements: string;
       presetConversations: Array<{ id: string; title: string }>;
+      explorationActivities: Array<{ id: string }>;
     }>;
   },
   classId: string,
@@ -934,14 +984,21 @@ async function generateTaskStudentInsightWithTemplate(
 ): Promise<string> {
   const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
   const allPCs = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title })));
+  const explorationIds = task.subProjects.flatMap((sp) => sp.explorationActivities.map((e) => e.id));
 
-  const [student, conversations] = await Promise.all([
+  const [student, conversations, companionMessages] = await Promise.all([
     prisma.user.findUnique({ where: { id: studentId }, select: { id: true, name: true } }),
     prisma.conversation.findMany({
       where: { classId, userId: studentId, presetConversationId: { in: presetIds } },
       include: { PresetConversation: { select: { title: true } }, Message: { orderBy: { createdAt: "asc" }, select: { role: true, content: true } } },
       orderBy: { updatedAt: "desc" },
     }),
+    explorationIds.length > 0
+      ? prisma.aiCompanionMessage.findMany({
+          where: { explorationId: { in: explorationIds }, userId: studentId },
+          orderBy: { createdAt: "asc" },
+        })
+      : Promise.resolve([]),
   ]);
 
   if (!student) throw new Error("学生不存在");
@@ -967,6 +1024,15 @@ async function generateTaskStudentInsightWithTemplate(
     return `【${presetTitle}】\n${msgs}`;
   }).join("\n\n");
 
+  // AI 伴学对话
+  const companionStudentContents = companionMessages.length > 0
+    ? `## AI伴学对话\n${companionMessages.map((m) => {
+        const roleLabel = m.role === "user" ? "学生" : "AI";
+        const time = m.createdAt.toLocaleString();
+        return `[${time}] ${roleLabel}：${m.content}`;
+      }).join("\n")}`
+    : "";
+
   const completedPresetIds = new Set(conversations.map((c) => c.presetConversationId).filter(Boolean) as string[]);
   const totalPresetCount = presetIds.length;
 
@@ -985,6 +1051,8 @@ async function generateTaskStudentInsightWithTemplate(
     ? `## 教师自定义分析模板\n${templateContent}`
     : undefined;
 
+  const combinedDialogContents = [dialogContents, companionStudentContents].filter(Boolean).join("\n\n");
+
 const prompt = buildTaskStudentPrompt({
   taskTitle: task.title,
   taskObjectives: task.objectives,
@@ -992,7 +1060,7 @@ const prompt = buildTaskStudentPrompt({
   knowledgeBase: task.knowledgeBase ?? undefined,
   studentName: student.name,
   pcStudentInsights: useSubInsights ? pcStudentInsights : [],
-  dialogContents: useSubInsights ? "" : dialogContents,
+  dialogContents: useSubInsights ? companionStudentContents : combinedDialogContents,
   presetCompletion: useSubInsights ? "" : presetCompletion,
   customSection,
   useSubInsights,
@@ -1034,7 +1102,7 @@ async function checkTaskMissingItems(
 
   // 获取所有对话活动（扁平化）
   const allPCs = task.subProjects.flatMap((sp) =>
-    sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title, spTitle: sp.title }))
+    sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title }))
   );
   const presetIds = allPCs.map((pc) => pc.id);
 
@@ -1058,7 +1126,7 @@ async function checkTaskMissingItems(
     }
   }
 
-  const missingPCs: Array<{ id: string; title: string; spTitle: string; missingClass: boolean; missingStudents: string[] }> = [];
+  const missingPCs: Array<{ id: string; title: string; missingClass: boolean; missingStudents: string[] }> = [];
 
   for (const pc of allPCs) {
     const activeStudents = pcActiveStudents.get(pc.id);
@@ -1096,7 +1164,7 @@ async function checkTaskMissingItems(
     }
 
     if (missingClass || missingStudents.length > 0) {
-      missingPCs.push({ id: pc.id, title: pc.title, spTitle: pc.spTitle, missingClass, missingStudents });
+      missingPCs.push({ id: pc.id, title: pc.title, missingClass, missingStudents });
     }
   }
 
@@ -1141,6 +1209,35 @@ function buildDialogContents(
         })
         .join("\n\n");
       return `## ${studentName}\n${convTexts || "（无对话记录）"}`;
+    })
+    .join("\n\n");
+}
+
+/** 将 AI 伴学对话记录格式化为分析文本 */
+function buildCompanionDialogContents(
+  companionMessages: { userId: string; role: string; content: string; createdAt: Date; User: { name: string } }[],
+  students: { id: string; name: string }[]
+): string {
+  if (companionMessages.length === 0) return "";
+
+  const byStudent = new Map<string, typeof companionMessages>();
+  for (const m of companionMessages) {
+    if (!byStudent.has(m.userId)) byStudent.set(m.userId, []);
+    byStudent.get(m.userId)!.push(m);
+  }
+
+  return Array.from(byStudent.entries())
+    .map(([uid, msgs]) => {
+      const student = students.find((s) => s.id === uid);
+      const studentName = student?.name || "未知学生";
+      const dialogText = msgs
+        .map((m) => {
+          const roleLabel = m.role === "user" ? "学生" : "AI";
+          const time = m.createdAt.toLocaleString();
+          return `[${time}] ${roleLabel}：${m.content}`;
+        })
+        .join("\n");
+      return `## ${studentName}（AI伴学对话）\n${dialogText}`;
     })
     .join("\n\n");
 }

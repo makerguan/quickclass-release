@@ -28,12 +28,21 @@ export async function POST(
       return new Response("answers 必须是数组", { status: 400 });
     }
 
-    // 检查是否已提交（已提交不允许重新提交）—— 放在 AI 批阅之前，避免浪费 AI 调用
+    // 检查是否已提交：只有 submittedAt 非空 且 答题记录完整 才算已提交
+    // 脏数据（submittedAt 非空但 QuestionAttempt 不足）：允许覆盖重新提交
     const existingAttempt = await prisma.quizAttempt.findFirst({
       where: { userId, quizActivityId: id },
+      include: { QuestionAttempt: { select: { id: true } } },
     });
-    if (existingAttempt && existingAttempt.submittedAt) {
+    if (existingAttempt?.submittedAt && existingAttempt.QuestionAttempt.length === quiz.Question.length) {
       return NextResponse.json({ error: "作业已提交，不能重复提交" }, { status: 403 });
+    }
+
+    // 校验前端传来的 questionId 是否与当前题目匹配
+    for (const a of answers) {
+      if (!quiz.Question.find((q) => q.id === a.questionId)) {
+        return NextResponse.json({ error: "题目已被修改，请刷新页面后重新作答" }, { status: 409 });
+      }
     }
 
     // 转换为 AI 批阅格式
@@ -49,6 +58,7 @@ export async function POST(
     // 调用 AI 批阅（选择题走精确匹配，填空简答走 AI）
     const gradingResult = await aiGrade(gradingQuestions, answers, false);
 
+    // 确保 attempt 记录存在
     let attempt = existingAttempt;
     if (!attempt) {
       attempt = await prisma.quizAttempt.create({
@@ -56,65 +66,58 @@ export async function POST(
       });
     }
 
-    // 删除旧记录（如果重新提交）
-    await prisma.questionAttempt.deleteMany({ where: { quizAttemptId: attempt.id } });
+    // 在事务外预计算所有分数，事务内只做写入，确保原子性
+    const questionResults = answers.map((a: { questionId: string; selectedAnswer: string }) => {
+      const question = quiz.Question.find((q) => q.id === a.questionId)!;
+      const grading = gradingResult.results.find((r) => r.questionId === a.questionId);
+      const isCorrect = grading?.isCorrect ?? false;
+      const perQuestionMax = question.score || Math.round(100 / quiz.Question.length);
+      const score = grading?.score != null
+        ? grading.score
+        : (isCorrect ? perQuestionMax : 0);
+      const maxScore = grading?.maxScore != null
+        ? grading.maxScore
+        : perQuestionMax;
+      return { a, question, isCorrect, score, maxScore, grading };
+    });
 
-    // 写入逐题记录
-    let correctCount = 0;
-    let totalRawScore = 0;
-    let maxTotalScore = 0;
-
-    await Promise.all(
-      answers.map(async (a: { questionId: string; selectedAnswer: string }) => {
-        const question = quiz.Question.find((q) => q.id === a.questionId);
-        if (!question) return;
-
-        const grading = gradingResult.results.find((r) => r.questionId === a.questionId);
-        const isCorrect = grading?.isCorrect ?? false;
-        if (isCorrect) correctCount++;
-
-        // 计分健壮性：使用 != null 而非 ??，让 0 也能走 fallback
-        // per-question default：question.score=0 时按 N 道题均分（>0）
-        const perQuestionMax = question.score || Math.round(100 / quiz.Question.length);
-        const score = grading?.score != null
-          ? grading.score
-          : (isCorrect ? perQuestionMax : 0);
-        const maxScore = grading?.maxScore != null
-          ? grading.maxScore
-          : perQuestionMax;
-        totalRawScore += score;
-        maxTotalScore += maxScore;
-
-        return prisma.questionAttempt.create({
-          data: {
-            quizAttemptId: attempt!.id,
-            questionId: a.questionId,
-            selectedAnswer: a.selectedAnswer,
-            isCorrect,
-            score,
-            maxScore,
-            comment: grading?.comment,
-            gradedBy: isCorrect ? "ai" : "ai", // 选择题和主观题都是 AI 批阅
-          },
-        });
-      })
-    );
-
-    // 计算百分制分数
+    const correctCount = questionResults.filter((r) => r.isCorrect).length;
+    const totalRawScore = questionResults.reduce((s, r) => s + r.score, 0);
+    const maxTotalScore = questionResults.reduce((s, r) => s + r.maxScore, 0);
     const percentScore = maxTotalScore > 0
       ? Math.round((totalRawScore / maxTotalScore) * 100)
       : 0;
 
-    await prisma.quizAttempt.update({
-      where: { id: attempt.id },
-      data: {
-        score: percentScore,
-        totalQuestions: quiz.Question.length,
-        correctCount,
-        totalScore: totalRawScore,
-        maxTotalScore,
-        submittedAt: new Date(),
-      },
+    // 事务写入：deleteMany + create + update 同生同灭，避免脏数据
+    await prisma.$transaction(async (tx) => {
+      await tx.questionAttempt.deleteMany({ where: { quizAttemptId: attempt!.id } });
+
+      for (const r of questionResults) {
+        await tx.questionAttempt.create({
+          data: {
+            quizAttemptId: attempt!.id,
+            questionId: r.a.questionId,
+            selectedAnswer: r.a.selectedAnswer,
+            isCorrect: r.isCorrect,
+            score: r.score,
+            maxScore: r.maxScore,
+            comment: r.grading?.comment,
+            gradedBy: "ai",
+          },
+        });
+      }
+
+      await tx.quizAttempt.update({
+        where: { id: attempt!.id },
+        data: {
+          score: percentScore,
+          totalQuestions: quiz.Question.length,
+          correctCount,
+          totalScore: totalRawScore,
+          maxTotalScore,
+          submittedAt: new Date(),
+        },
+      });
     });
 
     return NextResponse.json({

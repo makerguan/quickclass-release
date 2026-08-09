@@ -23,9 +23,19 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     // Parse content, fallback to contentText if content is empty
     let contentData: any = null;
     if (project.content && project.content.length > 10) {
-      try { contentData = JSON.parse(project.content); } catch { contentData = null; }
+      try {
+        contentData = JSON.parse(project.content);
+        console.log("[download] JSON.parse success, sections count:", contentData?.sections?.length);
+        if (contentData?.sections?.length > 0) {
+          console.log("[download] section titles:", contentData.sections.map((s: any) => s.title?.substring(0, 30)).join(" | "));
+        }
+      } catch (e) {
+        console.error("[download] JSON.parse failed:", e);
+        contentData = null;
+      }
     }
     if (!contentData && project.contentText) {
+      console.log("[download] using fallback contentText, length:", project.contentText.length);
       contentData = {
         docType: project.projectType === "PAPER" ? "PAPER" : "PROPOSAL",
         title: project.selectedTitle || "",
@@ -37,9 +47,11 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     let buffer: Buffer;
     let filename: string;
 
+    const docTitle = contentData?.title || project.selectedTitle || project.projectName;
+
     if (project.projectType === "PAPER") {
       buffer = await generatePaperDocx(contentData);
-      filename = `${project.projectName}-论文.docx`;
+      filename = `${docTitle}.docx`;
     } else {
       // ── 课题方案：尝试提取框架图 JSON 并插入（第（五）章前）──
       let frameworkDiagram: Buffer | undefined;
@@ -57,7 +69,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         // 容错：不插入图，继续生成 doc
       }
       buffer = await generateProposalDocxFromTemplate(contentData, { frameworkDiagram });
-      filename = `${project.projectName}-课题.docx`;
+      filename = `${docTitle}.docx`;
     }
 
     return new NextResponse(buffer as any, {

@@ -79,7 +79,6 @@ export async function POST(req: NextRequest) {
       body: JSON.stringify({
         model: aiConfig.model,
         messages: [{ role: "user", content: prompt }],
-        max_tokens: 50000,
       }),
     });
 

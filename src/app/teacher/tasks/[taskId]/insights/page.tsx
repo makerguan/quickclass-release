@@ -757,33 +757,29 @@ export default function TaskInsightsPage() {
   );
 
   if (loading) {
-    return (
-      <TeacherLayout>
-        <div className="flex items-center justify-center h-64"><Loading text="加载中..." /></div>
-      </TeacherLayout>
-    );
+    const content = <div className="flex items-center justify-center h-64"><Loading text="加载中..." /></div>;
+    return <TeacherLayout>{content}</TeacherLayout>;
   }
 
   if (!task) {
-    return (
-      <TeacherLayout>
-        <div className="text-center py-16">
-          <p className="text-gray-400 text-lg">课堂不存在</p>
-          <Button theme="primary" variant="text" onClick={() => router.push("/teacher/tasks")} className="mt-4">
-            返回课堂列表
-          </Button>
-        </div>
-      </TeacherLayout>
+    const content = (
+      <div className="text-center py-16">
+        <p className="text-gray-400 text-lg">课堂不存在</p>
+        <Button theme="primary" variant="text" onClick={() => router.push("/teacher/tasks")} className="mt-4">
+          返回课堂列表
+        </Button>
+      </div>
     );
+    return <TeacherLayout>{content}</TeacherLayout>;
   }
 
   const classOptions = task.assignments?.map((a) => ({
     label: a.class.name, value: a.classId,
   })) || [];
 
-  return (
-    <TeacherLayout>
-      <div className="max-w-6xl space-y-6 pb-8">
+  const mainContent = (
+    <>
+      <div className="space-y-6 pb-8">
         {/* 顶部导航 */}
         <div className="flex items-center gap-3">
           <Button theme="default" variant="text" icon={<ChevronLeftIcon />} onClick={() => router.push("/teacher/tasks")}>
@@ -1479,6 +1475,7 @@ export default function TaskInsightsPage() {
           </div>
         </div>
       </Dialog>
-    </TeacherLayout>
+    </>
   );
+  return <TeacherLayout>{mainContent}</TeacherLayout>;
 }

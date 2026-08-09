@@ -15,39 +15,9 @@ import type { ProposalContent } from "./document-generator";
 // ── 工具函数（从 docx-generator.ts 复制，避免循环依赖） ──
 
 /**
- * 计算课题申报年份：
- * - 1-6 月：申报当年（例：2026 年 3 月 → 申报 2026 年度）
- * - 7-12 月：申报下一年（例：2024 年 8 月 → 申报 2025 年度）
- */
-function getProposalYear(): number {
-  const now = new Date();
-  const month = now.getMonth() + 1; // 1-12
-  return month <= 6 ? now.getFullYear() : now.getFullYear() + 1;
-}
-
-/**
- * 清洗 Markdown 符号，保留文字内容
- */
-function cleanMarkdown(text: string): string {
-  if (!text) return "";
-  let s = text;
-  s = s.replace(/~~([^~]+)~~/g, "$1");
-  s = s.replace(/\*\*([^*]+)\*\*/g, "$1");
-  s = s.replace(/__([^_]+)__/g, "$1");
-  s = s.replace(/`([^`]+)`/g, "$1");
-  s = s.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
-  s = s.replace(/(?<![*_])\*([^*\s][^*]*?)\*(?![*_])/g, "$1");
-  s = s.replace(/(?<![*_])_([^_\s][^_]*?)_(?![*_])/g, "$1");
-  s = s.replace(/^\s{0,3}#{1,6}\s+/gm, "");
-  s = s.replace(/^\s{0,3}>\s?/gm, "");
-  s = s.replace(/^\s*[-*+]\s+/gm, "• ");
-  s = s.replace(/\n{3,}/g, "\n\n");
-  return s.trim();
-}
-
-/**
  * 容错拆分：当 AI 未按 [SECTION_START] 规范输出、而是用中文序号标题
  * （一）（二）…（八）作为章节分隔时，按行首的中文序号标题重新拆分。
+ * 用于修复"全部内容堆在第一格"的问题（兼容已生成的历史文档，无需重新生成）。
  */
 function splitProposalBlob(blob: string, firstTitle: string): { title: string; content: string }[] {
   const lines = blob.split("\n");
@@ -83,6 +53,37 @@ function normalizeProposalSections(doc: ProposalContent): ProposalContent {
   const split = splitProposalBlob(blob, doc.sections?.[0]?.title || "（一）研究缘起");
   if (split.length >= 2) return { ...doc, sections: split };
   return doc;
+}
+
+/**
+ * 计算课题申报年份：
+ * - 1-6 月：申报当年（例：2026 年 3 月 → 申报 2026 年度）
+ * - 7-12 月：申报下一年（例：2024 年 8 月 → 申报 2025 年度）
+ */
+function getProposalYear(): number {
+  const now = new Date();
+  const month = now.getMonth() + 1; // 1-12
+  return month <= 6 ? now.getFullYear() : now.getFullYear() + 1;
+}
+
+/**
+ * 清洗 Markdown 符号，保留文字内容
+ */
+function cleanMarkdown(text: string): string {
+  if (!text) return "";
+  let s = text;
+  s = s.replace(/~~([^~]+)~~/g, "$1");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "$1");
+  s = s.replace(/__([^_]+)__/g, "$1");
+  s = s.replace(/`([^`]+)`/g, "$1");
+  s = s.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  s = s.replace(/(?<![*_])\*([^*\s][^*]*?)\*(?![*_])/g, "$1");
+  s = s.replace(/(?<![*_])_([^_\s][^_]*?)_(?![*_])/g, "$1");
+  s = s.replace(/^\s{0,3}#{1,6}\s+/gm, "");
+  s = s.replace(/^\s{0,3}>\s?/gm, "");
+  s = s.replace(/^\s*[-*+]\s+/gm, "• ");
+  s = s.replace(/\n{3,}/g, "\n\n");
+  return s.trim();
 }
 
 /**
@@ -513,14 +514,25 @@ function buildMainTable(
   // 把 section 按标题匹配（兼容新旧两种格式）
   const findSection = (pattern: RegExp) => doc.sections.find(s => pattern.test(s.title));
 
-  const sec1 = findSection(/研究缘起/);
-  const sec2 = findSection(/核心概念/);
-  const sec3 = findSection(/国内外/);
-  const sec4 = findSection(/研究.{0,3}目标|研究.{0,3}内容/);
-  const sec5 = findSection(/研究.{0,3}的(思路|过程).*方法/);
-  const sec6 = findSection(/主要观点|创新/);
-  const sec7 = findSection(/预期研究成果/);
-  const sec8 = findSection(/可行性|研究基础/);
+  // 位置回退：如果正则匹配不到，按 sections 数组顺序取
+  const getSection = (pattern: RegExp, fallbackIndex: number) => {
+    const matched = findSection(pattern);
+    if (matched) return matched;
+    // 如果 sections 数量足够，按位置取
+    if (doc.sections.length > fallbackIndex) {
+      return doc.sections[fallbackIndex];
+    }
+    return undefined;
+  };
+
+  const sec1 = getSection(/研究缘起/, 0);
+  const sec2 = getSection(/核心概念/, 1);
+  const sec3 = getSection(/国内外/, 2);
+  const sec4 = getSection(/研究.{0,3}目标|研究.{0,3}内容/, 3);
+  const sec5 = getSection(/研究.{0,3}的(思路|过程).*方法/, 4);
+  const sec6 = getSection(/主要观点|创新/, 5);
+  const sec7 = getSection(/预期研究成果/, 6);
+  const sec8 = getSection(/可行性|研究基础/, 7);
 
   // 第（一）章：研究缘起
   rows.push(new TableRow({ children: [sectionTitleCell(TITLES.sec1)] }));
@@ -715,7 +727,7 @@ export async function generateProposalDocxFromTemplate(
   const normalizedDoc = normalizeProposalSections(doc);
   const mainTable = buildMainTable(normalizedDoc, options.frameworkDiagram);
 
-  // ── 页眉页脚 ──
+  // ── 页眉页脚（页脚含水印提示） ──
   const header = new Header({
     children: [new Paragraph({
       children: [new TextRun({
@@ -727,14 +739,27 @@ export async function generateProposalDocxFromTemplate(
     })],
   });
   const footer = new Footer({
-    children: [new Paragraph({
-      children: [
-        new TextRun({ text: "— ", font: "Times New Roman", size: 18 }),
-        new TextRun({ children: [PageNumber.CURRENT], font: "Times New Roman", size: 18 }),
-        new TextRun({ text: " —", font: "Times New Roman", size: 18 }),
-      ],
-      alignment: AlignmentType.CENTER,
-    })],
+    children: [
+      new Paragraph({
+        children: [new TextRun({
+          text: "本文档由QuickClass 根据真实教学数据提炼，请根据教育部教师队伍建设专家指导委员会正式发布《教师生成式人工智能应用指引》规范、科学应用，禁止用于违反学术伦理的研究。",
+          font: { eastAsia: "仿宋", ascii: "Times New Roman" },
+          size: 16,
+          color: "999999",
+          italics: true,
+        })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 60 },
+      }),
+      new Paragraph({
+        children: [
+          new TextRun({ text: "— ", font: "Times New Roman", size: 18 }),
+          new TextRun({ children: [PageNumber.CURRENT], font: "Times New Roman", size: 18 }),
+          new TextRun({ text: " —", font: "Times New Roman", size: 18 }),
+        ],
+        alignment: AlignmentType.CENTER,
+      }),
+    ],
   });
 
   // ── 组装文档 ──
@@ -745,7 +770,7 @@ export async function generateProposalDocxFromTemplate(
       properties: {
         page: {
           size: { orientation: PageOrientation.PORTRAIT },
-          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440, header: 720, footer: 720 },
+          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440, header: 720, footer: 960 },
         },
       },
       headers: { default: header },

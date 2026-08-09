@@ -26,15 +26,17 @@ export async function GET(
     const userId = String(payload.userId);
     const messages = await prisma.aiCompanionMessage.findMany({
       where: { explorationId: id, studentId: userId },
-      select: { id: true, role: true, content: true, createdAt: true },
+      select: { id: true, role: true, content: true, createdAt: true, User: { select: { name: true } } },
       orderBy: { createdAt: "asc" },
     });
 
     return NextResponse.json({
-      messages: messages.map((m) => ({
+      studentName: (messages[0] as any)?.User?.name || null,
+      messages: messages.map((m: any) => ({
         id: m.id,
         role: m.role,
         content: m.content,
+        studentName: m.User?.name || null,
         createdAt: m.createdAt.toISOString(),
       })),
     });

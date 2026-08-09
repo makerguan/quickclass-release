@@ -58,6 +58,7 @@ model Class {
   LearningProgress           LearningProgress[]
   Material                   Material[]
   TaskAssignment             TaskAssignment[]
+  StudentProject             StudentProject[]
   User_User_classIdToClass   User[]             @relation("User_classIdToClass")
 }
 
@@ -411,6 +412,7 @@ model SubProject {
   ExplorationActivity                                                    ExplorationActivity[]
   PresetConversation                                                     PresetConversation[]
   QuizActivity                                                           QuizActivity[]
+  ProjectSubmission                                                      ProjectSubmission[]
   classInsightTemplate AnalysisTemplate? @relation("SubProject_classInsightTemplateIdToAnalysisTemplate", fields: [classInsightTemplateId], references: [id])
   studentInsightTemplate AnalysisTemplate? @relation("SubProject_studentInsightTemplateIdToAnalysisTemplate", fields: [studentInsightTemplateId], references: [id])
   task                   LearningTask      @relation(fields: [taskId], references: [id], onDelete: Cascade)
@@ -474,5 +476,71 @@ model User {
   QuizAttempt                 QuizAttempt[]
   AiCompanionMessage          AiCompanionMessage[]
   ResearchProject             ResearchProject[]
+  StudentProject              StudentProject[]
+  ProjectLike                 ProjectLike[]
   Class_User_classIdToClass   Class?             @relation("User_classIdToClass", fields: [classId], references: [id], onDelete: Cascade)
+}
+
+// 教师布置的项目提交任务（与对话活动、互动探究并列，挂在学习活动 SubProject 下）
+model ProjectSubmission {
+  id             String         @id @default(cuid())
+  subProjectId   String
+  title          String
+  description    String?
+  category       String         @default("TEXT") // TEXT文本类 | IMAGE图片类 | VIDEO单视频类(音视频)
+  visibleToClass Boolean        @default(false)  // 是否全班可见
+  allowLike      Boolean        @default(false)  // 是否允许点赞（开启即自动开全班可见）
+  fileSizeLimit  Int            @default(10)      // 单文件大小上限(MB)
+  sortOrder      Int            @default(0)
+  enabled        Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  SubProject     SubProject     @relation(fields: [subProjectId], references: [id], onDelete: Cascade)
+  StudentProject StudentProject[]
+}
+
+// 某学生对某项目任务的提交（每项提交仅一个文件）
+model StudentProject {
+  id            String            @id @default(cuid())
+  submissionId  String
+  studentId     String
+  classId       String
+  title         String
+  description   String?
+  pinned        Boolean           @default(false)
+  hidden        Boolean           @default(false)
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+  ProjectSubmission ProjectSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+  User          User              @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  Class         Class             @relation(fields: [classId], references: [id], onDelete: Cascade)
+  attachments   ProjectAttachment[]
+  likes         ProjectLike[]
+  @@unique([submissionId, studentId])
+  @@index([submissionId])
+  @@index([studentId])
+}
+
+// 项目提交附件（单文件）
+model ProjectAttachment {
+  id           String       @id @default(cuid())
+  projectId    String
+  originalName String
+  storedName   String
+  fileType     String
+  fileSize     Int
+  createdAt    DateTime     @default(now())
+  Project      StudentProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  @@index([projectId])
+}
+
+// 点赞（防重复）
+model ProjectLike {
+  id         String       @id @default(cuid())
+  projectId  String
+  studentId  String
+  createdAt  DateTime     @default(now())
+  Project    StudentProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  User       User         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  @@unique([projectId, studentId])
+  @@index([projectId])
 }

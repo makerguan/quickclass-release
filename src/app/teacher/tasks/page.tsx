@@ -14,6 +14,8 @@ import {
   Progress,
   Switch,
   Tooltip,
+  Pagination,
+  InputNumber,
 } from "tdesign-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
@@ -32,6 +34,7 @@ import {
   PlayIcon,
   SaveIcon,
   FileIcon,
+  BrowseIcon,
 } from "tdesign-icons-react";
 import Link from "next/link";
 import TeacherLayout from "@/components/layout/TeacherLayout";
@@ -40,6 +43,7 @@ import {
   PieChart, Pie, Legend, ResponsiveContainer,
 } from "recharts";
 import { injectSubmitFunctionality, removeSubmitFunctionality } from "@/lib/prompts/exploration-submit";
+import ViewFrame from "./ViewFrame";
 
 interface AnalysisTemplate {
   id: string;
@@ -136,6 +140,9 @@ export default function TeacherTasksPage() {
   const [conversationTemplates, setConversationTemplates] = useState<AnalysisTemplate[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseItem[]>([]);
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
+  // 分页：每页课堂数（用户自定义）与当前页
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [currentPage, setCurrentPage] = useState<number>(1);
   const [loading, setLoading] = useState(true);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
 
@@ -157,11 +164,29 @@ export default function TeacherTasksPage() {
   const [savingSubProjects, setSavingSubProjects] = useState(false);
   const [expandedSpIds, setExpandedSpIds] = useState<Set<string>>(new Set());
 
+  // 对话活动名片式独立 CRUD 弹窗状态
+  // 测试成功后，将下方开关改为 true 即可隐藏老「对话管理」按钮
+  const HIDE_LEGACY_CONVERSATION_MANAGE = true;
+  const [convDialogVisible, setConvDialogVisible] = useState(false);
+  const [convDialogMode, setConvDialogMode] = useState<"new" | "edit">("new");
+  const [convDialogTaskId, setConvDialogTaskId] = useState<string | null>(null);
+  const [convDialogSpId, setConvDialogSpId] = useState<string | null>(null);
+  const [convDialogPc, setConvDialogPc] = useState<any>(null);
+  const [convDialogSaving, setConvDialogSaving] = useState(false);
+  const [convDeletePc, setConvDeletePc] = useState<any>(null);
+  const [convForm, setConvForm] = useState({
+    title: "",
+    description: "",
+    systemPrompt: "",
+    analysisPrompt: "",
+    classAnalysisPrompt: "",
+    conversationPromptTemplateId: "",
+  });
+
   // 课堂作业 inline 面板
   const [quizPanelVisible, setQuizPanelVisible] = useState(false);
   const [quizPanelSpId, setQuizPanelSpId] = useState<string | null>(null);
   const [quizzes, setQuizzes] = useState<any[]>([]);
-  const [loadingQuizzes, setLoadingQuizzes] = useState(false);
 
   // 作业设计模式（Step 1: 新建作业弹窗）
   const [quizModalVisible, setQuizModalVisible] = useState(false);
@@ -182,11 +207,205 @@ export default function TeacherTasksPage() {
   // 作业完整管理面板
   const [generatingQuestions, setGeneratingQuestions] = useState(false);
   const [savingQuiz, setSavingQuiz] = useState(false);
+  const [importingQuestions, setImportingQuestions] = useState(false);
 
   const quizSensors = useSensors(
     useSensor(PointerSensor),
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates })
   );
+
+  // 项目提交管理
+  const [projDialogVisible, setProjDialogVisible] = useState(false);
+  const [projDialogMode, setProjDialogMode] = useState<"new" | "edit">("new");
+  const [projDialogSpId, setProjDialogSpId] = useState<string | null>(null);
+  const [projDialogTaskId, setProjDialogTaskId] = useState<string | null>(null);
+  const [projDialogId, setProjDialogId] = useState<string | null>(null);
+  const [projSaving, setProjSaving] = useState(false);
+  const [projForm, setProjForm] = useState({
+    title: "",
+    description: "",
+    category: "TEXT" as "TEXT" | "IMAGE" | "VIDEO",
+    visibleToClass: true,
+    allowLike: false,
+    fileSizeLimit: 10,
+  });
+  const [projDelete, setProjDelete] = useState<any>(null);
+
+  // 统一视图管理（课堂分析/探究分析/作业管理/作业报告，用 iframe 嵌入独立页面）
+  const [activeView, setActiveView] = useState<{
+    src: string; title?: string;
+  } | null>(null);
+
+  const openNewProj = (spId: string, taskId: string) => {
+    setProjDialogMode("new");
+    setProjDialogId(null);
+    setProjDialogSpId(spId);
+    setProjDialogTaskId(taskId);
+    setProjForm({
+      title: "",
+      description: "",
+      category: "TEXT",
+      visibleToClass: true,
+      allowLike: false,
+      fileSizeLimit: 10,
+    });
+    setProjDialogVisible(true);
+  };
+
+  const openEditProj = (ps: any, spId: string, taskId: string) => {
+    setProjDialogMode("edit");
+    setProjDialogId(ps.id);
+    setProjDialogSpId(spId);
+    setProjDialogTaskId(taskId);
+    setProjForm({
+      title: ps.title,
+      description: ps.description || "",
+      category: ps.category,
+      visibleToClass: ps.visibleToClass,
+      allowLike: ps.allowLike,
+      fileSizeLimit: ps.fileSizeLimit,
+    });
+    setProjDialogVisible(true);
+  };
+
+  const saveProj = async () => {
+    if (!projForm.title.trim()) {
+      MessagePlugin.warning("请填写项目名称");
+      return;
+    }
+    if (!projDialogSpId) {
+      MessagePlugin.warning("缺少学习活动");
+      return;
+    }
+    setProjSaving(true);
+    try {
+      const token = localStorage.getItem("token") || "";
+      if (projDialogMode === "new") {
+        const res = await fetch(`/api/sub-projects/${projDialogSpId}/project-submissions`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(projForm),
+        });
+        if (res.ok) {
+          MessagePlugin.success("已创建项目提交");
+          setProjDialogVisible(false);
+          fetchTasks();
+        } else {
+          const t = await res.text();
+          MessagePlugin.error(t || "创建失败");
+        }
+      } else {
+        const res = await fetch(`/api/project-submissions/${projDialogId}`, {
+          method: "PUT",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify(projForm),
+        });
+        if (res.ok) {
+          MessagePlugin.success("已保存");
+          setProjDialogVisible(false);
+          fetchTasks();
+        } else {
+          const t = await res.text();
+          MessagePlugin.error(t || "保存失败");
+        }
+      }
+    } catch {
+      MessagePlugin.error("操作失败");
+    } finally {
+      setProjSaving(false);
+    }
+  };
+
+  const openBrowse = (id: string) => {
+    router.push(`/teacher/tasks/project/${id}`);
+  };
+
+  const [operatingProjectId, setOperatingProjectId] = useState<string | null>(null);
+
+  // 项目提交排序
+  const [reorderingProjectId, setReorderingProjectId] = useState<string | null>(null);
+  const handleProjectReorder = async (submissionId: string, direction: "up" | "down", subProjectId: string) => {
+    setReorderingProjectId(submissionId);
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch("/api/project-submissions/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ submissionId, direction, subProjectId }),
+      });
+      if (res.ok) {
+        // 重新获取项目列表
+        const updatedRes = await fetch(`/api/project-submissions?subProjectId=${subProjectId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (updatedRes.ok) {
+          const updatedList = await updatedRes.json();
+          setTasks((prev) =>
+            prev.map((t) => ({
+              ...t,
+              subProjects: t.subProjects.map((sp: any) =>
+                sp.id === subProjectId ? { ...sp, projectSubmissions: updatedList } : sp
+              ),
+            }))
+          );
+        }
+      }
+    } catch {
+      // 静默失败
+    } finally {
+      setReorderingProjectId(null);
+    }
+  };
+
+  const handleProjectToggle = async (ps: any, shouldEnable: boolean) => {
+    setOperatingProjectId(ps.id);
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/project-submissions/${ps.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ enabled: shouldEnable }),
+      });
+      if (res.ok) {
+        // 刷新课堂列表，同步 enabled 状态
+        setTasks((prev) =>
+          prev.map((t) => ({
+            ...t,
+            subProjects: t.subProjects.map((sp: any) => ({
+              ...sp,
+              projectSubmissions: (sp.projectSubmissions || []).map((p: any) =>
+                p.id === ps.id ? { ...p, enabled: shouldEnable } : p
+              ),
+            })),
+          }))
+        );
+        MessagePlugin.success(shouldEnable ? "项目已生效" : "项目已失效");
+      } else {
+        MessagePlugin.error("切换失败");
+      }
+    } catch {
+      MessagePlugin.error("切换失败");
+    } finally {
+      setOperatingProjectId(null);
+    }
+  };
+
+  const confirmDeleteProj = async () => {
+    if (!projDelete) return;
+    const token = localStorage.getItem("token") || "";
+    const res = await fetch(`/api/project-submissions/${projDelete.id}`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) {
+      MessagePlugin.success("已删除（含学生提交及附件）");
+      setProjDelete(null);
+      fetchTasks();
+    } else {
+      const t = await res.text();
+      MessagePlugin.error(t || "删除失败");
+    }
+  };
 
   function SortableQuizQuestion({ q, idx, onUpdate, onMoveUp, onMoveDown, total }: { q: any; idx: number; onUpdate: (field: string, value: any) => void; onMoveUp: () => void; onMoveDown: () => void; total: number }) {
     const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: idx });
@@ -274,6 +493,18 @@ export default function TeacherTasksPage() {
             const otherQuizzes = prev.filter((quiz) => quiz.subProjectId !== q.subProjectId);
             return [...otherQuizzes, ...updatedQuizzes];
           });
+          // 同步更新 tasks state，避免关闭面板再打开时数据不一致
+          setTasks((prev) =>
+            prev.map((t) => ({
+              ...t,
+              subProjects: t.subProjects.map((sp: any) => {
+                if (sp.id === q.subProjectId) {
+                  return { ...sp, quizActivities: updatedQuizzes };
+                }
+                return sp;
+              }),
+            }))
+          );
         }
         MessagePlugin.success(shouldEnable ? "作业已生效" : "作业已失效");
       } else {
@@ -318,12 +549,143 @@ export default function TeacherTasksPage() {
     }
   };
 
+  // 打开新建对话活动弹窗（名片式）
+  const openNewConversationDialog = (task: any) => {
+    const defaultSp = task.subProjects?.[0];
+    if (!defaultSp) {
+      MessagePlugin.error("该课堂暂无活动容器，请先添加子项目");
+      return;
+    }
+    setConvDialogMode("new");
+    setConvDialogTaskId(task.id);
+    setConvDialogSpId(defaultSp.id);
+    setConvDialogPc(null);
+    setConvForm({
+      title: "",
+      description: "",
+      systemPrompt: "",
+      analysisPrompt: "",
+      classAnalysisPrompt: "",
+      conversationPromptTemplateId: "",
+    });
+    setConvDialogVisible(true);
+  };
+
+  // 打开编辑对话活动弹窗
+  const openEditConversationDialog = (task: any, pc: any) => {
+    const defaultSp = task.subProjects?.find((sp: any) => sp.presetConversations.some((p: any) => p.id === pc.id));
+    setConvDialogMode("edit");
+    setConvDialogTaskId(task.id);
+    setConvDialogSpId(defaultSp?.id ?? null);
+    setConvDialogPc(pc);
+    setConvForm({
+      title: pc.title || "",
+      description: pc.description || "",
+      systemPrompt: pc.systemPrompt || "",
+      analysisPrompt: pc.analysisPrompt || "",
+      classAnalysisPrompt: pc.classAnalysisPrompt || "",
+      conversationPromptTemplateId: pc.conversationPromptTemplateId || "",
+    });
+    setConvDialogVisible(true);
+  };
+
+  // 保存对话活动（新建或编辑），走独立 API
+  const handleConversationSave = async () => {
+    if (!convForm.title?.trim()) {
+      MessagePlugin.error("对话活动名称不能为空");
+      return;
+    }
+    if (!convForm.description?.trim()) {
+      MessagePlugin.error("对话活动目标不能为空");
+      return;
+    }
+    if (!convForm.analysisPrompt?.trim()) {
+      MessagePlugin.error("个人学情分析提示词不能为空");
+      return;
+    }
+    if (!convForm.classAnalysisPrompt?.trim()) {
+      MessagePlugin.error("全班学情分析提示词不能为空");
+      return;
+    }
+    setConvDialogSaving(true);
+    try {
+      const token = localStorage.getItem("token") || "";
+      const body: Record<string, unknown> = {
+        title: convForm.title.trim(),
+        description: convForm.description.trim(),
+        systemPrompt: convForm.systemPrompt,
+        analysisPrompt: convForm.analysisPrompt,
+        classAnalysisPrompt: convForm.classAnalysisPrompt,
+        // 反向匹配对话设计模板 id（仅用于列表展示模板名，不影响填充内容）
+        conversationPromptTemplateId: findConversationPromptTemplateId(convForm.systemPrompt) || undefined,
+      };
+
+      let res: Response;
+      if (convDialogMode === "new") {
+        if (!convDialogSpId) {
+          MessagePlugin.error("缺少活动容器");
+          return;
+        }
+        res = await fetch("/api/preset-conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ ...body, subProjectId: convDialogSpId }),
+        });
+      } else {
+        res = await fetch(`/api/preset-conversations/${convDialogPc?.id}`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify(body),
+        });
+      }
+
+      if (res.ok) {
+        MessagePlugin.success(convDialogMode === "new" ? "对话活动已创建" : "对话活动已保存");
+        setConvDialogVisible(false);
+        fetchTasks();
+      } else {
+        const data = await res.json().catch(() => ({}));
+        MessagePlugin.error(data.error || "保存失败");
+      }
+    } catch {
+      MessagePlugin.error("网络错误");
+    } finally {
+      setConvDialogSaving(false);
+    }
+  };
+
+  // 删除对话活动（独立 API，带确认）
+  const handleConversationDelete = (pc: any) => {
+    setConvDeletePc(pc);
+  };
+
+  const confirmConversationDelete = async () => {
+    const pc = convDeletePc;
+    setConvDeletePc(null);
+    if (!pc) return;
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/preset-conversations/${pc.id}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        MessagePlugin.success("对话活动已删除");
+        fetchTasks();
+      } else {
+        MessagePlugin.error("删除失败");
+      }
+    } catch {
+      MessagePlugin.error("网络错误");
+    }
+  };
+
   // ===== 互动探究 =====
   const [explorationPanelVisible, setExplorationPanelVisible] = useState(false);
   const [explorationPanelSpId, setExplorationPanelSpId] = useState<string | null>(null);
   const [explorations, setExplorations] = useState<any[]>([]);
-  const [loadingExplorations, setLoadingExplorations] = useState(false);
   const [operatingExplorationId, setOperatingExplorationId] = useState<string | null>(null);
+  const [togglingExplorationId, setTogglingExplorationId] = useState<string | null>(null);
 
   // 新建/编辑探究弹窗
   const [explorationModalVisible, setExplorationModalVisible] = useState(false);
@@ -370,32 +732,23 @@ export default function TeacherTasksPage() {
   // 原始 HTML（启用提交前保存，用于取消时恢复）
   const [originalHtmlForInjection, setOriginalHtmlForInjection] = useState("");
 
-  // 打开探究面板（先加载数据，面板只在数据就绪后显示）
-  const openExplorationPanel = async (spId: string) => {
+  // 去除 AI 伴学注入代码（用于源码编辑器保持纯净稿）
+  const stripAiCompanionCode = (html: string) => {
+    if (!html) return "";
+    let s = html;
+    // 移除注入的 AI 伴学 <style> 块
+    s = s.replace(/<style>[\s\S]*?#ai-companion-root[\s\S]*?<\/style>/g, "");
+    // 移除注入的 HTML + 脚本块（从 __AI_COMPANION_INJECTED__ 注释到 </body> 前）
+    s = s.replace(/<!--\s*__AI_COMPANION_INJECTED__[^>]*-->[\s\S]*?(?=<\/body>)/g, "");
+    return s;
+  };
+
+  // 打开探究面板（数据已随课堂列表加载，直接从 subProjects 读取，无异步加载）
+  const openExplorationPanel = (spId: string, task?: LearningTask) => {
+    const sp = (task?.subProjects as any[] | undefined)?.find((s: any) => s.id === spId);
+    setExplorations((sp?.explorationActivities as any[]) ?? []);
     setExplorationPanelSpId(spId);
-    setLoadingExplorations(true);
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`/api/exploration-activities?subProjectId=${spId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      let data: any;
-      try {
-        data = await res.json();
-      } catch {
-        console.error("解析探究活动响应失败");
-        setExplorations([]);
-        setExplorationPanelVisible(true);
-        return;
-      }
-      setExplorations(Array.isArray(data) ? data : []);
-      // 数据加载完成后才显示面板，避免出现"暂无探究"后再刷出数据
-      setExplorationPanelVisible(true);
-    } catch (e) {
-      console.error("获取探究活动失败", e);
-    } finally {
-      setLoadingExplorations(false);
-    }
+    setExplorationPanelVisible(true);
   };
 
   const closeExplorationPanel = () => {
@@ -422,15 +775,15 @@ export default function TeacherTasksPage() {
     setExplorationModalVisible(true);
   };
 
-  // 确保面板已打开并加载数据后再打弹窗
-  const openExplorationThenModal = async (spId: string) => {
+  // 确保面板已打开后再打弹窗（数据已本地加载，无需异步）
+  const openExplorationThenModal = (spId: string, task?: LearningTask) => {
     // 如果面板已显示同一 subProject，直接打开弹窗
     if (explorationPanelVisible && explorationPanelSpId === spId) {
       openNewExploration();
       return;
     }
-    // 否则打开面板（会 fetch 数据）再弹窗
-    await openExplorationPanel(spId);
+    // 否则打开面板再弹窗
+    openExplorationPanel(spId, task);
     openNewExploration();
   };
 
@@ -665,6 +1018,15 @@ export default function TeacherTasksPage() {
         if (saved.aiCompanionPrompt) {
           setAiCompanionPromptText(saved.aiCompanionPrompt);
         }
+        // 若启用了 AI 伴学，预览需要用注入版本（GET 自愈），源码区保持纯净
+        if (saved.enableAiCompanion && saved.id) {
+          fetch(`/api/exploration-activities/${saved.id}`, { headers: { Authorization: `Bearer ${token}` } })
+            .then(r => r.json())
+            .then(d => { if (d.htmlContent) setExplorationPreview(d.htmlContent); })
+            .catch(() => {});
+        } else {
+          setExplorationPreview(explorationHtml);
+        }
         MessagePlugin.success("探究已保存");
         if (saved._injectWarnings && saved._injectWarnings.length > 0) {
           saved._injectWarnings.forEach((w: string) => MessagePlugin.warning(w));
@@ -675,8 +1037,8 @@ export default function TeacherTasksPage() {
         setExplorationModalVisible(false);
         setInjectionPreviewVisible(false);
 
-        // 如果启用了AI伴学，异步生成伴学语义提示词
-        if (saved.enableAiCompanion && saved.id) {
+        // 如果启用了AI伴学但没有提示词，异步生成（HTML变化时PUT已清空旧提示词）
+        if (saved.enableAiCompanion && saved.id && !saved.aiCompanionPrompt) {
           generateAiCompanionPromptInBackground(saved.id);
         }
       } else {
@@ -714,9 +1076,65 @@ export default function TeacherTasksPage() {
   // AI伴学开关处理
   const handleAiCompanionToggle = async (val: boolean) => {
     if (!explorationEditId) {
-      // 新建模式下，先标记状态，等保存时一起提交
-      setExplorationEnableAiCompanion(val);
-      MessagePlugin.info(val ? "已标记启用AI伴学，保存后生效" : "已取消AI伴学");
+      if (val) {
+        // 新建 + 开启：先自动创建探究，再生成提示词，用户看到后可修改再保存
+        const htmlOk = explorationHtml.trim().length >= 100;
+        if (!explorationTitle.trim() || !htmlOk) {
+          MessagePlugin.warning("请先完善探究内容和标题后再开启AI伴学");
+          return;
+        }
+        setExplorationEnableAiCompanion(true);
+        try {
+          const token = localStorage.getItem("token") || "";
+          // 自动创建探究（有了ID才能调生成API）
+          const res = await fetch("/api/exploration-activities", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify({
+              subProjectId: explorationPanelSpId,
+              title: explorationTitle,
+              htmlContent: explorationHtml,
+              enableSubmission: explorationEnableSubmission,
+              enableAiCompanion: true,
+              designPrompt: explorationDesignPrompt,
+              analysisPrompt: explorationPrompt,
+            }),
+          });
+          if (!res.ok) throw new Error("创建失败");
+          const saved = await res.json();
+          setExplorationEditId(saved.id);
+          setExplorations((prev) => [saved, ...prev]);
+          // 同步预览
+          if (saved.enableAiCompanion && saved.id) {
+            fetch(`/api/exploration-activities/${saved.id}`, { headers: { Authorization: `Bearer ${token}` } })
+              .then(r => r.json())
+              .then(d => { if (d.htmlContent) setExplorationPreview(d.htmlContent); })
+              .catch(() => {});
+          }
+
+          // 生成伴学提示词
+          setAiCompanionStatus("analyzing");
+          const genRes = await fetch(
+            `/api/exploration-activities/${saved.id}/generate-companion-prompt`,
+            { method: "POST", headers: { Authorization: `Bearer ${token}` } }
+          );
+          if (genRes.ok) {
+            const data = await genRes.json();
+            setAiCompanionPromptText(data.aiCompanionPrompt || "");
+            setAiCompanionStatus("ready");
+            MessagePlugin.success("AI伴学提示词已生成，您可以修改后保存");
+          } else {
+            const errData = await genRes.json().catch(() => ({}));
+            throw new Error((errData as any).error || "提示词生成失败");
+          }
+        } catch (e: any) {
+          setExplorationEnableAiCompanion(false);
+          setAiCompanionStatus("error");
+          MessagePlugin.error("AI伴学启用失败：" + (e?.message || "未知错误"));
+        }
+      } else {
+        setExplorationEnableAiCompanion(false);
+      }
       return;
     }
 
@@ -753,9 +1171,14 @@ export default function TeacherTasksPage() {
         setExplorations((prev) => prev.map((e) => e.id === saved.id ? saved : e));
 
         // 同步更新预览和源代码编辑区
+        // saved.htmlContent 是纯净稿（PUT 不再持久化注入），预览需要注入版本
         if (saved.htmlContent) {
-          setExplorationHtml(saved.htmlContent);
-          setExplorationPreview(saved.htmlContent);
+          setExplorationHtml(saved.htmlContent); // 源码区：纯净版
+          // 额外 GET 拿自愈注入版本用于预览 iframe
+          fetch(`/api/exploration-activities/${explorationEditId}`, { headers: { Authorization: `Bearer ${token}` } })
+            .then(r => r.json())
+            .then(d => { if (d.htmlContent) setExplorationPreview(d.htmlContent); })
+            .catch(() => setExplorationPreview(saved.htmlContent));
         }
 
         // 3. 如果已有提示词 → 秒开，否则生成
@@ -923,7 +1346,7 @@ export default function TeacherTasksPage() {
 
   // 探究 enabled 切换
   const handleExplorationToggle = async (e: any, checked: boolean) => {
-    setOperatingExplorationId(e.id);
+    setTogglingExplorationId(e.id);
     try {
       const token = localStorage.getItem("token") || "";
       const res = await fetch(`/api/exploration-activities/${e.id}/enabled`, {
@@ -932,7 +1355,20 @@ export default function TeacherTasksPage() {
         body: JSON.stringify({ enabled: checked }),
       });
       if (res.ok) {
+        // 同步更新 explorations state
         setExplorations((prev) => prev.map((item) => item.id === e.id ? { ...item, enabled: checked } : item));
+        // 同步更新 tasks state，避免数据不一致导致刷新闪烁
+        setTasks((prev) =>
+          prev.map((t) => ({
+            ...t,
+            subProjects: t.subProjects.map((sp) => ({
+              ...sp,
+              explorationActivities: (sp.explorationActivities || []).map((ea: any) =>
+                ea.id === e.id ? { ...ea, enabled: checked } : ea
+              ),
+            })),
+          }))
+        );
         MessagePlugin.success(checked ? "探究已生效" : "探究已失效");
       } else {
         MessagePlugin.error("切换失败");
@@ -940,7 +1376,7 @@ export default function TeacherTasksPage() {
     } catch {
       MessagePlugin.error("切换失败");
     } finally {
-      setOperatingExplorationId(null);
+      setTogglingExplorationId(null);
     }
   };
 
@@ -975,8 +1411,14 @@ export default function TeacherTasksPage() {
     setExplorationTitle(e.title);
     setExplorationDesignPrompt(e.designPrompt || ""); // 互动设计提示词（如果有保存的话）
     setExplorationPrompt(e.analysisPrompt || "");
-    setExplorationHtml(e.htmlContent || "");
-    setExplorationPreview(e.htmlContent || "");
+    // 源码编辑区保持纯净稿（去除 AI 伴学注入代码），预览区使用含注入版本
+    const rawHtml = e.htmlContent || "";
+    if (e.enableAiCompanion) {
+      setExplorationHtml(stripAiCompanionCode(rawHtml));
+    } else {
+      setExplorationHtml(rawHtml);
+    }
+    setExplorationPreview(rawHtml);
     // 答题提交相关
     setExplorationEnableSubmission(e.enableSubmission || false);
     setExplorationHasSubmissions((e._count?.ExplorationSubmission ?? 0) > 0);
@@ -989,6 +1431,29 @@ export default function TeacherTasksPage() {
     setAiCompanionStatus(e.enableAiCompanion ? "ready" : "idle");
     setShowAiCompanionPrompt(false);
     setExplorationModalVisible(true);
+
+    // 如果启用了AI伴学，从API获取最新数据（含注入版HTML + 提示词，列表可能过期）
+    if (e.enableAiCompanion) {
+      (async () => {
+        try {
+          const token = localStorage.getItem("token") || "";
+          const detailRes = await fetch(`/api/exploration-activities/${e.id}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (detailRes.ok) {
+            const detail = await detailRes.json();
+            // 预览用注入版HTML（含AI伴学UI），源码区保持纯净
+            if (detail.htmlContent) {
+              setExplorationPreview(detail.htmlContent);
+            }
+            if (detail.aiCompanionPrompt && detail.aiCompanionPrompt.length > 50) {
+              setAiCompanionPromptText(detail.aiCompanionPrompt);
+              setAiCompanionStatus("ready");
+            }
+          }
+        } catch {}
+      })();
+    }
   };
 
   // 打开教学预览（只读 iframe）
@@ -1134,7 +1599,15 @@ export default function TeacherTasksPage() {
           setLoading(false);
           return [];
         }
-        setTasks(data);
+        // 排序：启用的排最前，未启用的沉底（ENABLED -> ENDED -> DISABLED），同状态内按创建时间倒序
+        const statusRank: Record<string, number> = { ENABLED: 0, ENDED: 1, DISABLED: 2 };
+        const sortedData = [...data].sort((a: any, b: any) => {
+          const ra = statusRank[a.status] ?? 3;
+          const rb = statusRank[b.status] ?? 3;
+          if (ra !== rb) return ra - rb;
+          return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+        });
+        setTasks(sortedData);
         // 仅在首次加载时自动展开
         if (initial) {
           const enabledTask = data.find((t: LearningTask) => t.status === "ENABLED");
@@ -1153,7 +1626,7 @@ export default function TeacherTasksPage() {
             if (firstSp?.id) {
               openQuizPanel(firstSp.id, enabledTask);
               // 同时自动加载互动探究列表（如果已有探究项目，面板会立刻显示；没有则无影响）
-              openExplorationPanel(firstSp.id);
+              openExplorationPanel(firstSp.id, enabledTask);
             }
           }
         }
@@ -1265,29 +1738,11 @@ export default function TeacherTasksPage() {
   };
 
   // ===== 课堂作业 inline 功能 =====
-  const openQuizPanel = async (spId: string, task: LearningTask) => {
+  const openQuizPanel = (spId: string, task: LearningTask) => {
+    const sp = (task.subProjects as any[]).find((s: any) => s.id === spId);
+    setQuizzes((sp?.quizActivities as any[]) ?? []);
     setQuizPanelSpId(spId);
     setQuizPanelVisible(true);
-    setLoadingQuizzes(true);
-    try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`/api/quiz-activities?subProjectId=${spId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      let data: any;
-      try {
-        data = await res.json();
-      } catch {
-        console.error("解析作业响应失败");
-        setQuizzes([]);
-        return;
-      }
-      setQuizzes(Array.isArray(data) ? data : []);
-    } catch (e) {
-      console.error("获取作业失败", e);
-    } finally {
-      setLoadingQuizzes(false);
-    }
   };
 
   const closeQuizPanel = () => {
@@ -1355,6 +1810,49 @@ export default function TeacherTasksPage() {
     } finally {
       setGeneratingQuestions(false);
     }
+  };
+
+  // 导入作业题目（JSON 文件）
+  const handleImportQuestionsToDesign = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportingQuestions(true);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const data = JSON.parse(ev.target?.result as string);
+        let imported: any[] = [];
+        if (Array.isArray(data)) {
+          imported = data;
+        } else if (data.questions && Array.isArray(data.questions)) {
+          imported = data.questions;
+          // 如果 JSON 包含 title 且当前标题为空，自动填入
+          if (data.title && !quizDesignTitle.trim()) {
+            setQuizDesignTitle(data.title);
+          }
+        } else {
+          throw new Error("JSON 格式不正确，需包含 questions 数组");
+        }
+        // 标准化题目
+        const standardized = imported.map((q: any, i: number) => ({
+          type: q.type || "SINGLE_CHOICE",
+          content: q.content || "",
+          options: typeof q.options === "string" ? q.options : JSON.stringify(q.options || {}),
+          answer: q.answer || "A",
+          difficulty: q.difficulty || "BASIC",
+          explanation: q.explanation || "",
+          order: quizDesignQuestions.length + i,
+        }));
+        setQuizDesignQuestions((prev) => [...prev, ...standardized]);
+        MessagePlugin.success(`成功导入 ${standardized.length} 道题`);
+      } catch (err: any) {
+        MessagePlugin.error(err.message || "导入失败");
+      } finally {
+        setImportingQuestions(false);
+        e.target.value = "";
+      }
+    };
+    reader.readAsText(file);
   };
 
   // Step 2: 保存作业（含题目编辑）
@@ -2013,7 +2511,7 @@ export default function TeacherTasksPage() {
         const currentTask = updatedTasks.find((t: LearningTask) => t.id === taskId);
         const firstSpId = currentTask?.subProjects?.[0]?.id;
         if (firstSpId) {
-          openExplorationPanel(firstSpId);
+          openExplorationPanel(firstSpId, currentTask);
         }
       } else {
         const data = await res.json();
@@ -2067,9 +2565,14 @@ export default function TeacherTasksPage() {
     return t ? t.id : "";
   };
 
+  // 当前页要渲染的课堂（已按状态排序后的全量 tasks 切片）
+  const totalPages = Math.max(1, Math.ceil(tasks.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedTasks = tasks.slice((safePage - 1) * pageSize, safePage * pageSize);
+
   return (
     <TeacherLayout>
-      <div className="max-w-5xl space-y-6 pb-8">
+      <div className="space-y-6 pb-8">
         <div className="flex justify-between items-center">
           <div>
             <h2 className="text-xl font-semibold text-[#1A1A1A]">课堂管理</h2>
@@ -2114,6 +2617,8 @@ export default function TeacherTasksPage() {
                     const importedTask = await res.json();
                     MessagePlugin.success("课堂导入成功");
                     const updatedTasks = await fetchTasks();
+                    // 导入可能在导入者账号下新建知识库，需同步知识库列表，否则展开卡片时知识库名称不显示
+                    await fetchKnowledgeBases();
                     // 自动展开导入的课堂并加载互动探究和作业面板
                     setExpandedTaskId(importedTask.id);
                     // 从刷新后的任务列表中获取 subProject ID（更可靠）
@@ -2123,13 +2628,13 @@ export default function TeacherTasksPage() {
                       const firstSpId = targetTask.subProjects[0].id;
                       if (firstSpId) {
                         setExpandedSpIds(new Set([firstSpId]));
-                        openExplorationPanel(firstSpId);
+                        openExplorationPanel(firstSpId, targetTask);
                         openQuizPanel(firstSpId, targetTask);
                       }
                     }
                   } else {
                     const err = await res.json().catch(() => ({}));
-                    MessagePlugin.error(err.error || "导入失败");
+                    MessagePlugin.error(err.detail || err.error || "导入失败");
                   }
                 };
                 input.click();
@@ -2143,7 +2648,13 @@ export default function TeacherTasksPage() {
           </div>
         </div>
 
-        {loading ? (
+        {activeView ? (
+          <ViewFrame
+            src={activeView.src}
+            title={activeView.title}
+            onBack={() => setActiveView(null)}
+          />
+        ) : loading ? (
           <div className="text-center text-gray-400 py-12">加载中...</div>
         ) : tasks.length === 0 ? (
           <Card>
@@ -2155,7 +2666,7 @@ export default function TeacherTasksPage() {
           </Card>
         ) : (
           <div className="space-y-3">
-            {tasks.map((task) => {
+            {pagedTasks.map((task) => {
               const isExpanded = expandedTaskId === task.id;
               const isEditingSP = editingTaskId === task.id;
               return (
@@ -2171,7 +2682,7 @@ export default function TeacherTasksPage() {
                         const firstSp = task.subProjects?.[0];
                         if (firstSp?.id) {
                           openQuizPanel(firstSp.id, task);
-                          openExplorationPanel(firstSp.id);
+                          openExplorationPanel(firstSp.id, task);
                         }
                       }
                     }}
@@ -2217,9 +2728,13 @@ export default function TeacherTasksPage() {
                           {NEXT_STATUS_LABEL[task.status as keyof typeof NEXT_STATUS_LABEL]}
                         </Button>
                         <Tooltip content="分析课堂学情">
-                          <Link href={`/teacher/tasks/${task.id}/insights`}>
-                            <Button theme="success" variant="text" size="small" icon={<ChartBarIcon />} />
-                          </Link>
+                          <Button
+                            theme="success"
+                            variant="text"
+                            size="small"
+                            icon={<ChartBarIcon />}
+                            onClick={() => router.push(`/teacher/tasks/${task.id}/insights`)}
+                          />
                         </Tooltip>
                         <Tooltip content="重置清理学生记录">
                           <Button
@@ -2312,19 +2827,29 @@ export default function TeacherTasksPage() {
                       {/* 对话编辑对话活动 */}
                       <div className="space-y-3">
                         <div className="flex items-center justify-between">
-                          <h4 className="font-medium text-sm text-[#0052D9]">💬 对话活动</h4>
+                          <h4 className="font-medium text-sm text-[#63666F]">对话活动</h4>
                           {!isEditingSP && (
                             <div className="flex gap-2">
                               <Button
                                 theme="primary"
                                 variant="outline"
                                 size="small"
-                                icon={<EditIcon />}
-                                onClick={() => startEditingSubProjects(task)}
+                                icon={<AddIcon />}
+                                onClick={() => openNewConversationDialog(task)}
                               >
-                                活动管理
+                                新建对话
                               </Button>
-                              
+                              {!HIDE_LEGACY_CONVERSATION_MANAGE && (
+                                <Button
+                                  theme="primary"
+                                  variant="outline"
+                                  size="small"
+                                  icon={<EditIcon />}
+                                  onClick={() => startEditingSubProjects(task)}
+                                >
+                                  对话管理
+                                </Button>
+                              )}
                             </div>
                           )}
                         </div>
@@ -2490,8 +3015,8 @@ export default function TeacherTasksPage() {
                                   icon={<AddIcon />}
                                   onClick={() => addPresetConversation(editingSubProjects.length - 1)}
                                 >
-                                  添加对话
-                                </Button>
+                                创建对话
+                              </Button>
                               </div>
                             )}
                             {isEditingSP && (
@@ -2517,67 +3042,85 @@ export default function TeacherTasksPage() {
                             )}
                           </div>
                         ) : (
-                          /* 只读模式 - 直接展示对话活动列表 */
+                          /* 只读模式 - 名片式独立展示对话活动 */
                           (() => {
                             const allConversations = task.subProjects.flatMap(sp => sp.presetConversations);
-                            return allConversations.length === 0 ? (
-                              <div className="text-sm text-gray-400 py-4">暂无对话活动，点击「活动管理」添加</div>
-                            ) : (
-                              <div className="space-y-2">
+                            if (allConversations.length === 0) {
+                              return (
+                                <div className="bg-[#F7F8FA] rounded-lg p-4">
+                                  <div className="text-sm text-gray-400 py-4 text-center">暂无对话活动，点击「新建对话」创建</div>
+                                </div>
+                              );
+                            }
+                            return (
+                              <div className="bg-[#F7F8FA] rounded-lg p-4 space-y-3">
                                 {allConversations.map((pc, pcIdx) => {
-                                  // 找到该对话所属的 subProject
                                   const isEnabled = pc.enabled !== false;
+                                  const sp = task.subProjects.find((s: any) => s.presetConversations.some((p: any) => p.id === pc.id));
+                                  const _tpl = conversationTemplates.find((t: any) => t.id === pc.conversationPromptTemplateId);
+                                  const tplName = _tpl?.name || "";
                                   return (
-                                  <div key={pc.id} className="bg-[#F7F8FA] rounded-lg p-3">
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2">
-                                        {isEnabled ? (
-                                          <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">生效中</span>
-                                        ) : (
-                                          <span className="px-2 py-0.5 rounded-full text-xs bg-orange-100 text-orange-700">失效中</span>
-                                        )}
-                                        <Switch value={isEnabled} size="small" onChange={(val: boolean) => handleConversationToggle(pc, val)} disabled={operatingPresetConversationId === pc.id} />
-                                        <span className="font-medium text-sm">{pc.title}</span>
+                                    <div key={pc.id} className="bg-white rounded-lg p-3">
+                                      <div className="flex items-center justify-between gap-2">
+                                        <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                          {isEnabled ? (
+                                            <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 shrink-0">生效中</span>
+                                          ) : (
+                                            <span className="px-2 py-0.5 rounded-full text-xs bg-orange-100 text-orange-700 shrink-0">失效中</span>
+                                          )}
+                                          <span className="font-medium text-sm text-gray-800 truncate">{pc.title}</span>
+                                        </div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                          <Button
+                                            theme="default" variant="text" size="small"
+                                            icon={<EditIcon />}
+                                            onClick={() => openEditConversationDialog(task, pc)}
+                                          >
+                                            编辑
+                                          </Button>
+                                          <Button
+                                            theme="danger" variant="text" size="small"
+                                            icon={<DeleteIcon />}
+                                            onClick={() => handleConversationDelete(pc)}
+                                          >
+                                            删除
+                                          </Button>
+                                          <Button
+                                            theme="success"
+                                            variant="text"
+                                            size="small"
+                                            icon={<ChartBarIcon />}
+                                            onClick={() => router.push(`/teacher/tasks/${task.id}/insights?pc=${pc.id}`)}
+                                          >
+                                            分析
+                                          </Button>
+                                          <Switch value={isEnabled} size="small" onChange={(val: boolean) => handleConversationToggle(pc, val)} disabled={operatingPresetConversationId === pc.id} />
+                                          {isEnabled && (
+                                            <>
+                                              <Button
+                                                theme="default" variant="text" size="small"
+                                                disabled={pcIdx === 0}
+                                                onClick={() => { if (sp?.id) handleConversationReorder(pc.id as string, "up", sp.id); }}
+                                              >
+                                                <ChevronUpIcon />
+                                              </Button>
+                                              <Button
+                                                theme="default" variant="text" size="small"
+                                                disabled={pcIdx === allConversations.length - 1}
+                                                onClick={() => { if (sp?.id) handleConversationReorder(pc.id as string, "down", sp.id); }}
+                                              >
+                                                <ChevronDownIcon />
+                                              </Button>
+                                            </>
+                                          )}
+                                        </div>
                                       </div>
-                                      <div className="flex items-center gap-1">
-                                        {isEnabled && (
-                                          <>
-                                            <Button
-                                              theme="default" variant="text" size="small"
-                                              disabled={pcIdx === 0}
-                                              onClick={() => {
-                                                const _sp = task.subProjects.find(sp => sp.presetConversations.some(p => p.id === pc.id));
-                                                if (_sp && _sp.id) handleConversationReorder(pc.id as string, "up", _sp.id);
-                                              }}
-                                            >
-                                              <ChevronUpIcon />
-                                            </Button>
-                                            <Button
-                                              theme="default" variant="text" size="small"
-                                              disabled={pcIdx === allConversations.length - 1}
-                                              onClick={() => {
-                                                const _sp = task.subProjects.find(sp => sp.presetConversations.some(p => p.id === pc.id));
-                                                if (_sp && _sp.id) handleConversationReorder(pc.id as string, "down", _sp.id);
-                                              }}
-                                            >
-                                              <ChevronDownIcon />
-                                            </Button>
-                                          </>
-                                        )}
-                                        <Button
-                                          theme="success"
-                                          variant="text"
-                                          size="small"
-                                          icon={<ChartBarIcon />}
-                                          onClick={() => router.push(`/teacher/tasks/${task.id}/insights?pc=${pc.id}`)}
-                                        >
-                                          分析
-                                        </Button>
-                                      </div>
+                                      {tplName && (
+                                        <div className="mt-2 text-xs text-[#0052D9]">对话设计模板：{tplName}</div>
+                                      )}
                                     </div>
-                                    {pc.description && <div className="text-xs text-[#63666F] mt-1">对话活动目标：{pc.description}</div>}
-                                  </div>
-                                );})}
+                                  );
+                                })}
                               </div>
                             );
                           })()
@@ -2594,7 +3137,7 @@ export default function TeacherTasksPage() {
                             theme="primary" variant="outline" size="small" icon={<AddIcon />}
                             onClick={() => {
                               if (task.subProjects.length > 0) {
-                                openExplorationThenModal(task.subProjects[0].id!);
+                                openExplorationThenModal(task.subProjects[0].id!, task);
                               }
                             }}
                           >
@@ -2607,9 +3150,7 @@ export default function TeacherTasksPage() {
                           {explorationPanelVisible && explorationPanelSpId === task.subProjects[0]?.id ? (
                             <>
                               {/* 探究列表 */}
-                              {loadingExplorations ? (
-                                <div className="text-center py-6 text-sm text-gray-400">加载中...</div>
-                              ) : explorations.length === 0 ? (
+                              {explorations.length === 0 ? (
                                 <div className="text-center py-6 text-sm text-gray-400">暂无探究，点击「新建探究」创建</div>
                               ) : (
                                 <div className="space-y-2">
@@ -2632,12 +3173,40 @@ export default function TeacherTasksPage() {
                                               AI伴学{(e as any).aiCompanionPrompt ? " ✓" : ""}
                                             </span>
                                           )}
-                                          <Switch value={e.enabled} size="small"
-                                            onChange={(val: boolean) => handleExplorationToggle(e, val)}
-                                            disabled={operatingExplorationId === e.id} />
                                           <span className="font-medium text-sm text-gray-800">{e.title}</span>
                                         </div>
                                         <div className="flex gap-1 items-center flex-wrap">
+                                          <Button theme="primary" variant="text" size="small"
+                                            icon={<BrowseIcon />}
+                                            onClick={async () => {
+                                              if (e.enableAiCompanion) {
+                                                const token = localStorage.getItem("token") || "";
+                                                const res = await fetch(`/api/exploration-activities/${e.id}`, {
+                                                  headers: { Authorization: `Bearer ${token}` },
+                                                });
+                                                if (res.ok) {
+                                                  const detail = await res.json();
+                                                  openPreview(detail.htmlContent || e.htmlContent);
+                                                  return;
+                                                }
+                                              }
+                                              openPreview(e.htmlContent);
+                                            }}>预览</Button>
+                                          {e.enableSubmission && (
+                                            <Button theme="success" variant="text" size="small"
+                                              icon={<ChartBarIcon />}
+                                              onClick={() => router.push(`/teacher/tasks/${expandedTaskId}/exploration/${e.id}`)}>分析</Button>
+                                          )}
+                                          <Button theme="primary" variant="text" size="small"
+                                            icon={<EditIcon />}
+                                            onClick={() => openEditExploration(e)}>编辑</Button>
+                                          <Button theme="danger" variant="text" size="small"
+                                            icon={<DeleteIcon />}
+                                            loading={operatingExplorationId === e.id}
+                                            onClick={() => handleDeleteExploration(e.id)}>删除</Button>
+                                          <Switch value={e.enabled} size="small"
+                                            onChange={(val: boolean) => handleExplorationToggle(e, val)}
+                                            disabled={togglingExplorationId === e.id} />
                                           {e.enabled && (
                                             <>
                                               <Button theme="default" variant="text" size="small"
@@ -2652,17 +3221,6 @@ export default function TeacherTasksPage() {
                                               </Button>
                                             </>
                                           )}
-                                          <Button theme="primary" variant="text" size="small"
-                                            onClick={() => openPreview(e.htmlContent)}>预览</Button>
-                                          {e.enableSubmission && (
-                                            <Button theme="primary" variant="text" size="small"
-                                              onClick={() => router.push(`/teacher/tasks/${expandedTaskId}/exploration/${e.id}`)}>分析</Button>
-                                          )}
-                                          <Button theme="primary" variant="text" size="small"
-                                            onClick={() => openEditExploration(e)}>编辑</Button>
-                                          <Button theme="danger" variant="text" size="small"
-                                            loading={operatingExplorationId === e.id}
-                                            onClick={() => handleDeleteExploration(e.id)}>删除</Button>
                                         </div>
                                       </div>
                                       {e.description && (
@@ -2676,13 +3234,168 @@ export default function TeacherTasksPage() {
                           ) : (
                             <div className="text-center py-4 text-sm text-gray-400">
                               <Button theme="primary" variant="outline" size="small" icon={<AddIcon />}
-                                onClick={() => { if (task.subProjects.length > 0) openExplorationThenModal(task.subProjects[0].id!); }}>
+                                onClick={() => { if (task.subProjects.length > 0) openExplorationThenModal(task.subProjects[0].id!, task); }}>
                                 新建探究
                               </Button>
                             </div>
                           )}
                         </div>
                       </div>
+
+                      {/* 项目提交管理区（互动探究后、课堂作业前） */}
+                      <div className="border-t border-gray-100 pt-3 mt-3">
+                        <div className="flex items-center justify-between mb-2">
+                          <h4 className="font-medium text-sm text-[#63666F]">项目提交</h4>
+                          <div className="flex gap-2">
+                            <Button
+                              theme="primary"
+                              variant="outline"
+                              size="small"
+                              icon={<EditIcon />}
+                              onClick={() => {
+                                if (task.subProjects.length === 0) {
+                                  MessagePlugin.warning("请先创建学习活动");
+                                  return;
+                                }
+                                setProjDialogMode("new");
+                                setProjDialogId(null);
+                                setProjDialogSpId(task.subProjects[0].id!);
+                                setProjDialogTaskId(task.id);
+                                setProjForm({
+                                  title: "",
+                                  description: "",
+                                  category: "TEXT",
+                                  visibleToClass: true,
+                                  allowLike: false,
+                                  fileSizeLimit: 10,
+                                });
+                                setProjDialogVisible(true);
+                              }}
+                            >
+                              新建项目
+                            </Button>
+                          </div>
+                        </div>
+
+                        <div className="bg-[#F7F8FA] rounded-lg p-4">
+                          {(() => {
+                            const allPs = task.subProjects.flatMap(
+                              (sp: any) => (sp.projectSubmissions || []) as any[]
+                            );
+                            if (allPs.length === 0) {
+                              return (
+                                <p className="text-sm text-gray-400">
+                                  尚未布置项目。点击右上角「新建项目」。
+                                </p>
+                              );
+                            }
+                            return (
+                              <div className="space-y-2">
+                                {allPs.map((ps: any, psIdx: number) => (
+                                  <div
+                                    key={ps.id}
+                                    className="bg-white rounded-lg p-3"
+                                  >
+                                    <div className="flex items-center justify-between">
+                                      <div className="flex items-center gap-2 flex-wrap min-w-0">
+                                        {ps.enabled !== false ? (
+                                          <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 shrink-0">生效中</span>
+                                        ) : (
+                                          <span className="px-2 py-0.5 rounded-full text-xs bg-orange-100 text-orange-700 shrink-0">失效中</span>
+                                        )}
+                                        <span className="font-medium text-sm text-[#1A1A1A] truncate">
+                                          {ps.title}
+                                        </span>
+                                        <Tag theme="warning" variant="light" size="small">
+                                          {ps.category === "TEXT"
+                                            ? "文本"
+                                            : ps.category === "IMAGE"
+                                            ? "图片"
+                                            : "视频"}
+                                        </Tag>
+                                        {ps.visibleToClass && (
+                                          <Tag theme="success" variant="light" size="small">
+                                            全班可见
+                                          </Tag>
+                                        )}
+                                        {ps.allowLike && (
+                                          <Tag theme="primary" variant="light" size="small">
+                                            可点赞
+                                          </Tag>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1 shrink-0">
+                                        <Button
+                                          theme="default" variant="text" size="small"
+                                          icon={<BrowseIcon />}
+                                          onClick={() => openBrowse(ps.id)}
+                                        >
+                                          浏览
+                                        </Button>
+                                        <Button
+                                          theme="primary" variant="text" size="small"
+                                          icon={<EditIcon />}
+                                          onClick={() => {
+                                            const sp = task.subProjects.find(
+                                              (s: any) => (s.projectSubmissions || []).some((p: any) => p.id === ps.id)
+                                            );
+                                            setProjDialogMode("edit");
+                                            setProjDialogId(ps.id);
+                                            setProjDialogSpId(sp?.id || null);
+                                            setProjDialogTaskId(task.id);
+                                            setProjForm({
+                                              title: ps.title,
+                                              description: ps.description || "",
+                                              category: ps.category,
+                                              visibleToClass: ps.visibleToClass,
+                                              allowLike: ps.allowLike,
+                                              fileSizeLimit: ps.fileSizeLimit,
+                                            });
+                                            setProjDialogVisible(true);
+                                          }}
+                                        >
+                                          编辑
+                                        </Button>
+                                        <Button
+                                          theme="danger" variant="text" size="small"
+                                          icon={<DeleteIcon />}
+                                          onClick={() => setProjDelete(ps)}
+                                        >
+                                          删除
+                                        </Button>
+                                        <Switch
+                                          value={ps.enabled !== false}
+                                          size="small"
+                                          onChange={(val: boolean) => handleProjectToggle(ps, val)}
+                                          disabled={operatingProjectId === ps.id}
+                                        />
+                                        {ps.enabled !== false && (
+                                          <>
+                                            <Button theme="default" variant="text" size="small"
+                                              disabled={psIdx === 0 || reorderingProjectId === ps.id}
+                                              onClick={() => handleProjectReorder(ps.id, "up", ps.subProjectId || spId)}>
+                                              <ChevronUpIcon />
+                                            </Button>
+                                            <Button theme="default" variant="text" size="small"
+                                              disabled={psIdx === allPs.length - 1 || reorderingProjectId === ps.id}
+                                              onClick={() => handleProjectReorder(ps.id, "down", ps.subProjectId || spId)}>
+                                              <ChevronDownIcon />
+                                            </Button>
+                                          </>
+                                        )}
+                                      </div>
+                                    </div>
+                                    <p className="text-xs text-[#63666F] mt-1">
+                                      {ps.description || "（无说明）"} · 上限 {ps.fileSizeLimit}MB
+                                    </p>
+                                  </div>
+                                ))}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      </div>
+
                       <div className="border-t border-gray-100 pt-3 mt-3">
                         {/* 标题行 */}
                         <div className="flex items-center justify-between mb-2">
@@ -2717,8 +3430,10 @@ export default function TeacherTasksPage() {
                                           {!selectedQuizTemplateId && <div className="mt-2 p-3 bg-yellow-50 rounded-lg text-xs text-yellow-700">提示：还没有作业设计模板？去「模板设置」页面创建一个。</div>}
                                         </div>
                                         <Textarea value={quizDesignTemplateContent} onChange={(v) => setQuizDesignTemplateContent(v)} placeholder="作业设计提示词..." rows={6} />
-                                        <div className="flex gap-2">
+                                        <div className="flex gap-2 items-center">
                                           <Button theme="primary" size="small" icon={<PlayIcon />} loading={generatingQuestions} onClick={handleAIGenerateQuestions} disabled={!quizDesignTitle.trim() || !selectedQuizTemplateId}>生成作业</Button>
+                                          <Button theme="primary" variant="outline" size="small" loading={importingQuestions} disabled={!quizDesignTitle.trim()} onClick={() => document.getElementById('import-quiz-file')?.click()}>导入作业</Button>
+                                          <input id="import-quiz-file" type="file" accept=".json" onChange={handleImportQuestionsToDesign} className="hidden" />
                                         </div>
                                       </>
                                     ) : (
@@ -2760,7 +3475,10 @@ export default function TeacherTasksPage() {
                                               </DndContext>
                                             </div>
                                           )}
-                                          <div className="flex gap-2"><Button theme="primary" size="small" icon={<SaveIcon />} loading={savingQuiz} onClick={handleSaveQuiz}>保存作业</Button></div>
+                                          <div className="flex gap-2 items-center">
+                                            <Button theme="primary" size="small" icon={<SaveIcon />} loading={savingQuiz} onClick={handleSaveQuiz}>保存作业</Button>
+                                            <Button theme="default" variant="outline" size="small" loading={importingQuestions} onClick={() => document.getElementById('import-quiz-file')?.click()}>追加导入</Button>
+                                          </div>
                                         </div>
                                       </>
                                     )}
@@ -2769,9 +3487,7 @@ export default function TeacherTasksPage() {
                                 )}
 
                                 {/* 作业列表 */}
-                                {loadingQuizzes ? (
-                                  <div className="text-center py-6 text-sm text-gray-400">加载中...</div>
-                                ) : quizzes.length === 0 ? (
+                                {quizzes.length === 0 ? (
                                   <div className="text-center py-6 text-sm text-gray-400">暂无作业，点击「新建作业」创建</div>
                                 ) : (
                                   <div className="space-y-2">
@@ -2781,16 +3497,39 @@ export default function TeacherTasksPage() {
                                           <div className="flex items-center gap-2 flex-wrap">
                                             {q.status === "INACTIVE" && <span className="px-2 py-0.5 rounded-full text-xs bg-orange-100 text-orange-700">失效中</span>}
                                             {q.status === "ACTIVE" && <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">生效中</span>}
+                                            <span className="font-medium text-sm text-gray-800">{q.title}</span>
+                                            {q.hasAIAnalysis && <span className="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-700">AI 报告</span>}
+                                          </div>
+                                          <div className="flex gap-1 items-center flex-wrap">
+                                            {/* 失效中（INACTIVE）按钮 */}
+                                            {q.status === "INACTIVE" && (
+                                              <>
+                                                <Button theme="primary" variant="text" size="small" icon={<EditIcon />} onClick={() => startEditQuiz(q)}>快编</Button>
+                                                <Button theme="primary" variant="text" size="small" icon={<FileIcon />} onClick={() => router.push(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/questions`)}>题目管理</Button>
+                                                <Button theme="default" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openQuizPreview(q)}>预览</Button>
+                                                {(q._count?.attempts ?? 0) > 0 && (
+                                                  <Button theme="warning" variant="text" size="small" icon={<DeleteIcon />} loading={clearingAttemptsQuizId === q.id} onClick={() => handleClearAttempts(q.id)}>清除答题</Button>
+                                                )}
+                                                <Button theme="danger" variant="text" size="small" icon={<DeleteIcon />} loading={deletingQuizId === q.id} onClick={() => handleQuizDelete(q.id)}>删除</Button>
+                                              </>
+                                            )}
+                                            
+                                            {/* 生效中（ACTIVE）按钮 */}
+                                            {q.status === "ACTIVE" && (
+                                              <>
+                                                <Button theme="success" variant="text" size="small" icon={<ChartBarIcon />} onClick={() => router.push(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/report`)}>查看报告</Button>
+                                                <Button theme="default" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openQuizPreview(q)}>预览</Button>
+                                                {(q._count?.attempts ?? 0) > 0 && (
+                                                  <Button theme="warning" variant="text" size="small" icon={<DeleteIcon />} loading={clearingAttemptsQuizId === q.id} onClick={() => handleClearAttempts(q.id)}>清除答题</Button>
+                                                )}
+                                              </>
+                                            )}
                                             <Switch
                                               value={q.status === "ACTIVE"}
                                               size="small"
                                               onChange={(val: boolean) => handleQuizToggle(q, val)}
                                               disabled={operatingQuizId === q.id}
                                             />
-                                            <span className="font-medium text-sm text-gray-800">{q.title}</span>
-                                            {q.hasAIAnalysis && <span className="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-700">AI 报告</span>}
-                                          </div>
-                                          <div className="flex gap-1 items-center flex-wrap">
                                             {(() => {
                                               const activeIndices = quizzes.map((q, i) => q.status === "ACTIVE" ? i : -1).filter(i => i >= 0);
                                               const firstActiveIdx = activeIndices[0];
@@ -2814,29 +3553,6 @@ export default function TeacherTasksPage() {
                                                 </>
                                               );
                                             })()}
-                                            {/* 失效中（INACTIVE）按钮 */}
-                                            {q.status === "INACTIVE" && (
-                                              <>
-                                                <Button theme="primary" variant="text" size="small" onClick={() => startEditQuiz(q)}>快编</Button>
-                                                <Button theme="primary" variant="text" size="small" onClick={() => router.push(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/questions`)}>题目管理</Button>
-                                                <Button theme="primary" variant="text" size="small" onClick={() => openQuizPreview(q)}>预览</Button>
-                                                {(q._count?.attempts ?? 0) > 0 && (
-                                                  <Button theme="warning" variant="text" size="small" loading={clearingAttemptsQuizId === q.id} onClick={() => handleClearAttempts(q.id)}>清除答题</Button>
-                                                )}
-                                                <Button theme="danger" variant="text" size="small" loading={deletingQuizId === q.id} onClick={() => handleQuizDelete(q.id)}>删除</Button>
-                                              </>
-                                            )}
-                                            
-                                            {/* 生效中（ACTIVE）按钮 */}
-                                            {q.status === "ACTIVE" && (
-                                              <>
-                                                <Button theme="primary" variant="text" size="small" onClick={() => router.push(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/report`)}>查看报告</Button>
-                                                <Button theme="primary" variant="text" size="small" onClick={() => openQuizPreview(q)}>预览</Button>
-                                                {(q._count?.attempts ?? 0) > 0 && (
-                                                  <Button theme="warning" variant="text" size="small" loading={clearingAttemptsQuizId === q.id} onClick={() => handleClearAttempts(q.id)}>清除答题</Button>
-                                                )}
-                                              </>
-                                            )}
                                           </div>
                                         </div>
                                         <div className="text-xs text-gray-400">{q.description || "无说明"} · {q.questions?.length || 0}题 · {q._count?.attempts || 0}人已答</div>
@@ -2940,6 +3656,34 @@ export default function TeacherTasksPage() {
                 </Card>
               );
             })}
+          </div>
+        )}
+
+        {tasks.length > 0 && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm text-[#63666F]">
+              <span>每页</span>
+              <InputNumber
+                value={pageSize}
+                min={1}
+                max={100}
+                theme="column"
+                onChange={(val) => {
+                  const n = Math.max(1, Math.min(100, Number(val) || 1));
+                  setPageSize(n);
+                  setCurrentPage(1);
+                }}
+                style={{ width: 72 }}
+              />
+              <span>个课堂，共 {tasks.length} 个</span>
+            </div>
+            <Pagination
+              total={tasks.length}
+              pageSize={pageSize}
+              current={safePage}
+              showJumper
+              onChange={(pageInfo) => setCurrentPage(pageInfo.current)}
+            />
           </div>
         )}
 
@@ -3420,6 +4164,145 @@ export default function TeacherTasksPage() {
           )}
         </Dialog>
 
+        {/* 对话活动 - 名片式新建/编辑弹窗 */}
+        <Dialog
+          header={convDialogMode === "edit" ? "编辑对话活动" : "新建对话活动"}
+          visible={convDialogVisible}
+          onClose={() => setConvDialogVisible(false)}
+          footer={null}
+          width={720}
+          destroyOnClose
+        >
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <span className="text-sm font-medium text-gray-600">对话活动名称</span>
+              <Input
+                value={convForm.title}
+                onChange={(v) => setConvForm({ ...convForm, title: v })}
+                placeholder="例如：圆的认识探究对话"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <span className="text-sm font-medium text-gray-600">对话活动目标</span>
+              <Textarea
+                value={convForm.description}
+                onChange={(v) => setConvForm({ ...convForm, description: v })}
+                placeholder="描述本次对话活动希望学生达成的目标"
+                rows={2}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-gray-600">对话设计提示词（系统提示词）</span>
+                <Select
+                  value=""
+                  onChange={(v) => {
+                    const tplId = v as string;
+                    if (!tplId) return;
+                    const tpl = conversationTemplates.find((t) => t.id === tplId);
+                    if (tpl) setConvForm({ ...convForm, systemPrompt: tpl.content });
+                  }}
+                  options={[
+                    { label: "选择对话设计模板填充...", value: "" },
+                    ...conversationTemplates.map((t) => ({ label: t.name, value: t.id })),
+                  ]}
+                  placeholder="选择对话设计模板填充..."
+                  size="small"
+                  style={{ width: 240 }}
+                />
+              </div>
+              <Textarea
+                value={convForm.systemPrompt}
+                onChange={(v) => setConvForm({ ...convForm, systemPrompt: v })}
+                placeholder="选择模板后自动填充，也可手动修改"
+                rows={4}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-gray-600">个人学情分析提示词</span>
+                <Select
+                  value=""
+                  onChange={(v) => {
+                    const tplId = v as string;
+                    if (!tplId) return;
+                    const tpl = templates.find((t) => t.id === tplId);
+                    if (tpl) setConvForm({ ...convForm, analysisPrompt: tpl.content });
+                  }}
+                  options={[
+                    { label: "选择个人学情模板填充...", value: "" },
+                    ...templates.filter((t) => t.type === "student").map((t) => ({ label: t.name, value: t.id })),
+                  ]}
+                  placeholder="选择个人学情模板填充..."
+                  size="small"
+                  style={{ width: 240 }}
+                />
+              </div>
+              <Textarea
+                value={convForm.analysisPrompt}
+                onChange={(v) => setConvForm({ ...convForm, analysisPrompt: v })}
+                placeholder="用于生成学生个人学情分析的提示词"
+                rows={4}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-gray-600">全班学情分析提示词</span>
+                <Select
+                  value=""
+                  onChange={(v) => {
+                    const tplId = v as string;
+                    if (!tplId) return;
+                    const tpl = templates.find((t) => t.id === tplId);
+                    if (tpl) setConvForm({ ...convForm, classAnalysisPrompt: tpl.content });
+                  }}
+                  options={[
+                    { label: "选择全班学情模板填充...", value: "" },
+                    ...templates.filter((t) => t.type === "class").map((t) => ({ label: t.name, value: t.id })),
+                  ]}
+                  placeholder="选择全班学情模板填充..."
+                  size="small"
+                  style={{ width: 240 }}
+                />
+              </div>
+              <Textarea
+                value={convForm.classAnalysisPrompt}
+                onChange={(v) => setConvForm({ ...convForm, classAnalysisPrompt: v })}
+                placeholder="用于生成全班学情分析的提示词"
+                rows={4}
+              />
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+              <Button onClick={() => setConvDialogVisible(false)}>取消</Button>
+              <Button
+                theme="primary"
+                loading={convDialogSaving}
+                onClick={handleConversationSave}
+              >
+                {convDialogMode === "edit" ? "保存" : "创建"}
+              </Button>
+            </div>
+          </div>
+        </Dialog>
+
+        {/* 对话活动 - 删除确认弹窗 */}
+        <Dialog
+          header="删除对话活动"
+          visible={!!convDeletePc}
+          onClose={() => setConvDeletePc(null)}
+          onConfirm={confirmConversationDelete}
+          confirmBtn={{ content: "删除", theme: "danger" }}
+        >
+          <p className="text-sm text-gray-600">
+            确定删除「{convDeletePc?.title}」吗？该活动下的学生对话记录与学情分析也会一并删除，且不可恢复。
+          </p>
+        </Dialog>
+
         {/* 互动探究 - 新建/编辑弹窗 */}
         <Dialog
           header={explorationEditId ? "编辑互动设计提示词" : "新建互动探究"}
@@ -3527,7 +4410,7 @@ export default function TeacherTasksPage() {
                     </Button>
                   </div>
                   <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ height: 360 }}>
-                    <iframe srcDoc={explorationPreview} className="w-full h-full" sandbox="allow-scripts" title="预览" />
+                    <iframe srcDoc={explorationPreview} className="w-full h-full" sandbox="allow-scripts allow-same-origin" title="预览" />
                   </div>
                 </div>
 
@@ -3877,7 +4760,7 @@ export default function TeacherTasksPage() {
             <iframe
               srcDoc={previewHtml}
               className="w-full h-full"
-              sandbox="allow-scripts"
+              sandbox="allow-scripts allow-same-origin"
               title="探究预览"
             />
           </div>
@@ -4237,6 +5120,105 @@ export default function TeacherTasksPage() {
               style={{ fontFamily: "monospace", fontSize: 12 }}
             />
           </div>
+        </Dialog>
+
+        {/* 项目提交 新建/编辑 弹窗 */}
+        <Dialog
+          header={projDialogMode === "new" ? "新建项目" : "编辑项目"}
+          visible={projDialogVisible}
+          onClose={() => setProjDialogVisible(false)}
+          onConfirm={saveProj}
+          confirmBtn={{ content: "保存", loading: projSaving }}
+          cancelBtn="取消"
+          width={520}
+        >
+          <div className="space-y-4">
+            <div>
+              <label className="text-sm text-[#333]">项目名称 *</label>
+              <Input
+                value={projForm.title}
+                onChange={(v) => setProjForm({ ...projForm, title: v as string })}
+                placeholder="请输入项目名称"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-[#333]">说明（可选）</label>
+              <Textarea
+                value={projForm.description}
+                onChange={(v) => setProjForm({ ...projForm, description: v as string })}
+                placeholder="简单描述项目要求"
+              />
+            </div>
+            <div>
+              <label className="text-sm text-[#333]">项目类别</label>
+              <div className="flex gap-2 mt-1">
+                {(["TEXT", "IMAGE", "VIDEO"] as const).map((c) => (
+                  <Button
+                    key={c}
+                    size="small"
+                    theme={projForm.category === c ? "primary" : "default"}
+                    variant={projForm.category === c ? "base" : "outline"}
+                    onClick={() => setProjForm({ ...projForm, category: c })}
+                  >
+                    {c === "TEXT" ? "文本类" : c === "IMAGE" ? "图片类" : "音视频类"}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <div className="flex gap-6">
+              <label className="flex items-center gap-2 text-sm text-[#333]">
+                <input
+                  type="checkbox"
+                  checked={projForm.visibleToClass}
+                  onChange={(e) =>
+                    setProjForm({
+                      ...projForm,
+                      visibleToClass: e.target.checked,
+                      allowLike: e.target.checked ? projForm.allowLike : false,
+                    })
+                  }
+                />
+                全班可见
+              </label>
+              <label className="flex items-center gap-2 text-sm text-[#333]">
+                <input
+                  type="checkbox"
+                  checked={projForm.allowLike}
+                  disabled={!projForm.visibleToClass}
+                  onChange={(e) =>
+                    setProjForm({ ...projForm, allowLike: e.target.checked })
+                  }
+                />
+                允许点赞（自动开全班可见）
+              </label>
+            </div>
+            <div>
+              <label className="text-sm text-[#333]">文件大小限制（MB，默认 10）</label>
+              <Input
+                type="number"
+                value={projForm.fileSizeLimit}
+                onChange={(v) =>
+                  setProjForm({ ...projForm, fileSizeLimit: Number(v) || 10 })
+                }
+                min={1}
+              />
+            </div>
+          </div>
+        </Dialog>
+
+        {/* 删除项目提交确认 */}
+        <Dialog
+          header="删除项目提交"
+          visible={!!projDelete}
+          onClose={() => setProjDelete(null)}
+          onConfirm={confirmDeleteProj}
+          confirmBtn="删除"
+          cancelBtn="取消"
+          theme="danger"
+        >
+          <p className="text-sm text-[#333]">
+            确定删除「{projDelete?.title}」吗？该任务下所有学生的提交及附件文件将一并删除，不可恢复。
+          </p>
         </Dialog>
 
 </div>

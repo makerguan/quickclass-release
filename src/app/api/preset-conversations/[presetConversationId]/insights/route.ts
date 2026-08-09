@@ -387,9 +387,6 @@ ${convTexts || "（无对话记录）"}`;
   const prompt = buildConversationClassPrompt({
     pcTitle: pc.title,
     pcDescription: pc.description ?? undefined,
-    spTitle: pc.subProject.title,
-    spObjectives: pc.subProject.objectives,
-    spRequirements: pc.subProject.requirements,
     activeCount: uniqueActiveStudents.size,
     totalStudents: students.length,
     dialogContents,
@@ -454,9 +451,6 @@ async function generatePCClassInsightWithTemplate(
   const finalPrompt = buildConversationClassPrompt({
     pcTitle: pc.title,
     pcDescription: pc.description ?? undefined,
-    spTitle: pc.subProject.title,
-    spObjectives: pc.subProject.objectives,
-    spRequirements: pc.subProject.requirements,
     activeCount: uniqueActiveStudents.size,
     totalStudents: students.length,
     dialogContents,
@@ -514,9 +508,6 @@ async function generatePCStudentInsight(
   const prompt = buildConversationStudentPrompt({
     pcTitle: pc.title,
     pcDescription: pc.description ?? undefined,
-    spTitle: pc.subProject.title,
-    spObjectives: pc.subProject.objectives,
-    spRequirements: pc.subProject.requirements,
     studentName: student.name,
     dialogContent,
     customSection,
@@ -575,9 +566,6 @@ async function generatePCStudentInsightWithTemplate(
   const finalPrompt = buildConversationStudentPrompt({
     pcTitle: pc.title,
     pcDescription: pc.description ?? undefined,
-    spTitle: pc.subProject.title,
-    spObjectives: pc.subProject.objectives,
-    spRequirements: pc.subProject.requirements,
     studentName: student.name,
     dialogContent,
     customSection,

@@ -44,14 +44,12 @@ export const AI_COMPANION_VERSION = "math-renderer-v4";
 * 所有样式限定在 #ai-companion-root 内，避免与页面CSS冲突
 */
 export const aiCompanionCSS = `
-#ai-companion-root * { box-sizing: border-box; margin: 0; padding: 0; }
 #ai-companion-root {
-  all: initial;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
 }
 
 /* 浮动按钮（收起状态） */
-#ai-companion-trigger {
+#ai-companion-root #ai-companion-trigger {
   position: fixed; bottom: 30px; right: 80px;
   width: 52px; height: 52px;
   background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -61,15 +59,15 @@ export const aiCompanionCSS = `
   display: flex; align-items: center; justify-content: center;
   font-size: 22px; transition: transform 0.2s, box-shadow 0.2s;
 }
-#ai-companion-trigger:hover { transform: scale(1.1); box-shadow: 0 6px 20px rgba(102,126,234,0.6); }
-#ai-companion-trigger .pulse {
+#ai-companion-root #ai-companion-trigger:hover { transform: scale(1.1); box-shadow: 0 6px 20px rgba(102,126,234,0.6); }
+#ai-companion-root #ai-companion-trigger .pulse {
   position: absolute; width: 100%; height: 100%; border-radius: 50%;
   background: rgba(102,126,234,0.3); animation: aiPulse 2s infinite;
 }
 @keyframes aiPulse { 0%{transform:scale(1);opacity:1} 100%{transform:scale(1.8);opacity:0} }
 
 /* 对话框（展开状态） */
-#ai-companion-panel {
+#ai-companion-root #ai-companion-panel {
   position: fixed; bottom: 30px; right: 80px;
   width: 380px; height: 500px;
   background: white; border-radius: 16px;
@@ -77,88 +75,89 @@ export const aiCompanionCSS = `
   z-index: 10001; display: none; flex-direction: column;
   overflow: hidden; border: 1px solid #e5e7eb;
 }
-#ai-companion-panel.open { display: flex; }
+#ai-companion-root #ai-companion-panel.open { display: flex; }
 
 /* 头部 */
-#ac-header {
+#ai-companion-root #ac-header {
   padding: 14px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
   color: white; display: flex; align-items: center; justify-content: space-between;
 }
-#ac-header .title { font-size: 14px; font-weight: 600; }
-#ac-header .actions { display: flex; gap: 4px; align-items: center; }
-#ac-clear, #ac-close { background: none; border: none; color: white; cursor: pointer; font-size: 14px; padding: 4px 8px; line-height: 1; opacity: 0.85; }
-#ac-clear:hover, #ac-close:hover { opacity: 1; background: rgba(255,255,255,0.15); border-radius: 4px; }
+#ai-companion-root #ac-header .title { font-size: 14px; font-weight: 600; }
+#ai-companion-root #ac-header .actions { display: flex; gap: 4px; align-items: center; }
+#ai-companion-root #ac-clear, #ai-companion-root #ac-close { background: none; border: none; color: white; cursor: pointer; font-size: 14px; padding: 4px 8px; line-height: 1; opacity: 0.85; }
+#ai-companion-root #ac-clear:hover, #ai-companion-root #ac-close:hover { opacity: 1; background: rgba(255,255,255,0.15); border-radius: 4px; }
 
 /* 消息区 */
-#ac-messages {
+#ai-companion-root #ac-messages {
   flex: 1; overflow-y: auto; padding: 12px 16px;
   display: flex; flex-direction: column; gap: 10px;
   background: #fafafa;
 }
-#ac-messages::-webkit-scrollbar { width: 4px; }
-#ac-messages::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
+#ai-companion-root #ac-messages::-webkit-scrollbar { width: 4px; }
+#ai-companion-root #ac-messages::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
 
-.ac-msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.6; word-break: break-word; white-space: pre-wrap; }
-.ac-msg.user { align-self: flex-end; background: #667eea; color: white; border-bottom-right-radius: 4px; }
-.ac-msg.assistant { align-self: flex-start; background: white; color: #1f2937; border-bottom-left-radius: 4px; border: 1px solid #e5e7eb; }
-.ac-msg.assistant code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
-.ac-msg.error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+#ai-companion-root .ac-msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.6; word-break: break-word; white-space: pre-wrap; }
+#ai-companion-root .ac-msg.user { align-self: flex-end; background: #667eea; color: white; border-bottom-right-radius: 4px; }
+#ai-companion-root .ac-msg.assistant { align-self: flex-start; background: white; color: #1f2937; border-bottom-left-radius: 4px; border: 1px solid #e5e7eb; }
+#ai-companion-root .ac-msg.assistant code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
+#ai-companion-root .ac-msg.error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
 
 /* 输入区 */
-#ac-input-area {
+#ai-companion-root #ac-input-area {
   padding: 12px 16px; border-top: 1px solid #e5e7eb;
   display: flex; gap: 8px; align-items: flex-end;
   background: white;
 }
-#ac-input {
+#ai-companion-root #ac-input {
   flex: 1; border: 1px solid #d1d5db; border-radius: 20px;
   padding: 8px 14px; font-size: 13px; outline: none;
   resize: none; min-height: 36px; max-height: 80px;
   font-family: inherit; line-height: 1.4;
 }
-#ac-input:focus { border-color: #667eea; }
-#ac-send {
+#ai-companion-root #ac-input:focus { border-color: #667eea; }
+#ai-companion-root #ac-send {
   width: 36px; height: 36px; border-radius: 50%;
   background: #667eea; color: white; border: none;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   font-size: 16px; flex-shrink: 0; transition: background 0.2s;
 }
-#ac-send:hover:not(:disabled) { background: #5568d3; }
-#ac-send:disabled { background: #d1d5db; cursor: not-allowed; }
+#ai-companion-root #ac-send:hover:not(:disabled) { background: #5568d3; }
+#ai-companion-root #ac-send:disabled { background: #d1d5db; cursor: not-allowed; }
 
 /* 欢迎提示 */
-#ac-welcome { text-align: center; padding: 30px 20px; color: #9ca3af; }
-#ac-welcome .icon { font-size: 32px; margin-bottom: 8px; }
-#ac-welcome .text { font-size: 13px; line-height: 1.8; }
+#ai-companion-root #ac-welcome { text-align: center; padding: 30px 20px; color: #9ca3af; }
+#ai-companion-root #ac-welcome .icon { font-size: 32px; margin-bottom: 8px; }
+#ai-companion-root #ac-welcome .text { font-size: 13px; line-height: 1.8; }
 
 /* 打字指示器 */
-.ac-typing { display: inline-flex; gap: 3px; padding: 4px 0; }
-.ac-typing span { width: 6px; height: 6px; background: #9ca3af; border-radius: 50%; animation: acTyping 1.2s infinite; }
-.ac-typing span:nth-child(2) { animation-delay: 0.2s; }
-.ac-typing span:nth-child(3) { animation-delay: 0.4s; }
+#ai-companion-root .ac-typing { display: inline-flex; gap: 3px; padding: 4px 0; }
+#ai-companion-root .ac-typing span { width: 6px; height: 6px; background: #9ca3af; border-radius: 50%; animation: acTyping 1.2s infinite; }
+#ai-companion-root .ac-typing span:nth-child(2) { animation-delay: 0.2s; }
+#ai-companion-root .ac-typing span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes acTyping { 0%, 60%, 100% { transform: translateY(0); opacity: 0.4; } 30% { transform: translateY(-4px); opacity: 1; } }
 
 /* Markdown 渲染样式（AI 回复） */
-.ac-msg p { margin: 0 0 6px 0; }
-.ac-msg p:last-child { margin-bottom: 0; }
-.ac-msg strong { font-weight: 600; }
-.ac-msg em { font-style: italic; }
-.ac-msg code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
-.ac-msg pre { background: #1f2937; color: #f9fafb; padding: 8px 10px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.5; margin: 4px 0; }
-.ac-msg pre code { background: transparent; padding: 0; color: inherit; font-size: inherit; }
-.ac-msg ul, .ac-msg ol { margin: 4px 0 4px 18px; padding: 0; }
-.ac-msg li { margin: 2px 0; }
-.ac-msg a { color: #667eea; text-decoration: underline; }
+#ai-companion-root .ac-msg p { margin: 0 0 6px 0; }
+#ai-companion-root .ac-msg p:last-child { margin-bottom: 0; }
+#ai-companion-root .ac-msg strong { font-weight: 600; }
+#ai-companion-root .ac-msg em { font-style: italic; }
+#ai-companion-root .ac-msg code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; font-size: 12px; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+#ai-companion-root .ac-msg pre { background: #1f2937; color: #f9fafb; padding: 8px 10px; border-radius: 6px; overflow-x: auto; font-size: 12px; line-height: 1.5; margin: 4px 0; }
+#ai-companion-root .ac-msg pre code { background: transparent; padding: 0; color: inherit; font-size: inherit; }
+#ai-companion-root .ac-msg ul, #ai-companion-root .ac-msg ol { margin: 4px 0 4px 18px; padding: 0; }
+#ai-companion-root .ac-msg li { margin: 2px 0; }
+#ai-companion-root .ac-msg a { color: #667eea; text-decoration: underline; }
 
 /* 公式容器样式 */
-.ac-math-inline { display: inline-block; vertical-align: middle; }
-.ac-math-block { display: block; text-align: center; margin: 6px 0; }
+#ai-companion-root .ac-math-inline { display: inline-block; vertical-align: middle; }
+#ai-companion-root .ac-math-block { display: block; text-align: center; margin: 6px 0; }
 `.trim();
 
 /**
  * AI伴学浮动对话框HTML
  */
 export const aiCompanionHTML = `
+<div id="ai-companion-root">
 <!-- AI伴学浮动按钮 -->
 <button id="ai-companion-trigger" title="AI伴学助手" style="display:flex">
   <span class="pulse"></span>
@@ -184,6 +183,7 @@ export const aiCompanionHTML = `
     <textarea id="ac-input" rows="1" placeholder="输入你的问题..." maxlength="500"></textarea>
     <button id="ac-send" aria-label="发送">➤</button>
   </div>
+</div>
 </div>
 `.trim();
 
@@ -513,6 +513,21 @@ export const aiCompanionScript = String.raw`
     typingDiv.innerHTML = '<div class="ac-typing"><span></span><span></span><span></span></div>';
     messagesDiv.appendChild(typingDiv);
     messagesDiv.scrollTop = messagesDiv.scrollHeight;
+
+    // 45s 超时兜底：流式响应意外挂死时自动解锁，避免输入框永久锁定
+    if (window.__acStreamTimeout) clearTimeout(window.__acStreamTimeout);
+    window.__acStreamTimeout = setTimeout(function() {
+      if (!isStreaming) return;
+      isStreaming = false;
+      sendBtn.disabled = false;
+      var timeoutTyping = document.getElementById('ac-typing-indicator');
+      if (timeoutTyping) timeoutTyping.remove();
+      var timeoutErr = document.createElement('div');
+      timeoutErr.className = 'ac-msg error';
+      timeoutErr.textContent = '回复超时，请重试';
+      messagesDiv.appendChild(timeoutErr);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }, 45000);
   }
 
   function collectContext() {
@@ -595,6 +610,7 @@ export const aiCompanionScript = String.raw`
     }
 
     if (e.data.type === 'AI_COMPANION_DONE') {
+      if (window.__acStreamTimeout) { clearTimeout(window.__acStreamTimeout); window.__acStreamTimeout = null; }
       var typingEl2 = document.getElementById('ac-typing-indicator');
       if (typingEl2) typingEl2.remove();
       var doneMsg = document.getElementById('ac-streaming-msg');
@@ -610,6 +626,7 @@ export const aiCompanionScript = String.raw`
     }
 
     if (e.data.type === 'AI_COMPANION_ERROR') {
+      if (window.__acStreamTimeout) { clearTimeout(window.__acStreamTimeout); window.__acStreamTimeout = null; }
       var typingEl3 = document.getElementById('ac-typing-indicator');
       if (typingEl3) typingEl3.remove();
       var errMsg = document.getElementById('ac-streaming-msg');
@@ -659,9 +676,9 @@ export interface AiCompanionInjectResult {
  */
 export function isAiCompanionUpToDate(html: string | null | undefined): boolean {
   if (!html) return true; // 没有 HTML 视为最新，避免空内容触发升级循环
-  // 缺少 AI 伴学注入标记则视为不需要升级（教师尚未启用）
-  if (!html.includes("__AI_COMPANION_INJECTED__") && !html.includes("ai-companion-trigger")) {
-    return true;
+  // 缺少 AI 伴学注入标记则视为需要注入（教师已启用但尚未注入）
+  if (!html.includes("__AI_COMPANION_INJECTED__") && !html.includes("ai-companion-root")) {
+    return false;
   }
   return html.includes(AI_COMPANION_VERSION);
 }
@@ -702,7 +719,7 @@ export function injectAiCompanion(html: string, context: AiCompanionContext): Ai
   }
 
   // 避免重复注入
-  if (modified.includes("__AI_COMPANION_INJECTED__") || modified.includes("ai-companion-trigger")) {
+  if (modified.includes("__AI_COMPANION_INJECTED__") || modified.includes("ai-companion-root")) {
     warnings.push("HTML已包含AI伴学功能，跳过注入");
     return { success: true, warnings, html: modified };
   }
@@ -768,14 +785,16 @@ export function removeAiCompanion(html: string): string {
     ""
   );
 
-  // 2. 一次性删除从最早 panel 开始到 body 结束前的所有 AI 伴学相关 DOM
+  // 2. 一次性删除从最早 root/panel 开始到 body 结束前的所有 AI 伴学相关 DOM
   // 这样可以彻底处理重复注入的情况
+  const firstRootIdx = modified.indexOf('<div id="ai-companion-root"');
   const firstPanelIdx = modified.indexOf('<div id="ai-companion-panel"');
   const firstTriggerIdx = modified.indexOf('<button id="ai-companion-trigger"');
 
-  if (firstPanelIdx > -1 || firstTriggerIdx > -1) {
+  if (firstRootIdx > -1 || firstPanelIdx > -1 || firstTriggerIdx > -1) {
     // 取最早的起始位置
     let startIdx = modified.length;
+    if (firstRootIdx > -1 && firstRootIdx < startIdx) startIdx = firstRootIdx;
     if (firstPanelIdx > -1 && firstPanelIdx < startIdx) startIdx = firstPanelIdx;
     if (firstTriggerIdx > -1 && firstTriggerIdx < startIdx) startIdx = firstTriggerIdx;
 

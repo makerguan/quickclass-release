@@ -41,6 +41,9 @@ interface ReferenceAuditItem {
   matchedTitle?: string;
   source?: string;
   confidence?: number;
+  citationStatus?: "VERIFIED" | "SUSPICIOUS" | "UNVERIFIED";
+  citationReason?: string;
+  citationContext?: string;
 }
 
 interface ReferencesAuditReport {
@@ -51,6 +54,13 @@ interface ReferencesAuditReport {
   removed: number;
   items: ReferenceAuditItem[];
   checkedAt: string;
+  citationValidation?: {
+    total: number;
+    verified: number;
+    suspicious: number;
+    unverified: number;
+    checkedAt: string;
+  };
 }
 
 interface ResearchProject {
@@ -67,7 +77,7 @@ interface ResearchProject {
   dataSnapshot: any;
 }
 
-export default function ProjectDetailPage({ params }: { params: { id: string } }) {
+export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const router = useRouter();
   const [project, setProject] = useState<ResearchProject | null>(null);
   const [loading, setLoading] = useState(true);
@@ -175,8 +185,19 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         a.href = url;
-        a.download = `${project.projectName}-${project.projectType === "PAPER" ? "论文" : "课题"}.docx`;
+        // 优先从 content JSON 中取论文标题/课题名称
+        let docTitle = project.projectName;
+        if (project.content) {
+          try {
+            const c = JSON.parse(project.content);
+            if (c.title) docTitle = c.title;
+          } catch {}
+        }
+        if (!docTitle) docTitle = project.selectedTitle || project.projectName;
+        a.download = `${docTitle}.docx`;
+        document.body.appendChild(a);
         a.click();
+        document.body.removeChild(a);
         URL.revokeObjectURL(url);
       } else {
         MessagePlugin.error("下载失败");
@@ -523,13 +544,43 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
       >
         {auditReport && (
           <div className="space-y-2 max-h-[60vh] overflow-y-auto">
+            {/* 引用合理性审核摘要 */}
+            {auditReport.citationValidation && (
+              <div className="rounded-lg border border-blue-200 bg-blue-50 p-3 mb-4">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="font-medium text-sm">引用合理性审核</span>
+                  <Tag size="small" theme="primary" variant="light">
+                    共 {auditReport.citationValidation.total} 条引用
+                  </Tag>
+                </div>
+                <div className="flex gap-3 text-xs">
+                  <span className="text-green-600">合理 {auditReport.citationValidation.verified}</span>
+                  <span className="text-orange-600">可疑 {auditReport.citationValidation.suspicious}</span>
+                  {auditReport.citationValidation.unverified > 0 && (
+                    <span className="text-red-600">不合理 {auditReport.citationValidation.unverified}</span>
+                  )}
+                </div>
+              </div>
+            )}
+
             {auditReport.items.map((item) => {
-              const                 statusMeta = {
+              const statusMeta = {
                 VERIFIED: { label: "已核实", color: "green", icon: <CheckCircleIcon /> },
                 OFFICIAL: { label: "官方文件", color: "blue", icon: <CheckCircleIcon /> },
                 REMOVED_DUPLICATE: { label: "重复已合并", color: "orange", icon: <ErrorCircleIcon /> },
                 REMOVED: { label: "查不到已删除", color: "red", icon: <ErrorCircleIcon /> },
               }[item.status];
+
+              // 引用合理性标签
+              let citationMeta: { label: string; color: string } | null = null;
+              if (item.citationStatus === "VERIFIED") {
+                citationMeta = { label: "引用合理", color: "green" };
+              } else if (item.citationStatus === "SUSPICIOUS") {
+                citationMeta = { label: "引用可疑", color: "orange" };
+              } else if (item.citationStatus === "UNVERIFIED") {
+                citationMeta = { label: "引用不合理", color: "red" };
+              }
+
               return (
                 <div
                   key={item.index}
@@ -541,7 +592,7 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                       : "border-red-200 bg-red-50"
                   }`}
                 >
-                  <div className="flex items-start gap-2">
+                  <div className="flex items-start gap-2 flex-wrap">
                     <Tag
                       size="small"
                       theme={statusMeta.color as any}
@@ -549,6 +600,15 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                     >
                       [{item.index}] {statusMeta.label}
                     </Tag>
+                    {citationMeta && (
+                      <Tag
+                        size="small"
+                        theme={citationMeta.color as any}
+                        variant="outline"
+                      >
+                        {citationMeta.label}
+                      </Tag>
+                    )}
                   </div>
                   <div className="text-sm text-gray-700 mt-1.5 break-all">
                     {item.raw}
@@ -566,6 +626,18 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
                   {item.matchedTitle && (
                     <div className="text-xs text-gray-500 mt-0.5">
                       命中标题：{item.matchedTitle}
+                    </div>
+                  )}
+                  {item.citationReason && (
+                    <div className="text-xs mt-1 p-2 rounded bg-white bg-opacity-60 border border-dashed border-gray-300">
+                      <div className="text-gray-400 mb-0.5">引用上下文：</div>
+                      <div className="text-gray-600 mb-1">{item.citationContext}</div>
+                      <div className={`${
+                        item.citationStatus === "VERIFIED" ? "text-green-600" :
+                        item.citationStatus === "SUSPICIOUS" ? "text-orange-600" : "text-red-600"
+                      }`}>
+                        {item.citationReason}
+                      </div>
                     </div>
                   )}
                 </div>

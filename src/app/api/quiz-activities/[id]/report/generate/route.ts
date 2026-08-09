@@ -201,15 +201,16 @@ export async function POST(
         where: { type: "quiz_class", classId: saveClassId, scopeId: id },
       });
       
-      // 清理 content 中的 ```html 和 ``` 标记
+      // 清理 content 中的 markdown 代码块标记（```html / ```HTML / ```）
       let cleanContent = content;
-      if (cleanContent.startsWith("```html")) {
-        cleanContent = cleanContent.slice(7);
-      } else if (cleanContent.startsWith("```")) {
-        cleanContent = cleanContent.slice(3);
-      }
-      if (cleanContent.endsWith("```")) {
-        cleanContent = cleanContent.slice(0, -3);
+      const mdBlockMatch = cleanContent.match(/^\s*```(?:html|HTML)?\s*\n?([\s\S]*?)\n?\s*```\s*$/);
+      if (mdBlockMatch) {
+        cleanContent = mdBlockMatch[1].trim();
+      } else {
+        // fallback：简单剥离首尾标记
+        cleanContent = cleanContent.replace(/^\s*```(?:html|HTML)?\s*\n?/, "");
+        cleanContent = cleanContent.replace(/\n?\s*```\s*$/, "");
+        cleanContent = cleanContent.trim();
       }
       
       // 创建新版本（不删除旧版本）

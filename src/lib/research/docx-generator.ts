@@ -184,6 +184,30 @@ export async function generatePaperDocx(doc: PaperContent): Promise<Buffer> {
     });
   }
 
+  // ── 页脚（含水印提示） ──
+  const footer = new Footer({
+    children: [
+      new Paragraph({
+        children: [new TextRun({
+          text: "本文档由QuickClass 根据真实教学数据提炼，请根据教育部教师队伍建设专家指导委员会正式发布《教师生成式人工智能应用指引》规范、科学应用，禁止用于违反学术伦理的研究。",
+          size: 16,
+          color: "999999",
+          italics: true,
+        })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 60 },
+      }),
+      new Paragraph({
+        children: [
+          new TextRun({ text: "— ", font: "Times New Roman", size: 18 }),
+          new TextRun({ children: [PageNumber.CURRENT], font: "Times New Roman", size: 18 }),
+          new TextRun({ text: " —", font: "Times New Roman", size: 18 }),
+        ],
+        alignment: AlignmentType.CENTER,
+      }),
+    ],
+  });
+
   const docxDoc = new Document({
     creator: "QuickClass 教研宝",
     title: doc.title,
@@ -191,9 +215,10 @@ export async function generatePaperDocx(doc: PaperContent): Promise<Buffer> {
       properties: {
         page: {
           size: { orientation: PageOrientation.PORTRAIT },
-          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+          margin: { top: 1440, right: 1440, bottom: 1440, left: 1440, footer: 960 },
         },
       },
+      footers: { default: footer },
       children,
     }],
   });
@@ -715,7 +740,7 @@ export async function generateProposalDocx(
     });
   }
 
-  // ── 页眉页脚 ──
+  // ── 页眉页脚（页脚含水印提示） ──
   const header = new Header({
     children: [new Paragraph({
       children: [new TextRun({
@@ -727,14 +752,27 @@ export async function generateProposalDocx(
     })],
   });
   const footer = new Footer({
-    children: [new Paragraph({
-      children: [
-        new TextRun({ text: "— ", font: "Times New Roman", size: 18 }),
-        new TextRun({ children: [PageNumber.CURRENT], font: "Times New Roman", size: 18 }),
-        new TextRun({ text: " —", font: "Times New Roman", size: 18 }),
-      ],
-      alignment: AlignmentType.CENTER,
-    })],
+    children: [
+      new Paragraph({
+        children: [new TextRun({
+          text: "本文档由QuickClass 根据真实教学数据提炼，请根据教育部教师队伍建设专家指导委员会正式发布《教师生成式人工智能应用指引》规范、科学应用，禁止用于违反学术伦理的研究。",
+          font: { eastAsia: "仿宋", ascii: "Times New Roman" },
+          size: 16,
+          color: "999999",
+          italics: true,
+        })],
+        alignment: AlignmentType.CENTER,
+        spacing: { after: 60 },
+      }),
+      new Paragraph({
+        children: [
+          new TextRun({ text: "— ", font: "Times New Roman", size: 18 }),
+          new TextRun({ children: [PageNumber.CURRENT], font: "Times New Roman", size: 18 }),
+          new TextRun({ text: " —", font: "Times New Roman", size: 18 }),
+        ],
+        alignment: AlignmentType.CENTER,
+      }),
+    ],
   });
 
   const docxDoc = new Document({

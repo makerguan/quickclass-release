@@ -46,6 +46,22 @@ export default function TeacherSettingsPage() {
   const [backupFileName, setBackupFileName] = useState("");
   const [versionInfo, setVersionInfo] = useState<{ version: string; buildTime?: string } | null>(null);
 
+  // 系统升级状态
+  const [upgradeUploading, setUpgradeUploading] = useState(false);
+  const [upgradeProgress, setUpgradeProgress] = useState(0);
+  const [upgradeResult, setUpgradeResult] = useState<{
+    success: boolean;
+    message: string;
+    newVersion?: string;
+  } | null>(null);
+
+  // 版本更新检测
+  const [updateAvailable, setUpdateAvailable] = useState(false);
+  const [latestVersion, setLatestVersion] = useState("");
+  const [updateChangelog, setUpdateChangelog] = useState("");
+  const [downloadUrl, setDownloadUrl] = useState("");
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+
   // 学情分析约束配置
   const [requireStarRating, setRequireStarRating] = useState(false);
   const [studentWordLimit, setStudentWordLimit] = useState<number | null>(null);
@@ -89,9 +105,56 @@ export default function TeacherSettingsPage() {
   useEffect(() => {
     fetchConfig();
     fetchUserProfile();
-    fetchVersion();
+    fetchVersion().then(() => checkUpdate());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const checkUpdate = async (force = false) => {
+    try {
+      // 非强制模式下，24 小时内检查过则跳过
+      if (!force) {
+        const lastCheck = localStorage.getItem("upgradeLastCheck");
+        if (lastCheck) {
+          const elapsed = Date.now() - parseInt(lastCheck, 10);
+          if (elapsed < 24 * 60 * 60 * 1000) {
+            const cached = localStorage.getItem("upgradeCheckResult");
+            if (cached) {
+              try {
+                const data = JSON.parse(cached);
+                if (data.hasUpdate) {
+                  setUpdateAvailable(true);
+                  setLatestVersion(data.latest);
+                  setUpdateChangelog(data.changelog || "");
+                  setDownloadUrl(data.downloadUrl || "");
+                }
+                return;
+              } catch {}
+            }
+          }
+        }
+      }
+
+      setCheckingUpdate(true);
+      const res = await fetch("/api/version/check", { signal: AbortSignal.timeout(6000) });
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem("upgradeLastCheck", String(Date.now()));
+        localStorage.setItem("upgradeCheckResult", JSON.stringify(data));
+        if (data.hasUpdate) {
+          setUpdateAvailable(true);
+          setLatestVersion(data.latest);
+          setUpdateChangelog(data.changelog || "");
+          setDownloadUrl(data.downloadUrl || "");
+        } else {
+          setUpdateAvailable(false);
+        }
+      }
+    } catch {
+      // 检查失败，静默忽略
+    } finally {
+      setCheckingUpdate(false);
+    }
+  };
 
   const fetchVersion = async () => {
     try {
@@ -469,6 +532,73 @@ export default function TeacherSettingsPage() {
     MessagePlugin.success("配置已备份");
   };
 
+  // 系统升级：上传升级包
+  const handleUpgradeUpload = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = ".zip";
+    input.onchange = async (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0];
+      if (!file) return;
+
+      if (!file.name.endsWith(".zip")) {
+        MessagePlugin.warning("请选择 .zip 格式的升级包");
+        return;
+      }
+
+      if (file.size > 200 * 1024 * 1024) {
+        MessagePlugin.warning("升级包不能超过 200MB");
+        return;
+      }
+
+      setUpgradeUploading(true);
+      setUpgradeProgress(0);
+      setUpgradeResult(null);
+
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+
+        // 模拟上传进度
+        const progressInterval = setInterval(() => {
+          setUpgradeProgress((prev) => Math.min(prev + 5, 90));
+        }, 300);
+
+        const token = localStorage.getItem("token");
+        const res = await fetch("/api/upgrade/install", {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+          body: formData,
+        });
+
+        clearInterval(progressInterval);
+
+        const data = await res.json();
+        if (res.ok && data.success) {
+          setUpgradeProgress(100);
+          setUpgradeResult({
+            success: true,
+            message: data.detail || "升级包已准备就绪",
+            newVersion: data.newVersion,
+          });
+        } else {
+          setUpgradeResult({
+            success: false,
+            message: data.error || "升级失败",
+          });
+        }
+      } catch {
+        setUpgradeResult({
+          success: false,
+          message: "网络错误，请重试",
+        });
+      } finally {
+        setUpgradeUploading(false);
+      }
+    };
+    input.click();
+  };
+
   // 导入配置
   const handleImport = () => {
     const input = document.createElement("input");
@@ -557,7 +687,7 @@ export default function TeacherSettingsPage() {
 
   return (
     <TeacherLayout>
-      <div className="max-w-3xl space-y-4 pb-8">
+      <div className="space-y-4 pb-8">
         {/* Page header */}
         <div>
           <div className="flex items-center justify-between">
@@ -567,7 +697,15 @@ export default function TeacherSettingsPage() {
             </div>
             {versionInfo && (
               <div className="text-right">
-                <div className="text-sm font-medium text-[#0052D9]">{versionInfo.version}</div>
+                <div className="flex items-center gap-2 justify-end">
+                  <div className="text-sm font-medium text-[#0052D9]">{versionInfo.version}</div>
+                  {updateAvailable && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-red-50 text-red-600 rounded-full border border-red-200 animate-pulse">
+                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                      新版本 {latestVersion}
+                    </span>
+                  )}
+                </div>
                 <div className="text-xs text-[#63666F]">
                   {versionInfo.buildTime ? new Date(versionInfo.buildTime).toLocaleDateString("zh-CN") : ""}
                 </div>
@@ -1129,9 +1267,10 @@ export default function TeacherSettingsPage() {
             <div className="px-6 pb-6 border-t border-gray-100">
               <div className="space-y-3 pt-4">
                 {[
-                  { label: "版本", value: "QuickClass v1.0.0" },
+                  { label: "版本", value: "QuickClass 开源版本" },
                   { label: "部署模式", value: "本地运行" },
                   { label: "开发", value: "常州管老师和他的AI助手" },
+                  { label: "邮箱", value: "cccgxf@qq.com" },
                   { label: "数据库", value: "SQLite (本地文件)" },
                   { label: "访问地址", value: typeof window !== "undefined" ? `${window.location.host}` : "localhost:3000" },
                 ].map((item, index) => (
@@ -1196,6 +1335,173 @@ export default function TeacherSettingsPage() {
               </div>
             </div>
           )}
+        </div>
+
+        {/* 系统升级 */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="px-6 py-4">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-8 h-8 bg-gradient-to-br from-[#0052D9] to-[#00A870] rounded-lg flex items-center justify-center">
+                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M3 15c0 2.828 0 4.243.879 5.121C4.757 21 6.172 21 9 21h6c2.828 0 4.243 0 5.121-.879C21 19.243 21 17.828 21 15M12 3v12m0 0l-3-3m3 3l3-3" />
+                </svg>
+              </div>
+              <div>
+                <span className="font-medium text-[#1A1A1A]">系统升级</span>
+                {versionInfo && (
+                  <span className="text-xs text-[#63666F] ml-2">当前 {versionInfo.version}</span>
+                )}
+              </div>
+              <Button
+                size="small"
+                variant="text"
+                loading={checkingUpdate}
+                onClick={() => checkUpdate(true)}
+              >
+                检查更新
+              </Button>
+            </div>
+
+            {upgradeResult ? (
+              upgradeResult.success ? (
+                <div className="p-4 rounded-xl bg-[#ECFDF5] border border-[#00A870]/20">
+                  <div className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-full bg-[#00A870] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    </div>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-[#00A870]">升级包准备完成</p>
+                      {upgradeResult.newVersion && (
+                        <div className="flex items-center gap-2 mt-1.5">
+                          <span className="text-xs px-2 py-0.5 bg-gray-100 rounded text-[#63666F] font-mono">
+                            {versionInfo?.version || "当前"}
+                          </span>
+                          <svg className="w-4 h-4 text-[#00A870]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
+                          </svg>
+                          <span className="text-xs px-2 py-0.5 bg-[#00A870]/10 rounded text-[#00A870] font-mono font-semibold">
+                            {upgradeResult.newVersion}
+                          </span>
+                        </div>
+                      )}
+                      <p className="text-xs text-[#63666F] mt-1.5">{upgradeResult.message}</p>
+                      <div className="mt-3 flex gap-2">
+                        <Button
+                          size="small"
+                          theme="primary"
+                          onClick={() => {
+                            MessagePlugin.info("请手动运行 start.sh 或 start.bat 重启服务");
+                          }}
+                        >
+                          如何重启
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="outline"
+                          onClick={() => {
+                            setUpgradeResult(null);
+                            setUpgradeProgress(0);
+                          }}
+                        >
+                          重新选择
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 rounded-xl bg-[#FFF7ED] border border-[#ED7B2F]/20">
+                  <div className="flex items-start gap-3">
+                    <div className="w-5 h-5 rounded-full bg-[#ED7B2F] flex items-center justify-center flex-shrink-0 mt-0.5">
+                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </div>
+                    <div>
+                      <p className="text-sm font-medium text-[#ED7B2F]">升级失败</p>
+                      <p className="text-xs text-[#63666F] mt-0.5">{upgradeResult.message}</p>
+                      <Button
+                        size="small"
+                        variant="outline"
+                        className="mt-2"
+                        onClick={() => {
+                          setUpgradeResult(null);
+                          setUpgradeProgress(0);
+                        }}
+                      >
+                        重试
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              )
+            ) : (
+              <div>
+                {updateAvailable && (
+                  <div className="mb-4 p-3 rounded-lg bg-[#EDF5FF] border border-[#0052D9]/20">
+                    <div className="flex items-start gap-3">
+                      <div className="w-5 h-5 rounded-full bg-[#0052D9] flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                        </svg>
+                      </div>
+                      <div>
+                        <p className="text-sm font-medium text-[#0052D9]">
+                          发现新版本 {latestVersion}
+                        </p>
+                        {updateChangelog && (
+                          <p className="text-xs text-[#63666F] mt-0.5">{updateChangelog}</p>
+                        )}
+                        <div className="mt-2 flex items-center gap-2">
+                          {downloadUrl ? (
+                            <Button
+                              size="small"
+                              theme="primary"
+                              onClick={() => window.open(downloadUrl, "_blank")}
+                            >
+                              去下载升级包
+                            </Button>
+                          ) : (
+                            <p className="text-xs text-[#63666F]">请下载最新升级包，回到此处上传安装</p>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                <p className="text-sm text-[#63666F] mb-4">
+                  下载最新升级包后，在此处上传并安装。重启服务后自动完成升级，数据库和配置会自动保留。
+                </p>
+
+                {upgradeUploading && (
+                  <div className="mb-4">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs text-[#63666F]">正在上传并处理升级包...</span>
+                      <span className="text-xs font-medium text-[#0052D9]">{upgradeProgress}%</span>
+                    </div>
+                    <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                      <div
+                        className="h-full bg-gradient-to-r from-[#0052D9] to-[#00A870] rounded-full transition-all duration-300"
+                        style={{ width: `${upgradeProgress}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                <Button
+                  theme="primary"
+                  onClick={handleUpgradeUpload}
+                  loading={upgradeUploading}
+                  disabled={upgradeUploading}
+                >
+                  {upgradeUploading ? "正在处理..." : "选择升级包"}
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 

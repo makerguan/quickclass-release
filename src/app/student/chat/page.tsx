@@ -13,6 +13,7 @@ import Markdown from "@/components/Markdown";
 import StudentLayout from "@/components/layout/StudentLayout";
 import QuizPanel from "./QuizPanel";
 import ExplorationPanel from "./ExplorationPanel";
+import ProjectSubmitPanel from "./ProjectSubmitPanel";
 
 interface MessageImage {
   url: string;
@@ -43,6 +44,7 @@ interface SubProject {
   presetConversations: PresetConversation[];
   quizActivities?: QuizInfo[];
   explorations?: ExplorationInfo[];
+  projectSubmissions?: ProjectSubmissionInfo[];
 }
 
 interface ExplorationInfo {
@@ -75,6 +77,16 @@ interface QuizInfo {
   _count?: { questions: number; attempts: number };
 }
 
+interface ProjectSubmissionInfo {
+  id: string;
+  title: string;
+  description?: string;
+  category: "TEXT" | "IMAGE" | "VIDEO";
+  visibleToClass: boolean;
+  allowLike: boolean;
+  fileSizeLimit: number;
+}
+
 interface LearningTask {
   id: string;
   title: string;
@@ -105,10 +117,11 @@ export default function StudentChatPage() {
   const [loadingData, setLoadingData] = useState(true);
 
   // 作业状态
-  const [activeType, setActiveType] = useState<"chat" | "quiz" | "exploration" | null>(null);
+  const [activeType, setActiveType] = useState<"chat" | "quiz" | "exploration" | "project" | null>(null);
   const [activeQuizId, setActiveQuizId] = useState<string | null>(null);
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [activeExplorationId, setActiveExplorationId] = useState<string | null>(null);
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null);
 
   // 侧边栏折叠状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -264,6 +277,22 @@ export default function StudentChatPage() {
     setActivePresetId(null);
     setActiveConvId(null);
     setActiveQuizId(null);
+    setQuizSubmitted(false);
+    // 取消正在进行的 AI 请求
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+    }
+    setLoading(false);
+  };
+
+  const switchToProject = (projectId: string) => {
+    setActiveType("project");
+    setActiveProjectId(projectId);
+    setActivePresetId(null);
+    setActiveConvId(null);
+    setActiveQuizId(null);
+    setActiveExplorationId(null);
     setQuizSubmitted(false);
     // 取消正在进行的 AI 请求
     if (abortControllerRef.current) {
@@ -629,6 +658,47 @@ onClick={() => {
                       </div>
                     )}
 
+                    {/* 项目提交入口 */}
+                    {task.subProjects.flatMap(sp => sp.projectSubmissions || []).length > 0 && (
+                      <div>
+                        <div className="px-3 py-2 pl-8 border-b border-gray-50 bg-gray-50/50">
+                          <div className="flex items-center gap-2">
+                            <FolderIcon className="text-[#FF7D00]" size="14px" />
+                            <span className="text-sm font-medium text-[#63666F]">项目提交</span>
+                          </div>
+                        </div>
+                        {task.subProjects.flatMap(sp =>
+                          (sp.projectSubmissions || []).map((ps: ProjectSubmissionInfo) => {
+                            const isActive = activeType === "project" && activeProjectId === ps.id;
+                            return (
+                              <div
+                                key={ps.id}
+                                className={`px-3 py-2 pl-14 cursor-pointer hover:bg-gray-100 border-b border-gray-50 ${
+                                  isActive ? "bg-white border-l-2 border-l-[#FF7D00]" : ""
+                                }`}
+                                onClick={() => {
+                                  switchToProject(ps.id);
+                                }}
+                              >
+                                <div className="flex items-center gap-2">
+                                  <ChatIcon
+                                    className={isActive ? "text-[#FF7D00]" : "text-gray-400"}
+                                    size="14px"
+                                  />
+                                  <span className={`text-sm truncate ${isActive ? "text-[#FF7D00] font-medium" : "text-[#333]"}`}>
+                                    {ps.title}
+                                  </span>
+                                  <Tag theme="warning" variant="light" size="small">
+                                    {ps.category === "TEXT" ? "文本" : ps.category === "IMAGE" ? "图片" : "视频"}
+                                  </Tag>
+                                </div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                    )}
+
                     {/* 作业入口 */}
                     {allQuizzes.length > 0 && (
                       <div>
@@ -705,6 +775,15 @@ onClick={() => {
           />
         ) : null}
 
+        {activeType === "project" && activeProjectId ? (
+          <ProjectSubmitPanel
+            projectId={activeProjectId}
+            tasks={tasks}
+            onBack={() => setActiveType(null)}
+            onChanged={() => fetchData()}
+          />
+        ) : null}
+
         {activeType !== "quiz" && activeType !== "exploration" && activePresetId && currentInfo && (
           <>
             <div className="px-4 py-3 border-b border-gray-200 bg-[#FAFBFC]">
@@ -719,21 +798,15 @@ onClick={() => {
                   </p>
                 </div>
               </div>
-              {currentInfo.preset.description && (
-                <p className="text-xs text-[#63666F] mt-1 ml-7">
-                  {currentInfo.preset.description}
-                </p>
-              )}
+
             </div>
 
             <div className="flex-1 overflow-y-auto p-4 space-y-4">
               {messages.length === 0 && currentInfo && (
                 <div className="text-center text-gray-400 mt-10">
                   <p className="text-lg mb-2">{currentInfo.preset.title}</p>
-                  {currentInfo.preset.description && (
-                    <p className="text-sm">{currentInfo.preset.description}</p>
-                  )}
-                  <p className="text-sm mt-4">开始提问吧！</p>
+
+                  <p className="text-sm mt-4">开始吧！</p>
                 </div>
               )}
               {messages.map((msg, index) => (

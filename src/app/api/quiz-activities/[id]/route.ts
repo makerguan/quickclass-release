@@ -110,6 +110,11 @@ export async function DELETE(
     });
     if (!quiz) return new Response("作业不存在", { status: 404 });
 
+    // 删除该作业关联的班级分析报告（quiz_class 分析，scopeId = quizId）
+    await prisma.aIInsight.deleteMany({
+      where: { type: "quiz_class", scopeId: id },
+    });
+
     await prisma.quizActivity.delete({ where: { id } });
     return NextResponse.json({ success: true });
   } catch (error) {

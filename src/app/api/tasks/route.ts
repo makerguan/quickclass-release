@@ -21,8 +21,9 @@ export async function GET(req: NextRequest) {
             classInsightTemplate: { select: { id: true, name: true, type: true } },
             studentInsightTemplate: { select: { id: true, name: true, type: true } },
             PresetConversation: { select: { id: true, title: true, description: true, systemPrompt: true, analysisPrompt: true, classAnalysisPrompt: true, sortOrder: true, enabled: true, studentInsightTemplateId: true, classInsightTemplateId: true }, orderBy: [{ sortOrder: "asc" }] },
-            QuizActivity: { select: { id: true, title: true, description: true, status: true, sortOrder: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
-            ExplorationActivity: { select: { id: true, title: true, description: true, sortOrder: true, enabled: true }, orderBy: [{ sortOrder: "asc" }] },
+            QuizActivity: { select: { id: true, subProjectId: true, title: true, description: true, status: true, sortOrder: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
+            ExplorationActivity: { select: { id: true, title: true, description: true, htmlContent: true, enableSubmission: true, enableAiCompanion: true, aiCompanionPrompt: true, analysisPrompt: true, designPrompt: true, questionsJson: true, teachingAdvice: true, sortOrder: true, enabled: true }, orderBy: [{ sortOrder: "asc" }] },
+            ProjectSubmission: { orderBy: { sortOrder: "asc" } },
           },
           orderBy: { sortOrder: "asc" },
         },
@@ -33,7 +34,7 @@ export async function GET(req: NextRequest) {
 
     // 映射字段名以匹配前端期望
     const mapSubProject = (sp: Record<string, unknown>) => {
-      const { PresetConversation, QuizActivity, ExplorationActivity, ...rest } = sp;
+      const { PresetConversation, QuizActivity, ExplorationActivity, ProjectSubmission, ...rest } = sp;
       return {
         ...rest,
         presetConversations: PresetConversation,
@@ -41,7 +42,8 @@ export async function GET(req: NextRequest) {
           const { Question, ...qaRest } = qa;
           return { ...qaRest, questions: Question };
         }),
-        explorations: ExplorationActivity,
+        explorationActivities: ExplorationActivity,
+        projectSubmissions: ProjectSubmission,
       };
     };
     const tasks = rawTasks.map(({ subProjects, assignments: asgns, ...t }) => ({
@@ -179,8 +181,9 @@ export async function POST(req: NextRequest) {
             studentInsightTemplate: { select: { id: true, name: true, type: true } },
             classInsightTemplate: { select: { id: true, name: true, type: true } },
             PresetConversation: { select: { id: true, title: true, description: true, systemPrompt: true, analysisPrompt: true, classAnalysisPrompt: true, sortOrder: true, enabled: true, studentInsightTemplateId: true, classInsightTemplateId: true }, orderBy: [{ sortOrder: "asc" }] },
-            QuizActivity: { select: { id: true, title: true, description: true, status: true, sortOrder: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
-            ExplorationActivity: { select: { id: true, title: true, description: true, sortOrder: true, enabled: true }, orderBy: [{ sortOrder: "asc" }] },
+            QuizActivity: { select: { id: true, subProjectId: true, title: true, description: true, status: true, sortOrder: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
+            ExplorationActivity: { select: { id: true, title: true, description: true, htmlContent: true, enableSubmission: true, enableAiCompanion: true, aiCompanionPrompt: true, analysisPrompt: true, designPrompt: true, questionsJson: true, teachingAdvice: true, sortOrder: true, enabled: true }, orderBy: [{ sortOrder: "asc" }] },
+            ProjectSubmission: { orderBy: { sortOrder: "asc" } },
           },
         },
         assignments: true,

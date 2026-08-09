@@ -16,7 +16,37 @@ export async function GET(req: NextRequest) {
       orderBy: [{ enabled: "desc" }, { createdAt: "desc" }],
     });
 
-    return NextResponse.json(knowledgeBases);
+    // 反查该老师所有课堂，统计每个知识库被哪些课堂引用
+    let referencedByMap: Record<string, { id: string; title: string }[]> = {};
+    try {
+      const tasks = await prisma.learningTask.findMany({
+        where: { teacherId: String(payload.userId) },
+        select: { id: true, title: true, knowledgeBaseIds: true },
+      });
+      for (const task of tasks) {
+        if (!task.knowledgeBaseIds) continue;
+        let kbIds: string[] = [];
+        try {
+          const parsed = JSON.parse(task.knowledgeBaseIds);
+          if (Array.isArray(parsed)) kbIds = parsed.map(String);
+        } catch {
+          continue;
+        }
+        for (const kbId of kbIds) {
+          if (!referencedByMap[kbId]) referencedByMap[kbId] = [];
+          referencedByMap[kbId].push({ id: task.id, title: task.title });
+        }
+      }
+    } catch (err) {
+      console.error("Build referencedBy map error:", err);
+    }
+
+    const result = knowledgeBases.map((kb) => ({
+      ...kb,
+      referencedBy: referencedByMap[kb.id] || [],
+    }));
+
+    return NextResponse.json(result);
   } catch (error) {
     console.error("Get knowledge bases error:", error);
     const msg = error instanceof Error ? error.message : "服务器错误";
