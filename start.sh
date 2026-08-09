@@ -8,9 +8,28 @@ echo "  知识库显示被课堂引用并增加删除确认；修复导出文件
 echo "=========================================="
 echo ""
 
-# 0. 安装依赖（如缺失）
+# 0. 检测并执行升级（上传升级包后的自动升级）
+STAGING_DIR="../quickclass-upgrade-staging"
+PENDING_FILE="$STAGING_DIR/.upgrade-pending"
+if [ -f "$PENDING_FILE" ]; then
+    echo "[升级] 检测到升级包，正在执行自动升级..."
+    echo "  备份数据库..."
+    cp -f prisma/dev.db "$STAGING_DIR/dev.db.backup" 2>/dev/null || true
+    echo "  从 staging 覆盖文件..."
+    rsync -a --delete "$STAGING_DIR/" ./ --exclude=".upgrade-pending" --exclude="dev.db*" --exclude="node_modules/" --exclude=".next/" 2>/dev/null || \
+    cp -rf "$STAGING_DIR"/* ./ 2>/dev/null || true
+    echo "  清理升级标记..."
+    rm -rf "$STAGING_DIR"
+    echo "  重新安装依赖..."
+    npm install --no-audit --no-fund
+    echo "  重新构建..."
+    npm run build
+    echo "[升级] 升级完成！"
+fi
+
+# 1. 安装依赖（如缺失）
 if [ ! -d "node_modules/next" ]; then
-    echo "[0/4] 首次启动，正在安装依赖（约 2-5 分钟）..."
+    echo "[1/4] 首次启动，正在安装依赖（约 2-5 分钟）..."
     npm install --no-audit --no-fund
     if [ $? -ne 0 ]; then
         echo "[错误] 依赖安装失败！请检查网络"
@@ -22,7 +41,7 @@ if [ ! -f "prisma/dev.db" ] && [ -f "prisma/dev.db.initial" ]; then
     cp prisma/dev.db.initial prisma/dev.db
 fi
 
-echo "[1/4] 生成 Prisma 客户端..."
+echo "[2/4] 生成 Prisma 客户端..."
 npx prisma generate > /dev/null 2>&1 || {
     echo "  Prisma 生成失败，尝试从离线包安装..."
     if [ -d "offline-packages" ]; then
@@ -33,17 +52,17 @@ npx prisma generate > /dev/null 2>&1 || {
     fi
 }
 
-echo "[2/4] 初始化数据库（空数据库）..."
+echo "[3/4] 初始化数据库（空数据库）..."
 if [ ! -f "prisma/dev.db" ]; then
     npx prisma db push --skip-generate --accept-data-loss
 fi
 
-echo "[3/4] 构建生产版本..."
+echo "[4/4] 构建生产版本..."
 if [ ! -f ".next/BUILD_ID" ]; then
     npm run build
 fi
 
-echo "[4/4] 启动服务..."
+echo "[5/5] 启动服务..."
 echo ""
 
 IP=$(ifconfig 2>/dev/null | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
