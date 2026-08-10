@@ -8,7 +8,8 @@
     "start": "next start -H 0.0.0.0",
     "lint": "next lint",
     "pack": "node scripts/pack-dist.js",
-    "pack-upgrade": "node scripts/pack-upgrade.mjs",
+    
+    "pack-release": "node scripts/pack-release.mjs",
     "db:push": "prisma db push --skip-generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "npx tsx prisma/seed-full.ts",
