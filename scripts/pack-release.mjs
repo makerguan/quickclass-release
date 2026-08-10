@@ -147,15 +147,8 @@ echo.\r
 call npx next start -H 0.0.0.0 -p 3000\r
 pause`;
 
-// 写入 GBK 编码（Windows ANSI 兼容），配合 chcp 65001 显示中文
 const batPath = join(RELEASE_DIR, 'start.bat');
-try {
-  const gbkBuf = execSync('iconv -f UTF-8 -t GBK', { input: startBat });
-  writeFileSync(batPath, gbkBuf);
-} catch {
-  // fallback: 直接写 UTF-8
-  writeFileSync(batPath, startBat, 'utf-8');
-}
+writeFileSync(batPath, startBat, 'utf-8');
 console.log('  start.bat 已生成（GBK 编码，Windows 终端通过 chcp 65001 显示中文）');
 
 // ============================================================

@@ -4,42 +4,42 @@ cd /d "%~dp0"
 set "DATABASE_URL=file:./dev.db"
 
 echo ========================================
-echo   QuickClass Æô¶¯Æ÷ v2026.08.10-V2
-echo   Ê¹ÓÃÖ¸ÄÏ¼û Ê¹ÓÃÖ¸ÄÏ.md
+echo   QuickClass å¯åŠ¨å™¨ v2026.08.10-V2
+echo   ä½¿ç”¨æŒ‡å—è§ ä½¿ç”¨æŒ‡å—.md
 echo ========================================
 
-rem ¼ì²â²¢Ó¦ÓÃ´ı´¦ÀíµÄÉı¼¶
+rem æ£€æµ‹å¹¶åº”ç”¨å¾…å¤„ç†çš„å‡çº§
 if exist ".upgrade-pending" (
-    echo [Éı¼¶] ¼ì²âµ½´ı´¦ÀíµÄÉı¼¶£¬ÕıÔÚÓ¦ÓÃ...
-    echo   ÕıÔÚ±¸·İÊı¾İ¿â...
+    echo [å‡çº§] æ£€æµ‹åˆ°å¾…å¤„ç†çš„å‡çº§ï¼Œæ­£åœ¨åº”ç”¨...
+    echo   æ­£åœ¨å¤‡ä»½æ•°æ®åº“...
     if exist "prisma\dev.db" copy "prisma\dev.db" "..\quickclass-upgrade-staging\prisma\dev.db" >nul 2>&1
-    echo   ÕıÔÚ¸²¸ÇÎÄ¼ş...
+    echo   æ­£åœ¨è¦†ç›–æ–‡ä»¶...
     xcopy "..\quickclass-upgrade-staging" . /E /Y /Q >nul 2>&1
-    echo   ÕıÔÚÇåÀíÉı¼¶±ê¼Ç...
+    echo   æ­£åœ¨æ¸…ç†å‡çº§æ ‡è®°...
     del /F /Q ".upgrade-pending" >nul 2>&1
     rmdir /S /Q "..\quickclass-upgrade-staging" >nul 2>&1
-    echo   ÕıÔÚÖØĞÂ°²×°ÒÀÀµ...
+    echo   æ­£åœ¨é‡æ–°å®‰è£…ä¾èµ–...
     call npm install --no-audit --no-fund
-    echo   ÕıÔÚÖØĞÂ¹¹½¨...
+    echo   æ­£åœ¨é‡æ–°æ„å»º...
     call npm run build
-    echo [Éı¼¶] Íê³É£¡
+    echo [å‡çº§] å®Œæˆï¼
 )
 
-rem [1/5] °²×°ÒÀÀµ
+rem [1/5] å®‰è£…ä¾èµ–
 if not exist "node_modules\.package-lock.json" (
     if exist "node_modules" (
-        echo [1/5] ¼ì²âµ½ node_modules ²»ÍêÕû£¬ÕıÔÚÖØĞÂ°²×°ÒÀÀµ£¨2-5·ÖÖÓ£©...
+        echo [1/5] æ£€æµ‹åˆ° node_modules ä¸å®Œæ•´ï¼Œæ­£åœ¨é‡æ–°å®‰è£…ä¾èµ–ï¼ˆ2-5åˆ†é’Ÿï¼‰...
         rmdir /S /Q "node_modules" >nul 2>&1
     ) else (
-        echo [1/5] Ê×´ÎÔËĞĞ£¬ÕıÔÚ°²×°ÒÀÀµ£¨2-5·ÖÖÓ£©...
+        echo [1/5] é¦–æ¬¡è¿è¡Œï¼Œæ­£åœ¨å®‰è£…ä¾èµ–ï¼ˆ2-5åˆ†é’Ÿï¼‰...
     )
     call npm install --no-audit --no-fund
     if errorlevel 1 (
-        echo [´íÎó] °²×°ÒÀÀµÊ§°Ü£¬Çë¼ì²éÍøÂçÁ¬½Ó
+        echo [é”™è¯¯] å®‰è£…ä¾èµ–å¤±è´¥ï¼Œè¯·æ£€æŸ¥ç½‘ç»œè¿æ¥
         pause
         exit /b 1
     )
-    rem °²×°³É¹¦ºó±ê¼Ç£¬±ÜÃâÏÂ´ÎÖØ¸´¼ì²é
+    rem å®‰è£…æˆåŠŸåæ ‡è®°ï¼Œé¿å…ä¸‹æ¬¡é‡å¤æ£€æŸ¥
     copy nul "node_modules\.package-lock.json" >nul
 )
 
@@ -47,12 +47,12 @@ if not exist "prisma\dev.db" if exist "prisma\dev.db.initial" (
     copy "prisma\dev.db.initial" "prisma\dev.db" >nul
 )
 
-echo [2/5] ÕıÔÚÉú³É Prisma ¿Í»§¶Ë...
+echo [2/5] æ­£åœ¨ç”Ÿæˆ Prisma å®¢æˆ·ç«¯...
 call npx prisma generate
 if errorlevel 1 (
-    echo   [´íÎó] Prisma Éú³ÉÊ§°Ü£¬ÏêÏ¸´íÎó¼ûÉÏ·½
+    echo   [é”™è¯¯] Prisma ç”Ÿæˆå¤±è´¥ï¼Œè¯¦ç»†é”™è¯¯è§ä¸Šæ–¹
     if exist offline-packages (
-        echo   ÕıÔÚ³¢ÊÔÀëÏß°ü...
+        echo   æ­£åœ¨å°è¯•ç¦»çº¿åŒ…...
         for %%f in (offline-packages\*.tgz) do (
             call npm install "%%f" --no-save --offline 2>nul
         )
@@ -64,30 +64,30 @@ if errorlevel 1 (
     )
 )
 
-echo [3/5] ÕıÔÚ³õÊ¼»¯Êı¾İ¿â£¨¿Õ¿â£©...
+echo [3/5] æ­£åœ¨åˆå§‹åŒ–æ•°æ®åº“ï¼ˆç©ºåº“ï¼‰...
 if not exist "prisma\dev.db" (
     call npx prisma db push --skip-generate --accept-data-loss
 )
 
-echo [4/5] ÕıÔÚ¹¹½¨Éú²ú°æ±¾...
+echo [4/5] æ­£åœ¨æ„å»ºç”Ÿäº§ç‰ˆæœ¬...
 if not exist ".next\BUILD_ID" (
     call npm run build
 )
 
-echo [5/5] ÕıÔÚÆô¶¯·şÎñÆ÷...
+echo [5/5] æ­£åœ¨å¯åŠ¨æœåŠ¡å™¨...
 echo.
-rem »ñÈ¡±¾»úIP
+rem è·å–æœ¬æœºIP
 set QC_IP=localhost
 for /f "tokens=2 delims=: " %%a in ('ipconfig ^| findstr /c:"IPv4"') do set "QC_IP=%%a" ^& goto :got_ip
 :got_ip
 set QC_IP=%QC_IP: =%
-echo   ½ÌÊ¦¶Ë: http://%QC_IP%:3000
-echo   Ñ§Éú¶Ë: http://%QC_IP%:3000/student
+echo   æ•™å¸ˆç«¯: http://%QC_IP%:3000
+echo   å­¦ç”Ÿç«¯: http://%QC_IP%:3000/student
 echo.
-echo   [!] Ê×´ÎÊ¹ÓÃ£¿½øÈë½ÌÊ¦¶Ë×¢²á½ÌÊ¦ÕËºÅ¡£
-echo   £¨´Ë°æ±¾¸½´ø¿ÕÊı¾İ¿â£©
+echo   [!] é¦–æ¬¡ä½¿ç”¨ï¼Ÿè¿›å…¥æ•™å¸ˆç«¯æ³¨å†Œæ•™å¸ˆè´¦å·ã€‚
+echo   ï¼ˆæ­¤ç‰ˆæœ¬é™„å¸¦ç©ºæ•°æ®åº“ï¼‰
 echo.
-echo   °´ Ctrl+C Í£Ö¹·şÎñÆ÷¡£
+echo   æŒ‰ Ctrl+C åœæ­¢æœåŠ¡å™¨ã€‚
 echo.
 
 call npx next start -H 0.0.0.0 -p 3000
