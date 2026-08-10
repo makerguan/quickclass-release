@@ -40,15 +40,19 @@ if not exist "prisma\dev.db" if exist "prisma\dev.db.initial" (
 )
 
 echo [2/5] 正在生成 Prisma 客户端...
-call npx prisma generate >nul 2>&1
+call npx prisma generate
 if errorlevel 1 (
-    echo   Prisma 生成失败
+    echo   [错误] Prisma 生成失败，详细错误见上方
     if exist offline-packages (
         echo   正在尝试离线包...
         for %%f in (offline-packages\*.tgz) do (
             call npm install "%%f" --no-save --offline 2>nul
         )
         call npx prisma generate
+    )
+    if errorlevel 1 (
+        pause
+        exit /b 1
     )
 )
 
