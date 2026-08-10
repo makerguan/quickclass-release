@@ -3,33 +3,33 @@ cd /d "%~dp0"
 set "DATABASE_URL=file:./dev.db"
 
 echo ========================================
-echo   QuickClass Launcher v2026.08.10-V2
-echo   See quickstart.txt for changelog.
+echo   QuickClass 启动器 v2026.08.10-V2
+echo   更新日志见 quickstart.txt
 echo ========================================
 
-rem Detect and apply pending upgrade
+rem 检测并应用待处理的升级
 if exist ".upgrade-pending" (
-    echo [Upgrade] Pending upgrade detected, applying...
-    echo   Backing up database...
+    echo [升级] 检测到待处理的升级，正在应用...
+    echo   正在备份数据库...
     if exist "prisma\dev.db" copy "prisma\dev.db" "..\quickclass-upgrade-staging\prisma\dev.db" >nul 2>&1
-    echo   Overwriting files from staging...
+    echo   正在覆盖文件...
     xcopy "..\quickclass-upgrade-staging" . /E /Y /Q >nul 2>&1
-    echo   Cleaning upgrade marker...
+    echo   正在清理升级标记...
     del /F /Q ".upgrade-pending" >nul 2>&1
     rmdir /S /Q "..\quickclass-upgrade-staging" >nul 2>&1
-    echo   Reinstalling dependencies...
+    echo   正在重新安装依赖...
     call npm install --no-audit --no-fund
-    echo   Rebuilding...
+    echo   正在重新构建...
     call npm run build
-    echo [Upgrade] Done!
+    echo [升级] 完成！
 )
 
-rem [1/4] Install dependencies
+rem [1/5] 安装依赖
 if not exist "node_modules\next" (
-    echo [1/4] First run, installing dependencies (2-5 min)...
+    echo [1/5] 首次运行，正在安装依赖（2-5分钟）...
     call npm install --no-audit --no-fund
     if errorlevel 1 (
-        echo [Error] npm install failed, check your network
+        echo [错误] 安装依赖失败，请检查网络连接
         pause
         exit /b 1
     )
@@ -39,12 +39,12 @@ if not exist "prisma\dev.db" if exist "prisma\dev.db.initial" (
     copy "prisma\dev.db.initial" "prisma\dev.db" >nul
 )
 
-echo [2/4] Generating Prisma client...
+echo [2/5] 正在生成 Prisma 客户端...
 call npx prisma generate >nul 2>&1
 if errorlevel 1 (
-    echo   Prisma generate failed
+    echo   Prisma 生成失败
     if exist offline-packages (
-        echo   Trying offline packages...
+        echo   正在尝试离线包...
         for %%f in (offline-packages\*.tgz) do (
             call npm install "%%f" --no-save --offline 2>nul
         )
@@ -52,24 +52,24 @@ if errorlevel 1 (
     )
 )
 
-echo [3/4] Initializing database (empty)...
+echo [3/5] 正在初始化数据库（空库）...
 if not exist "prisma\dev.db" (
     call npx prisma db push --skip-generate --accept-data-loss
 )
 
-echo [4/4] Building production bundle...
+echo [4/5] 正在构建生产版本...
 if not exist ".next\BUILD_ID" (
     call npm run build
 )
 
-echo [5/5] Starting server...
+echo [5/5] 正在启动服务器...
 echo.
-echo   Teacher URL: http://localhost:3000
+echo   教师端地址: http://localhost:3000
 echo.
-echo   [!] First time? Register a teacher account at the URL above.
-echo   (This release ships with an empty database.)
+echo   [!] 首次使用？在上方地址注册教师账号。
+echo   （此版本附带空数据库）
 echo.
-echo   Press Ctrl+C to stop.
+echo   按 Ctrl+C 停止服务器。
 echo.
 
 call npx next start -H 0.0.0.0 -p 3000

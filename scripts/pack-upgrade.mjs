@@ -150,33 +150,33 @@ cd /d "%~dp0"\r
 set "DATABASE_URL=file:./dev.db"\r
 \r
 echo ========================================\r
-echo   QuickClass Launcher ${version}\r
-echo   See quickstart.txt for changelog.\r
+echo   QuickClass 启动器 ${version}\r
+echo   更新日志见 quickstart.txt\r
 echo ========================================\r
 \r
-rem Detect and apply pending upgrade\r
+rem 检测并应用待处理的升级\r
 if exist ".upgrade-pending" (\r
-    echo [Upgrade] Pending upgrade detected, applying...\r
-    echo   Backing up database...\r
+    echo [升级] 检测到待处理的升级，正在应用...\r
+    echo   正在备份数据库...\r
     if exist "prisma\\dev.db" copy "prisma\\dev.db" "..\\quickclass-upgrade-staging\\prisma\\dev.db" >nul 2>&1\r
-    echo   Overwriting files from staging...\r
+    echo   正在覆盖文件...\r
     xcopy "..\\quickclass-upgrade-staging" . /E /Y /Q >nul 2>&1\r
-    echo   Cleaning upgrade marker...\r
+    echo   正在清理升级标记...\r
     del /F /Q ".upgrade-pending" >nul 2>&1\r
     rmdir /S /Q "..\\quickclass-upgrade-staging" >nul 2>&1\r
-    echo   Reinstalling dependencies...\r
+    echo   正在重新安装依赖...\r
     call npm install --no-audit --no-fund\r
-    echo   Rebuilding...\r
+    echo   正在重新构建...\r
     call npm run build\r
-    echo [Upgrade] Done!\r
+    echo [升级] 完成！\r
 )\r
 \r
-rem [1/4] Install dependencies\r
+rem [1/5] 安装依赖\r
 if not exist "node_modules\\next" (\r
-    echo [1/4] First run, installing dependencies (2-5 min)...\r
+    echo [1/5] 首次运行，正在安装依赖（2-5分钟）...\r
     call npm install --no-audit --no-fund\r
     if errorlevel 1 (\r
-        echo [Error] npm install failed, check your network\r
+        echo [错误] 安装依赖失败，请检查网络连接\r
         pause\r
         exit /b 1\r
     )\r
@@ -186,12 +186,12 @@ if not exist "prisma\\dev.db" if exist "prisma\\dev.db.initial" (\r
     copy "prisma\\dev.db.initial" "prisma\\dev.db" >nul\r
 )\r
 \r
-echo [2/4] Generating Prisma client...\r
+echo [2/5] 正在生成 Prisma 客户端...\r
 call npx prisma generate >nul 2>&1\r
 if errorlevel 1 (\r
-    echo   Prisma generate failed\r
+    echo   Prisma 生成失败\r
     if exist offline-packages (\r
-        echo   Trying offline packages...\r
+        echo   正在尝试离线包...\r
         for %%f in (offline-packages\\*.tgz) do (\r
             call npm install "%%f" --no-save --offline 2>nul\r
         )\r
@@ -199,30 +199,39 @@ if errorlevel 1 (\r
     )\r
 )\r
 \r
-echo [3/4] Initializing database (empty)...\r
+echo [3/5] 正在初始化数据库（空库）...\r
 if not exist "prisma\\dev.db" (\r
     call npx prisma db push --skip-generate --accept-data-loss\r
 )\r
 \r
-echo [4/4] Building production bundle...\r
+echo [4/5] 正在构建生产版本...\r
 if not exist ".next\\BUILD_ID" (\r
     call npm run build\r
 )\r
 \r
-echo [5/5] Starting server...\r
+echo [5/5] 正在启动服务器...\r
 echo.\r
-echo   Teacher URL: http://localhost:3000\r
+echo   教师端地址: http://localhost:3000\r
 echo.\r
-echo   [!] First time? Register a teacher account at the URL above.\r
-echo   (This release ships with an empty database.)\r
+echo   [!] 首次使用？在上方地址注册教师账号。\r
+echo   （此版本附带空数据库）\r
 echo.\r
-echo   Press Ctrl+C to stop.\r
+echo   按 Ctrl+C 停止服务器。\r
 echo.\r
 \r
 call npx next start -H 0.0.0.0 -p 3000\r
 pause\r
 `;
-fs.writeFileSync(path.join(tmpDir, "start.bat"), startBat);
+// Write start.bat with GBK encoding (ANSI for Windows compatibility)
+const batPath = path.join(tmpDir, "start.bat");
+try {
+  // macOS/Linux: use iconv via stdin pipe
+  const gbkBuf = execSync('iconv -f UTF-8 -t GBK', { input: startBat });
+  fs.writeFileSync(batPath, gbkBuf);
+} catch {
+  // Windows fallback: write UTF-8 (Win10+ default code page 65001 can handle it)
+  fs.writeFileSync(batPath, startBat);
+}
 
 // --- stop.sh ---
 fs.writeFileSync(path.join(tmpDir, "stop.sh"), `#!/bin/bash

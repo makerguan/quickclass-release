@@ -65,9 +65,9 @@ set "BACKUP_FILE=%BACKUP_DIR%\dev-%CURRENT_VERSION%-%TIMESTAMP%.db"
 
 if exist "prisma\dev.db" (
     copy "prisma\dev.db" "%BACKUP_FILE%" >nul
-    echo   ✓ 数据库已备份到: %BACKUP_FILE%
+    echo   [OK] 数据库已备份到: %BACKUP_FILE%
 ) else (
-    echo   ⚠ 未找到数据库文件，跳过备份
+    echo   [!] 未找到数据库文件，跳过备份
 )
 
 echo.
@@ -77,7 +77,7 @@ REM 查找并停止 node 进程（端口 3000）
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr :3000 ^| findstr LISTENING') do (
     taskkill /f /pid %%a >nul 2>&1
 )
-echo   ✓ 服务已停止
+echo   [OK] 服务已停止
 
 echo.
 echo [3/6] 解压新版本...
@@ -100,7 +100,7 @@ if %errorlevel%==0 (
     )
 )
 
-echo   ✓ 已解压到临时目录
+echo   [OK] 已解压到临时目录
 
 echo.
 echo [4/6] 迁移数据库和配置...
@@ -108,13 +108,13 @@ echo [4/6] 迁移数据库和配置...
 REM 迁移数据库
 if exist "prisma\dev.db" (
     copy "prisma\dev.db" "%TEMP_DIR%\prisma\dev.db" >nul
-    echo   ✓ 数据库已迁移
+    echo   [OK] 数据库已迁移
 )
 
 REM 迁移环境变量
 if exist ".env.local" (
     copy ".env.local" "%TEMP_DIR%\.env.local" >nul
-    echo   ✓ 环境变量已迁移
+    echo   [OK] 环境变量已迁移
 )
 
 echo.
@@ -128,13 +128,13 @@ REM 备份旧版本目录
 set "OLD_DIR=%CURRENT_DIR%.old.%TIMESTAMP%"
 cd ..
 ren "%CURRENT_DIR%" "%OLD_DIR%"
-echo   ✓ 旧版本已备份到: %OLD_DIR%
+echo   [OK] 旧版本已备份到: %OLD_DIR%
 
 REM 移动新版本
 move "%TEMP_DIR%" "%CURRENT_DIR%" >nul
 cd "%CURRENT_DIR%"
 
-echo   ✓ 新版本已就位
+echo   [OK] 新版本已就位
 
 echo.
 echo [6/6] 升级完成!
