@@ -29,13 +29,20 @@ if [ -f "$PENDING_FILE" ]; then
 fi
 
 # 1. 安装依赖（如缺失）
-if [ ! -f "node_modules/next/package.json" ]; then
-    echo "[1/4] 首次启动，正在安装依赖（约 2-5 分钟）..."
+if [ ! -f "node_modules/.package-lock.json" ]; then
+    if [ -d "node_modules" ]; then
+        echo "[1/4] 检测到 node_modules 不完整，正在重新安装依赖（约 2-5 分钟）..."
+        rm -rf node_modules
+    else
+        echo "[1/4] 首次启动，正在安装依赖（约 2-5 分钟）..."
+    fi
     npm install --no-audit --no-fund
     if [ $? -ne 0 ]; then
         echo "[错误] 依赖安装失败！请检查网络"
         exit 1
     fi
+    # 安装成功后标记，避免下次重复检查
+    touch node_modules/.package-lock.json
 fi
 
 if [ ! -f "prisma/dev.db" ] && [ -f "prisma/dev.db.initial" ]; then

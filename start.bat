@@ -24,15 +24,22 @@ if exist ".upgrade-pending" (
     echo [升级] 完成！
 )
 
-rem [1/5] 安装依赖（检查 next 的 package.json 确保安装完整）
-if not exist "node_modules\next\package.json" (
-    echo [1/5] 首次运行，正在安装依赖（2-5分钟）...
+rem [1/5] 安装依赖
+if not exist "node_modules\.package-lock.json" (
+    if exist "node_modules" (
+        echo [1/5] 检测到 node_modules 不完整，正在重新安装依赖（2-5分钟）...
+        rmdir /S /Q "node_modules" >nul 2>&1
+    ) else (
+        echo [1/5] 首次运行，正在安装依赖（2-5分钟）...
+    )
     call npm install --no-audit --no-fund
     if errorlevel 1 (
         echo [错误] 安装依赖失败，请检查网络连接
         pause
         exit /b 1
     )
+    rem 安装成功后标记，避免下次重复检查
+    copy nul "node_modules\.package-lock.json" >nul
 )
 
 if not exist "prisma\dev.db" if exist "prisma\dev.db.initial" (
