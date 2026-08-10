@@ -29,7 +29,7 @@ if [ -f "$PENDING_FILE" ]; then
 fi
 
 # 1. 安装依赖（如缺失）
-if [ ! -d "node_modules/next" ]; then
+if [ ! -f "node_modules/next/package.json" ]; then
     echo "[1/4] 首次启动，正在安装依赖（约 2-5 分钟）..."
     npm install --no-audit --no-fund
     if [ $? -ne 0 ]; then

@@ -24,8 +24,8 @@ if exist ".upgrade-pending" (
     echo [升级] 完成！
 )
 
-rem [1/5] 安装依赖
-if not exist "node_modules\next" (
+rem [1/5] 安装依赖（检查 next 的 package.json 确保安装完整）
+if not exist "node_modules\next\package.json" (
     echo [1/5] 首次运行，正在安装依赖（2-5分钟）...
     call npm install --no-audit --no-fund
     if errorlevel 1 (
