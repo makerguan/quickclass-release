@@ -1,11 +1,12 @@
 #!/usr/bin/env node
 /**
- * 打包升级包（不含 node_modules、.next、dev.db）
+ * 打包独立安装包（也是升级包）
  * 
  * 用法: node scripts/pack-upgrade.mjs
  * 
  * 产物: quickclass-upgrade-v{version}.zip
- * 用户下载这个 zip，在设置页面上传即可升级
+ * 这个包既是独立安装包（解压即跑），也是升级包（上传自动升级）
+ * 不含 node_modules 和 .next（跨平台兼容），首次启动时自动构建
  */
 
 import fs from "fs";
@@ -89,7 +90,8 @@ if (!hasBuild) {
 }
 
 // 3. 打包
-// 排除: node_modules, .next, prisma/dev.db, prisma/dev.db-journal, .DS_Store, .upgrade-pending
+// 排除: node_modules, .next（跨平台兼容）, prisma/dev.db, .DS_Store, .upgrade-pending
+// 用户首次启动时 start.sh/start.bat 自动 npm install + npm run build
 const excludes = [
   "node_modules/*",
   ".next/*",
