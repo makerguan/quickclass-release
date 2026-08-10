@@ -3,7 +3,7 @@ cd /d "%~dp0"
 set "DATABASE_URL=file:./dev.db"
 
 echo ========================================
-echo   QuickClass Launcher v
+echo   QuickClass Launcher v2026.08.10-V2
 echo   See quickstart.txt for changelog.
 echo ========================================
 
