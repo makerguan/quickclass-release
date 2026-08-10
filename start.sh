@@ -51,13 +51,19 @@ echo "[2/4] 正在生成 Prisma 客户端..."
 npx prisma generate
 
 # 3. 初始化数据库（空库）
-echo "[3/4] 正在初始化数据库..."
+echo "[3/5] 正在初始化数据库..."
 if [ ! -f "prisma/dev.db" ]; then
     npx prisma db push --skip-generate --accept-data-loss
 fi
 
-# 4. 构建并启动
-echo "[4/4] 正在启动服务器..."
+# 4. 构建生产版本
+echo "[4/5] 正在构建生产版本..."
+if [ ! -f ".next/BUILD_ID" ]; then
+    npm run build
+fi
+
+# 5. 启动
+echo "[5/5] 正在启动服务器..."
 echo ""
 echo "  教师端地址: http://localhost:3000"
 echo ""
