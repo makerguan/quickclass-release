@@ -130,9 +130,15 @@ if not exist ".next\\BUILD_ID" (\r
 \r
 echo [5/5] 正在启动服务器...\r
 echo.\r
-echo   教师端地址: http://localhost:3000\r
+rem 获取本机IP\r
+set QC_IP=localhost\r
+for /f "tokens=2 delims=: " %%a in ('ipconfig ^| findstr /c:"IPv4"') do set "QC_IP=%%a" ^& goto :got_ip\r
+:got_ip\r
+set QC_IP=%QC_IP: =%\r
+echo   教师端: http://%QC_IP%:3000\r
+echo   学生端: http://%QC_IP%:3000/student\r
 echo.\r
-echo   [!] 首次使用？在上方地址注册教师账号。\r
+echo   [!] 首次使用？进入教师端注册教师账号。\r
 echo   （此版本附带空数据库）\r
 echo.\r
 echo   按 Ctrl+C 停止服务器。\r
@@ -191,10 +197,10 @@ fi
 # 1. 安装依赖（如缺失）
 if [ ! -f "node_modules/.package-lock.json" ]; then
     if [ -d "node_modules" ]; then
-        echo "[1/4] 检测到 node_modules 不完整，正在重新安装依赖（约 2-5 分钟）..."
+        echo "[1/5] 检测到 node_modules 不完整，正在重新安装依赖（约 2-5 分钟）..."
         rm -rf node_modules
     else
-        echo "[1/4] 首次启动，正在安装依赖（约 2-5 分钟）..."
+        echo "[1/5] 首次启动，正在安装依赖（约 2-5 分钟）..."
     fi
     npm install --no-audit --no-fund
     if [ $? -ne 0 ]; then
@@ -206,7 +212,7 @@ if [ ! -f "node_modules/.package-lock.json" ]; then
 fi
 
 # 2. 生成 Prisma 客户端
-echo "[2/4] 正在生成 Prisma 客户端..."
+echo "[2/5] 正在生成 Prisma 客户端..."
 npx prisma generate
 
 # 3. 初始化数据库（空库）
@@ -224,9 +230,14 @@ fi
 # 5. 启动
 echo "[5/5] 正在启动服务器..."
 echo ""
-echo "  教师端地址: http://localhost:3000"
+
+IP=$(ifconfig 2>/dev/null | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
+IP=\${IP:-localhost}
+
+echo "  教师端: http://$IP:3000"
+echo "  学生端: http://$IP:3000/student"
 echo ""
-echo "  [!] 首次使用？在上方地址注册教师账号。"
+echo "  [!] 首次使用？进入教师端注册教师账号。"
 echo "  （此版本附带空数据库）"
 echo ""
 echo "  按 Ctrl+C 停止服务器。"

@@ -76,9 +76,15 @@ if not exist ".next\BUILD_ID" (
 
 echo [5/5] 正在启动服务器...
 echo.
-echo   教师端地址: http://localhost:3000
+rem 获取本机IP
+set QC_IP=localhost
+for /f "tokens=2 delims=: " %%a in ('ipconfig ^| findstr /c:"IPv4"') do set "QC_IP=%%a" ^& goto :got_ip
+:got_ip
+set QC_IP=%QC_IP: =%
+echo   教师端: http://%QC_IP%:3000
+echo   学生端: http://%QC_IP%:3000/student
 echo.
-echo   [!] 首次使用？在上方地址注册教师账号。
+echo   [!] 首次使用？进入教师端注册教师账号。
 echo   （此版本附带空数据库）
 echo.
 echo   按 Ctrl+C 停止服务器。
