@@ -58,3 +58,7 @@ prisma/dev.db-journal
 
 # 开发文档（秘密，不同步到测试/安装包，不推送到 GitHub）
 README.md
+
+# 不跟踪分发目录（各自有独立仓库自管）
+dist-test/
+跨平台安装包/

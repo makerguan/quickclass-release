@@ -1,0 +1,6 @@
+{
+  "version": "v2026.08.09-V3",
+  "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
+  "changelog": "新建作业支持导入题目（JSON），可与AI生成混合使用",
+  "releaseDate": "2026-08-09"
+}

@@ -1,0 +1,6 @@
+{
+  "version": "v2026.08.10-V2",
+  "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
+  "changelog": "知识库显示被课堂引用并增加删除确认；修复导出文件名中文丢失；修复导入课堂后知识库名称不显示需刷新的问题",
+  "releaseDate": "2026-08-10"
+}
