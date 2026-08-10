@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button, Input, MessagePlugin } from "tdesign-react";
 
@@ -12,6 +12,14 @@ export default function RegisterForm() {
   const [recoveryKey, setRecoveryKey] = useState("");
   const [phoneForKey, setPhoneForKey] = useState("");
   const [showImport, setShowImport] = useState(false);
+
+  // 用 ref 直接从 DOM 读值，避开 tdesign onChange 在生产构建中的时序问题
+  const emailRef = useRef<HTMLInputElement>(null);
+  const phoneRef = useRef<HTMLInputElement>(null);
+  const nameRef = useRef<HTMLInputElement>(null);
+  const schoolRef = useRef<HTMLInputElement>(null);
+  const passwordRef = useRef<HTMLInputElement>(null);
+  const confirmPasswordRef = useRef<HTMLInputElement>(null);
 
   const [form, setForm] = useState({
     name: "",
@@ -38,16 +46,24 @@ export default function RegisterForm() {
   };
 
   const handleSubmit = async () => {
-    if (!form.name) { MessagePlugin.error("请输入姓名"); return; }
-    if (!validatePhone(form.phone)) { MessagePlugin.error("请输入正确的手机号"); return; }
-    if (!form.email) { MessagePlugin.error("请输入邮箱"); return; }
-    if (!form.school) { MessagePlugin.error("请输入学校/机构"); return; }
-    if (!validateSchool(form.school)) {
+    // 用 ref 直接从 DOM 读取值，确保获取到用户实际输入
+    const name = nameRef.current?.value || form.name;
+    const phone = phoneRef.current?.value || form.phone;
+    const email = emailRef.current?.value || form.email;
+    const school = schoolRef.current?.value || form.school;
+    const password = passwordRef.current?.value || form.password;
+    const confirmPassword = confirmPasswordRef.current?.value || form.confirmPassword;
+
+    if (!name) { MessagePlugin.error("请输入姓名"); return; }
+    if (!validatePhone(phone)) { MessagePlugin.error("请输入正确的手机号"); return; }
+    if (!email) { MessagePlugin.error("请输入邮箱"); return; }
+    if (!school) { MessagePlugin.error("请输入学校/机构"); return; }
+    if (!validateSchool(school)) {
       MessagePlugin.error("学校名称需包含'学'、'园'、'院'、'中心'等关键词");
       return;
     }
-    if (!form.password || form.password.length < 6) { MessagePlugin.error("密码至少6位"); return; }
-    if (form.password !== form.confirmPassword) { MessagePlugin.error("两次密码不一致"); return; }
+    if (!password || password.length < 6) { MessagePlugin.error("密码至少6位"); return; }
+    if (password !== confirmPassword) { MessagePlugin.error("两次密码不一致"); return; }
 
     setLoading(true);
     try {
@@ -55,11 +71,11 @@ export default function RegisterForm() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          phone: form.phone,
-          email: form.email,
-          password: form.password,
-          name: form.name,
-          school: form.school,
+          phone,
+          email,
+          password,
+          name,
+          school,
           recoveryQuestion: form.recoveryQuestion || null,
           recoveryAnswer: form.recoveryAnswer || null,
         }),
@@ -158,21 +174,27 @@ export default function RegisterForm() {
           <div className="space-y-2.5">
             <div className="grid grid-cols-2 gap-2.5">
               <Input placeholder="* 手机号" size="medium" className={inputCls}
+                inputRef={phoneRef}
                 onChange={(v) => handleChange("phone", v as string)} />
               <Input placeholder="* 邮箱" size="medium" className={inputCls}
+                inputRef={emailRef}
                 onChange={(v) => handleChange("email", v as string)} />
             </div>
             <div className="grid grid-cols-2 gap-2.5">
               <Input placeholder="* 姓名" size="medium" className={inputCls}
+                inputRef={nameRef}
                 onChange={(v) => handleChange("name", v as string)} />
               <Input placeholder="* 学校/机构" size="medium" className={inputCls}
+                inputRef={schoolRef}
                 onChange={(v) => handleChange("school", v as string)} />
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
               <Input placeholder="* 密码" type="password" size="medium" className={inputCls}
+                inputRef={passwordRef}
                 onChange={(v) => handleChange("password", v as string)} />
               <Input placeholder="* 确认密码" type="password" size="medium" className={inputCls}
+                inputRef={confirmPasswordRef}
                 onChange={(v) => handleChange("confirmPassword", v as string)} />
             </div>
 

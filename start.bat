@@ -9,15 +9,15 @@ echo   知识库显示被课堂引用并增加删除确认；修复导出文件�
 echo ========================================
 
 rem 检测并执行升级（上传升级包后的自动升级）
-set "STAGING_DIR=..\quickclass-upgrade-staging"
-if exist "%STAGING_DIR%\.upgrade-pending" (
+if exist ".upgrade-pending" (
     echo [升级] 检测到升级包，正在执行自动升级...
     echo   备份数据库...
-    if exist "prisma\dev.db" copy "prisma\dev.db" "%STAGING_DIR%\dev.db.backup" >nul
+    if exist "prisma\dev.db" copy "prisma\dev.db" "..\quickclass-upgrade-staging\prisma\dev.db" >nul 2>&1
     echo   从 staging 覆盖文件...
-    xcopy "%STAGING_DIR%" . /E /Y /Q >nul 2>&1
+    xcopy "..\quickclass-upgrade-staging" . /E /Y /Q >nul 2>&1
     echo   清理升级标记...
-    rmdir /S /Q "%STAGING_DIR%" >nul 2>&1
+    del /F /Q ".upgrade-pending" >nul 2>&1
+    rmdir /S /Q "..\quickclass-upgrade-staging" >nul 2>&1
     echo   重新安装依赖...
     call npm install --no-audit --no-fund
     echo   重新构建...

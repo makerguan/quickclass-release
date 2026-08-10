@@ -61,6 +61,11 @@ export default function TeacherSettingsPage() {
   const [updateChangelog, setUpdateChangelog] = useState("");
   const [downloadUrl, setDownloadUrl] = useState("");
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  const [versionCheckResult, setVersionCheckResult] = useState<{
+    type: "new" | "latest" | "current" | "error";
+    version?: string;
+    message: string;
+  } | null>(null);
 
   // 学情分析约束配置
   const [requireStarRating, setRequireStarRating] = useState(false);
@@ -126,6 +131,13 @@ export default function TeacherSettingsPage() {
                   setLatestVersion(data.latest);
                   setUpdateChangelog(data.changelog || "");
                   setDownloadUrl(data.downloadUrl || "");
+                  setVersionCheckResult({ type: "new", version: data.latest, message: `发现新版本 ${data.latest}` });
+                } else if (data.latest && data.latest === data.current) {
+                  setUpdateAvailable(false);
+                  setVersionCheckResult({ type: "latest", version: data.latest, message: `发现最新版本 ${data.latest}` });
+                } else {
+                  setUpdateAvailable(false);
+                  setVersionCheckResult({ type: "current", version: data.current, message: "已是最新版本" });
                 }
                 return;
               } catch {}
@@ -135,6 +147,7 @@ export default function TeacherSettingsPage() {
       }
 
       setCheckingUpdate(true);
+      setVersionCheckResult(null);
       const res = await fetch("/api/version/check", { signal: AbortSignal.timeout(6000) });
       if (res.ok) {
         const data = await res.json();
@@ -145,12 +158,19 @@ export default function TeacherSettingsPage() {
           setLatestVersion(data.latest);
           setUpdateChangelog(data.changelog || "");
           setDownloadUrl(data.downloadUrl || "");
+          setVersionCheckResult({ type: "new", version: data.latest, message: `发现新版本 ${data.latest}` });
+        } else if (data.latest && data.latest === data.current) {
+          setUpdateAvailable(false);
+          setVersionCheckResult({ type: "latest", version: data.latest, message: `发现最新版本 ${data.latest}` });
         } else {
           setUpdateAvailable(false);
+          setVersionCheckResult({ type: "current", version: data.current, message: "已是最新版本" });
         }
+      } else {
+        setVersionCheckResult({ type: "error", message: "版本检查失败，请稍后重试" });
       }
     } catch {
-      // 检查失败，静默忽略
+      setVersionCheckResult({ type: "error", message: "版本检查失败，请检查网络连接" });
     } finally {
       setCheckingUpdate(false);
     }
@@ -1362,6 +1382,66 @@ export default function TeacherSettingsPage() {
               </Button>
             </div>
 
+            {/* 版本检查结果 */}
+            {versionCheckResult && !upgradeResult && (
+              <div className={`mb-4 p-3 rounded-lg border ${
+                versionCheckResult.type === "new"
+                  ? "bg-[#EDF5FF] border-[#0052D9]/20"
+                  : versionCheckResult.type === "error"
+                  ? "bg-[#FFF7ED] border-[#ED7B2F]/20"
+                  : "bg-[#F5F7FA] border-[#E3E5E7]"
+              }`}>
+                <div className="flex items-start gap-3">
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
+                    versionCheckResult.type === "new"
+                      ? "bg-[#0052D9]"
+                      : versionCheckResult.type === "error"
+                      ? "bg-[#ED7B2F]"
+                      : "bg-[#63666F]"
+                  }`}>
+                    {versionCheckResult.type === "new" ? (
+                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+                      </svg>
+                    ) : (
+                      <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                      </svg>
+                    )}
+                  </div>
+                  <div className="flex-1">
+                    <p className={`text-sm font-medium ${
+                      versionCheckResult.type === "new"
+                        ? "text-[#0052D9]"
+                        : versionCheckResult.type === "error"
+                        ? "text-[#ED7B2F]"
+                        : "text-[#63666F]"
+                    }`}>
+                      {versionCheckResult.message}
+                    </p>
+                    {versionCheckResult.type === "new" && updateChangelog && (
+                      <p className="text-xs text-[#63666F] mt-0.5">{updateChangelog}</p>
+                    )}
+                    {versionCheckResult.type === "new" && (
+                      <div className="mt-2 flex items-center gap-2">
+                        {downloadUrl ? (
+                          <Button
+                            size="small"
+                            theme="primary"
+                            onClick={() => window.open(downloadUrl, "_blank")}
+                          >
+                            去下载升级包
+                          </Button>
+                        ) : (
+                          <p className="text-xs text-[#63666F]">请下载最新升级包，回到此处上传安装</p>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            )}
+
             {upgradeResult ? (
               upgradeResult.success ? (
                 <div className="p-4 rounded-xl bg-[#ECFDF5] border border-[#00A870]/20">
@@ -1387,16 +1467,32 @@ export default function TeacherSettingsPage() {
                         </div>
                       )}
                       <p className="text-xs text-[#63666F] mt-1.5">{upgradeResult.message}</p>
+                      <div className="mt-3 bg-[#F5F7FA] rounded-lg p-3 border border-[#E3E5E7]">
+                        <p className="text-xs font-medium text-[#2C2D30] mb-2">重启服务步骤</p>
+                        <div className="space-y-2 text-xs text-[#63666F]">
+                          <div className="flex items-start gap-2">
+                            <span className="w-5 h-5 rounded bg-[#0052D9] text-white flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">M</span>
+                            <div>
+                              <span className="font-medium text-[#2C2D30]">macOS 用户：</span>
+                              <div className="mt-1 space-y-1">
+                                <p><span className="font-medium">方法一（如果黑色命令行窗口还在运行）：</span>切换到运行 QuickClass 的黑色命令行窗口，按 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">Ctrl + C</code> 停止服务，然后输入 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">bash start.sh</code> 按回车重新启动</p>
+                                <p><span className="font-medium">方法二（如果黑色命令行窗口已关闭）：</span>打开「终端」应用，输入 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">cd </code>（注意后面有空格），将 QuickClass 文件夹拖入终端窗口，按回车，然后输入 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">bash start.sh</code> 按回车</p>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-start gap-2">
+                            <span className="w-5 h-5 rounded bg-[#0052D9] text-white flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">W</span>
+                            <div>
+                              <span className="font-medium text-[#2C2D30]">Windows 用户：</span>
+                              <div className="mt-1 space-y-1">
+                                <p><span className="font-medium">方法一（如果黑色命令行窗口还在运行）：</span>切换到运行 QuickClass 的黑色命令行窗口，按 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">Ctrl + C</code>，再按 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">Y</code> 确认停止服务，然后输入 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">start.bat</code> 按回车重新启动</p>
+                                <p><span className="font-medium">方法二（如果黑色命令行窗口已关闭）：</span>打开 QuickClass 文件夹，双击 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">start.bat</code></p>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
                       <div className="mt-3 flex gap-2">
-                        <Button
-                          size="small"
-                          theme="primary"
-                          onClick={() => {
-                            MessagePlugin.info("请手动运行 start.sh 或 start.bat 重启服务");
-                          }}
-                        >
-                          如何重启
-                        </Button>
                         <Button
                           size="small"
                           variant="outline"
@@ -1439,39 +1535,6 @@ export default function TeacherSettingsPage() {
               )
             ) : (
               <div>
-                {updateAvailable && (
-                  <div className="mb-4 p-3 rounded-lg bg-[#EDF5FF] border border-[#0052D9]/20">
-                    <div className="flex items-start gap-3">
-                      <div className="w-5 h-5 rounded-full bg-[#0052D9] flex items-center justify-center flex-shrink-0 mt-0.5">
-                        <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
-                        </svg>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium text-[#0052D9]">
-                          发现新版本 {latestVersion}
-                        </p>
-                        {updateChangelog && (
-                          <p className="text-xs text-[#63666F] mt-0.5">{updateChangelog}</p>
-                        )}
-                        <div className="mt-2 flex items-center gap-2">
-                          {downloadUrl ? (
-                            <Button
-                              size="small"
-                              theme="primary"
-                              onClick={() => window.open(downloadUrl, "_blank")}
-                            >
-                              去下载升级包
-                            </Button>
-                          ) : (
-                            <p className="text-xs text-[#63666F]">请下载最新升级包，回到此处上传安装</p>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 <p className="text-sm text-[#63666F] mb-4">
                   下载最新升级包后，在此处上传并安装。重启服务后自动完成升级，数据库和配置会自动保留。
                 </p>

@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import fs from "fs";
+import path from "path";
 
 // 最新版本信息文件地址（存放在 Gitee 仓库中）
 const LATEST_VERSION_URL =
@@ -10,14 +12,15 @@ const LATEST_VERSION_URL =
  */
 export async function GET() {
   try {
-    // 1. 读取当前版本
-    const versionRes = await fetch(
-      `http://localhost:${process.env.PORT || 3000}/api/version`
-    ).catch(() => null);
+    // 1. 直接读取本地版本号（避免通过 HTTP 请求自身）
+    const versionPath = path.join(process.cwd(), "VERSION.md");
     let currentVersion = "unknown";
-    if (versionRes?.ok) {
-      const data = await versionRes.json();
-      currentVersion = data.version || "unknown";
+    if (fs.existsSync(versionPath)) {
+      const content = fs.readFileSync(versionPath, "utf-8");
+      const versionMatch = content.match(/当前版本：\*\*(v[\d.]+(?:-[\w]+)?)\*\*/);
+      if (versionMatch) {
+        currentVersion = versionMatch[1];
+      }
     }
 
     // 2. 拉取最新版本信息
@@ -61,7 +64,12 @@ export async function GET() {
  * 比较版本号，返回 1 表示 v1 > v2，-1 表示 v1 < v2，0 表示相等
  */
 function compareVersions(v1: string, v2: string): number {
-  const clean = (v: string) => v.replace(/^v/, "").replace(/-/g, ".");
+  // 如果没有小版本号（如 -V2），默认补上 -V1
+  const normalize = (v: string) => {
+    const cleaned = v.replace(/^v/, "");
+    return cleaned.includes("-") ? cleaned : `${cleaned}-V1`;
+  };
+  const clean = (v: string) => normalize(v).replace(/-/g, ".");
   const parts1 = clean(v1).split(".").map(Number);
   const parts2 = clean(v2).split(".").map(Number);
   const len = Math.max(parts1.length, parts2.length);

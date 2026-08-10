@@ -9,16 +9,17 @@ echo "=========================================="
 echo ""
 
 # 0. 检测并执行升级（上传升级包后的自动升级）
-STAGING_DIR="../quickclass-upgrade-staging"
-PENDING_FILE="$STAGING_DIR/.upgrade-pending"
+PENDING_FILE=".upgrade-pending"
 if [ -f "$PENDING_FILE" ]; then
     echo "[升级] 检测到升级包，正在执行自动升级..."
+    STAGING_DIR=$(python3 -c "import json; print(json.load(open('$PENDING_FILE')).get('stagingDir',''))" 2>/dev/null || echo "../quickclass-upgrade-staging")
     echo "  备份数据库..."
-    cp -f prisma/dev.db "$STAGING_DIR/dev.db.backup" 2>/dev/null || true
+    cp -f prisma/dev.db "$STAGING_DIR/prisma/dev.db" 2>/dev/null || true
     echo "  从 staging 覆盖文件..."
-    rsync -a --delete "$STAGING_DIR/" ./ --exclude=".upgrade-pending" --exclude="dev.db*" --exclude="node_modules/" --exclude=".next/" 2>/dev/null || \
+    rsync -a --delete "$STAGING_DIR/" ./ --exclude=".upgrade-pending" --exclude="node_modules/" --exclude=".next/" 2>/dev/null || \
     cp -rf "$STAGING_DIR"/* ./ 2>/dev/null || true
     echo "  清理升级标记..."
+    rm -f "$PENDING_FILE"
     rm -rf "$STAGING_DIR"
     echo "  重新安装依赖..."
     npm install --no-audit --no-fund

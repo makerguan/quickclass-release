@@ -55,3 +55,6 @@ prisma/dev.db-journal
 
 # test artifacts
 .playwright-cli/
+
+# 开发文档（秘密，不同步到测试/安装包，不推送到 GitHub）
+README.md
