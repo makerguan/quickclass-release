@@ -43,6 +43,13 @@ export default function RegisterForm() {
 
   const handleChange = (key: string, value: string) => {
     setForm(prev => ({ ...prev, [key]: value }));
+    // 同步写入 ref，确保 production build 中 handleSubmit 能读到值（TDesign inputRef 在生产构建中有延迟问题）
+    const refMap: Record<string, React.RefObject<HTMLInputElement | null>> = {
+      email: emailRef, phone: phoneRef, name: nameRef,
+      school: schoolRef, password: passwordRef, confirmPassword: confirmPasswordRef,
+    };
+    const ref = refMap[key];
+    if (ref && ref.current) ref.current.value = value;
   };
 
   const handleSubmit = async () => {
