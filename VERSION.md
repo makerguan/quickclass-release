@@ -1,6 +1,6 @@
 # QuickClass 版本说明
 
-当前版本：**v2026.08.10-V2**
+当前版本：**v2026.08.11**
 
 ## 版本号规则
 
@@ -11,6 +11,19 @@
 - `v2026.07.23-rc1` - 候选版本
 
 ## 更新日志
+
+### v2026.08.11
+
+**修复问题**
+- 注册表单邮箱校验失败（TDesign inputRef production build 延迟，改为 onChange 同步写入 ref）
+- start.bat 中文乱码（改为 UTF-8 编码 + chcp 65001 保证中文显示）
+- start.bat ipconfig 解析 IP 错误（delims 多加了空格导致取到 Address 而非 IP）
+
+**功能增强**
+- 启动脚本显示本机 IP 地址（替代 localhost），同时显示教师端和学生端入口
+- 构建步骤补全（start.sh 缺少 npm run build 导致 no-build-id 错误）
+
+---
 
 ### v2026.08.10-V2
 

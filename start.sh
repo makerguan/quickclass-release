@@ -1,6 +1,6 @@
 #!/bin/bash
 # QuickClass 启动脚本 (macOS/Linux)
-# QuickClass 启动器 v2026.08.10-V2
+# QuickClass 启动器 v2026.08.11
 
 set -e
 
@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 export DATABASE_URL="file:./dev.db"
 
 echo "========================================"
-echo "  QuickClass 启动器 v2026.08.10-V2"
+echo "  QuickClass 启动器 v2026.08.11"
 echo "  使用指南见 使用指南.md"
 echo "========================================"
 
