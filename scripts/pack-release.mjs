@@ -132,7 +132,7 @@ echo [5/5] 正在启动服务器...\r
 echo.\r
 rem 获取本机IP\r
 set QC_IP=localhost\r
-for /f "tokens=2 delims=: " %%a in ('ipconfig ^| findstr /c:"IPv4"') do set "QC_IP=%%a" ^& goto :got_ip\r
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do set "QC_IP=%%a" ^& goto :got_ip\r
 :got_ip\r
 set QC_IP=%QC_IP: =%\r
 echo   教师端: http://%QC_IP%:3000\r
@@ -149,7 +149,7 @@ pause`;
 
 const batPath = join(RELEASE_DIR, 'start.bat');
 writeFileSync(batPath, startBat, 'utf-8');
-console.log('  start.bat 已生成（GBK 编码，Windows 终端通过 chcp 65001 显示中文）');
+console.log('  start.bat 已生成（UTF-8 + CRLF，chcp 65001 保证中文显示）');
 
 // ============================================================
 // 2. 生成 start.sh

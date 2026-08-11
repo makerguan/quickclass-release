@@ -78,7 +78,7 @@ echo [5/5] 正在启动服务器...
 echo.
 rem 获取本机IP
 set QC_IP=localhost
-for /f "tokens=2 delims=: " %%a in ('ipconfig ^| findstr /c:"IPv4"') do set "QC_IP=%%a" ^& goto :got_ip
+for /f "tokens=2 delims=:" %%a in ('ipconfig ^| findstr /c:"IPv4"') do set "QC_IP=%%a" ^& goto :got_ip
 :got_ip
 set QC_IP=%QC_IP: =%
 echo   教师端: http://%QC_IP%:3000
