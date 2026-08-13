@@ -20,9 +20,9 @@ export async function GET(req: NextRequest) {
           include: {
             classInsightTemplate: { select: { id: true, name: true, type: true } },
             studentInsightTemplate: { select: { id: true, name: true, type: true } },
-            PresetConversation: { select: { id: true, title: true, description: true, systemPrompt: true, analysisPrompt: true, classAnalysisPrompt: true, sortOrder: true, enabled: true, studentInsightTemplateId: true, classInsightTemplateId: true }, orderBy: [{ sortOrder: "asc" }] },
+            PresetConversation: { select: { id: true, title: true, description: true, sortOrder: true, enabled: true, studentInsightTemplateId: true, classInsightTemplateId: true }, orderBy: [{ sortOrder: "asc" }] },
             QuizActivity: { select: { id: true, subProjectId: true, title: true, description: true, status: true, sortOrder: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
-            ExplorationActivity: { select: { id: true, title: true, description: true, htmlContent: true, enableSubmission: true, enableAiCompanion: true, aiCompanionPrompt: true, analysisPrompt: true, designPrompt: true, questionsJson: true, teachingAdvice: true, sortOrder: true, enabled: true }, orderBy: [{ sortOrder: "asc" }] },
+            ExplorationActivity: { select: { id: true, title: true, description: true, enableSubmission: true, enableAiCompanion: true, aiCompanionPrompt: true, analysisPrompt: true, designPrompt: true, sortOrder: true, enabled: true }, orderBy: [{ sortOrder: "asc" }] },
             ProjectSubmission: { orderBy: { sortOrder: "asc" } },
           },
           orderBy: { sortOrder: "asc" },
@@ -180,9 +180,9 @@ export async function POST(req: NextRequest) {
           include: {
             studentInsightTemplate: { select: { id: true, name: true, type: true } },
             classInsightTemplate: { select: { id: true, name: true, type: true } },
-            PresetConversation: { select: { id: true, title: true, description: true, systemPrompt: true, analysisPrompt: true, classAnalysisPrompt: true, sortOrder: true, enabled: true, studentInsightTemplateId: true, classInsightTemplateId: true }, orderBy: [{ sortOrder: "asc" }] },
+            PresetConversation: { select: { id: true, title: true, description: true, sortOrder: true, enabled: true, studentInsightTemplateId: true, classInsightTemplateId: true }, orderBy: [{ sortOrder: "asc" }] },
             QuizActivity: { select: { id: true, subProjectId: true, title: true, description: true, status: true, sortOrder: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
-            ExplorationActivity: { select: { id: true, title: true, description: true, htmlContent: true, enableSubmission: true, enableAiCompanion: true, aiCompanionPrompt: true, analysisPrompt: true, designPrompt: true, questionsJson: true, teachingAdvice: true, sortOrder: true, enabled: true }, orderBy: [{ sortOrder: "asc" }] },
+            ExplorationActivity: { select: { id: true, title: true, description: true, enableSubmission: true, enableAiCompanion: true, aiCompanionPrompt: true, analysisPrompt: true, designPrompt: true, sortOrder: true, enabled: true }, orderBy: [{ sortOrder: "asc" }] },
             ProjectSubmission: { orderBy: { sortOrder: "asc" } },
           },
         },
