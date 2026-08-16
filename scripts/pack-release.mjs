@@ -285,7 +285,7 @@ execSync(`rsync -a "${join(ROOT, 'scripts/')}" "${join(RELEASE_DIR, 'scripts/')}
 console.log('  scripts/ 同步完成');
 
 // 同步根配置文件
-const rootFiles = ['package.json', 'next.config.mjs', 'tsconfig.json', 'tailwind.config.ts', 'postcss.config.mjs', 'VERSION.md'];
+const rootFiles = ['package.json', 'next.config.mjs', 'tsconfig.json', 'tailwind.config.ts', 'postcss.config.mjs', 'VERSION.md', '.env.example'];
 for (const f of rootFiles) {
   const src = join(ROOT, f);
   if (existsSync(src)) {
