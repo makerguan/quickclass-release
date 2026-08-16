@@ -3413,6 +3413,7 @@ export default function TeacherTasksPage() {
                                 {/* 新建作业设计表单 - 置顶 */}
                                 {quizDesignMode && !quizDesignId && (
                                   <div className="bg-white rounded-lg p-4 mb-3 space-y-3">
+                                    <input id="import-quiz-file" type="file" accept=".json" onChange={handleImportQuestionsToDesign} className="hidden" />
                                     <div className="flex items-center justify-between">
                                       <h5 className="font-medium text-sm text-[#63666F]">新建作业 · {quizDesignTitle || "（未命名）"}</h5>
                                       <Button theme="default" variant="text" size="small" onClick={exitQuizDesign}>× 退出设计</Button>
@@ -3433,7 +3434,6 @@ export default function TeacherTasksPage() {
                                         <div className="flex gap-2 items-center">
                                           <Button theme="primary" size="small" icon={<PlayIcon />} loading={generatingQuestions} onClick={handleAIGenerateQuestions} disabled={!quizDesignTitle.trim() || !selectedQuizTemplateId}>生成作业</Button>
                                           <Button theme="primary" variant="outline" size="small" loading={importingQuestions} disabled={!quizDesignTitle.trim()} onClick={() => document.getElementById('import-quiz-file')?.click()}>导入作业</Button>
-                                          <input id="import-quiz-file" type="file" accept=".json" onChange={handleImportQuestionsToDesign} className="hidden" />
                                         </div>
                                       </>
                                     ) : (

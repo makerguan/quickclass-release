@@ -686,7 +686,7 @@ async function generateTaskStudentInsight(
     }),
     explorationIds.length > 0
       ? prisma.aiCompanionMessage.findMany({
-          where: { explorationId: { in: explorationIds }, userId: studentId },
+          where: { explorationId: { in: explorationIds }, studentId },
           orderBy: { createdAt: "asc" },
         })
       : Promise.resolve([]),
@@ -995,7 +995,7 @@ async function generateTaskStudentInsightWithTemplate(
     }),
     explorationIds.length > 0
       ? prisma.aiCompanionMessage.findMany({
-          where: { explorationId: { in: explorationIds }, userId: studentId },
+          where: { explorationId: { in: explorationIds }, studentId },
           orderBy: { createdAt: "asc" },
         })
       : Promise.resolve([]),
@@ -1215,15 +1215,15 @@ function buildDialogContents(
 
 /** 将 AI 伴学对话记录格式化为分析文本 */
 function buildCompanionDialogContents(
-  companionMessages: { userId: string; role: string; content: string; createdAt: Date; User: { name: string } }[],
+  companionMessages: { studentId: string; role: string; content: string; createdAt: Date; User: { name: string } }[],
   students: { id: string; name: string }[]
 ): string {
   if (companionMessages.length === 0) return "";
 
   const byStudent = new Map<string, typeof companionMessages>();
   for (const m of companionMessages) {
-    if (!byStudent.has(m.userId)) byStudent.set(m.userId, []);
-    byStudent.get(m.userId)!.push(m);
+    if (!byStudent.has(m.studentId)) byStudent.set(m.studentId, []);
+    byStudent.get(m.studentId)!.push(m);
   }
 
   return Array.from(byStudent.entries())
