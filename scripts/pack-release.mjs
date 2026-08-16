@@ -95,6 +95,8 @@ if not exist "node_modules\\.package-lock.json" (\r
     )\r
     rem 安装成功后标记，避免下次重复检查\r
     copy nul "node_modules\\.package-lock.json" >nul\r
+) else (\r
+    echo [1/5] 依赖已就绪\r
 )\r
 \r
 if not exist "prisma\\dev.db" if exist "prisma\\dev.db.initial" (\r
@@ -118,14 +120,18 @@ if errorlevel 1 (\r
     )\r
 )\r
 \r
-echo [3/5] 正在初始化数据库（空库）...\r
 if not exist "prisma\\dev.db" (\r
+    echo [3/5] 正在初始化数据库...\r
     call npx prisma db push --skip-generate --accept-data-loss\r
+) else (\r
+    echo [3/5] 数据库已就绪\r
 )\r
 \r
-echo [4/5] 正在构建生产版本...\r
 if not exist ".next\\BUILD_ID" (\r
+    echo [4/5] 正在构建生产版本...\r
     call npm run build\r
+) else (\r
+    echo [4/5] 生产版本已就绪\r
 )\r
 \r
 echo [5/5] 正在启动服务器...\r
@@ -202,6 +208,8 @@ if [ ! -f "node_modules/.package-lock.json" ]; then
     fi
     # 安装成功后标记，避免下次重复检查
     touch node_modules/.package-lock.json
+else
+    echo "[1/5] 依赖已就绪"
 fi
 
 # 2. 生成 Prisma 客户端
@@ -209,15 +217,19 @@ echo "[2/5] 正在生成 Prisma 客户端..."
 npx prisma generate
 
 # 3. 初始化数据库（空库）
-echo "[3/5] 正在初始化数据库..."
 if [ ! -f "prisma/dev.db" ]; then
+    echo "[3/5] 正在初始化数据库..."
     npx prisma db push --skip-generate --accept-data-loss
+else
+    echo "[3/5] 数据库已就绪"
 fi
 
 # 4. 构建生产版本
-echo "[4/5] 正在构建生产版本..."
 if [ ! -f ".next/BUILD_ID" ]; then
+    echo "[4/5] 正在构建生产版本..."
     npm run build
+else
+    echo "[4/5] 生产版本已就绪"
 fi
 
 # 5. 启动

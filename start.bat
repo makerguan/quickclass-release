@@ -41,6 +41,8 @@ if not exist "node_modules\.package-lock.json" (
     )
     rem 安装成功后标记，避免下次重复检查
     copy nul "node_modules\.package-lock.json" >nul
+) else (
+    echo [1/5] 依赖已就绪
 )
 
 if not exist "prisma\dev.db" if exist "prisma\dev.db.initial" (
@@ -64,14 +66,18 @@ if errorlevel 1 (
     )
 )
 
-echo [3/5] 正在初始化数据库（空库）...
 if not exist "prisma\dev.db" (
+    echo [3/5] 正在初始化数据库...
     call npx prisma db push --skip-generate --accept-data-loss
+) else (
+    echo [3/5] 数据库已就绪
 )
 
-echo [4/5] 正在构建生产版本...
 if not exist ".next\BUILD_ID" (
+    echo [4/5] 正在构建生产版本...
     call npm run build
+) else (
+    echo [4/5] 生产版本已就绪
 )
 
 echo [5/5] 正在启动服务器...
