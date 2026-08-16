@@ -312,7 +312,6 @@ export async function collectResearchData(
         User: { select: { id: true, name: true } },
         PresetConversation: { select: { id: true, title: true, subProjectId: true } },
       },
-      take: 500,  // 防止数据过多
       orderBy: { updatedAt: "desc" },
     });
 
@@ -352,16 +351,14 @@ export async function collectResearchData(
       }
       presetMap.set(presetTitle, group);
 
-      // 仅取前 20 个对话的完整消息
-      if (allConvData.length < 20) {
-        allConvData.push({
-          studentName: c.User?.name || "未知",
-          title: c.title,
-          presetTitle,
-          messageCount: c.Message.length,
-          messages,
-        });
-      }
+      // 全量收集对话原文（不再限制前 20 个；超限时由 document-generator 抽样降级保护）
+      allConvData.push({
+        studentName: c.User?.name || "未知",
+        title: c.title,
+        presetTitle,
+        messageCount: c.Message.length,
+        messages,
+      });
     }
 
     conversationData = {

@@ -4,7 +4,7 @@ cd /d "%~dp0"
 set "DATABASE_URL=file:./dev.db"
 
 echo ========================================
-echo   QuickClass 启动器 v2026.08.11
+echo   QuickClass 启动器 v2026.08.16
 echo   使用指南见 使用指南.md
 echo ========================================
 

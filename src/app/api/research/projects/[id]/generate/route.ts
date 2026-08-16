@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { verifyToken } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { streamPaperGeneration, streamProposalGeneration } from "@/lib/research/document-generator";
+import { classifyGenError } from "@/lib/research/error-classifier";
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -58,7 +59,14 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             await saveDocument(id, project, selectedTitle, selectedIndex, fullText, JSON.stringify(contentData), startTime, { researchMethod });
           }
         } catch (e: any) {
-          controller.enqueue(encoder.encode(`\n\n[ERROR] ${e.message}`));
+          // 结构化错误输出：FATAL 前缀 + JSON，前端精准解析，不会混进正文
+          const info = classifyGenError(e);
+          controller.enqueue(encoder.encode(`\n\n[FATAL]${JSON.stringify(info)}`));
+          // 显式标记失败，避免 UI 卡在"生成中"
+          await prisma.researchProject.update({
+            where: { id },
+            data: { status: "FAILED" },
+          }).catch(() => {});
         } finally {
           controller.close();
         }

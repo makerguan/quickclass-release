@@ -34,34 +34,9 @@ export interface ProposalContent {
   referencesAudit?: ReferencesAuditReport;
 }
 
-// ── Token 估算（中文约 1.8 字符/token，英文约 4 字符/token） ──
-const CHARS_PER_TOKEN = 1.8;
-
-function estimateTokens(text: string): number {
-  return Math.ceil(text.length / CHARS_PER_TOKEN);
-}
-
-// ── 模型上下文窗口上限 ──
-export const MODEL_CONTEXT_LIMITS: Record<string, number> = {
-  "qwen-turbo": 1_000_000,
-  "qwen-plus": 131_072,
-  "qwen-max": 32_768,
-};
-
-// 从系统配置读取实际模型名，以此决定安全上限
-async function getEffectiveModelLimit(): Promise<number> {
-  try {
-    const { getAIConfig } = await import("@/lib/ai");
-    const config = await getAIConfig();
-    const model = config.model || "qwen-turbo";
-    return MODEL_CONTEXT_LIMITS[model] || 32_768;
-  } catch {
-    return 1_000_000; // 失败时取最大安全值
-  }
-}
-
-// 留给系统提示词 + 生成输出的 token 余量
-const OUTPUT_TOKEN_BUFFER = 12_000;
+// ── 模型上下文窗口上限已移除 ──
+// 决策：不使用硬编码映射表（数据会过时），改为全量直发；
+// 若超窗口由 AI 服务真实报错，由 error-classifier 分类提示用户换更大上下文模型。
 
 export async function* streamPaperGeneration(
   title: string,
@@ -126,10 +101,8 @@ export async function* streamProposalGeneration(
   return await parseProposalContent(fullText, title, candidates);
 }
 
-// ── 数据节构建（mode = "full" 全量 / "stats-only" 仅统计摘要） ──
-type SectionMode = "full" | "stats-only";
-
-function buildDataSections(data: ResearchDataSnapshot, mode: SectionMode): string {
+// ── 数据节构建（全量直发，不再抽象 mode 降级） ──
+function buildDataSections(data: ResearchDataSnapshot): string {
   const { scope, quizData, conversationData, quizReports, conversationReports, dataQuality } = data;
   const parts: string[] = [];
 
@@ -162,8 +135,8 @@ function buildDataSections(data: ResearchDataSnapshot, mode: SectionMode): strin
       lines.push(`- 各题正确率：${q.questionStats.map(qs => `"${qs.content}"（${qs.type}）${qs.correctRate}%`).join("；")}`);
       lines.push(``);
     }
-    // 全量模式下包含答题样本；stats-only 跳过
-    if (mode === "full" && quizData.attempts.length > 0) {
+    // 全量包含答题样本
+    if (quizData.attempts.length > 0) {
       lines.push(`### 学生答题样本（共 ${quizData.attempts.length} 条）`);
       for (const a of quizData.attempts) {
         lines.push(`- ${a.studentName} | ${a.quizTitle} | 得分：${a.scorePercent}% | 正确 ${a.correctCount}/${a.totalQuestions}`);
@@ -192,8 +165,8 @@ function buildDataSections(data: ResearchDataSnapshot, mode: SectionMode): strin
       }
       lines.push(``);
     }
-    // 全量模式包含对话原文；stats-only 跳过
-    if (mode === "full" && conversationData.conversations.length > 0) {
+    // 全量包含全部对话原文（不抽样，超窗由 AI 服务真实报错并提示换模型）
+    if (conversationData.conversations.length > 0) {
       lines.push(`### 对话原文（共 ${conversationData.conversations.length} 个对话）`);
       for (const c of conversationData.conversations) {
         lines.push(`#### [${c.studentName}] ${c.title}（${c.presetTitle || "无预设"}，共${c.messageCount}条消息）`);
@@ -207,7 +180,7 @@ function buildDataSections(data: ResearchDataSnapshot, mode: SectionMode): strin
     parts.push(lines.join("\n"));
   }
 
-  // ── 作业报告（全量 / stats-only 均包含正文，因为报告本身已是摘要） ──
+  // ── 作业报告（全量包含正文，因为报告本身已是摘要） ──
   if (quizReports && quizReports.length > 0) {
     const lines: string[] = [`## 作业报告（AI 班级分析报告）`];
     lines.push(``);
@@ -215,10 +188,8 @@ function buildDataSections(data: ResearchDataSnapshot, mode: SectionMode): strin
       lines.push(`### ${r.taskTitle} — ${r.quizTitle}（版本 ${r.version}，生成于 ${r.createdAt}）`);
       lines.push(`#### 统计快照`);
       lines.push(`- 参与人数：${r.stats.participantCount}，完成率：${r.stats.completionRate}%，及格率：${r.stats.passRate}%，平均分：${r.stats.avgScorePercent}`);
-      if (mode === "full") {
-        lines.push(`#### 报告正文`);
-        lines.push(r.content);
-      }
+      lines.push(`#### 报告正文`);
+      lines.push(r.content);
       lines.push(``);
     }
     parts.push(lines.join("\n"));
@@ -231,10 +202,8 @@ function buildDataSections(data: ResearchDataSnapshot, mode: SectionMode): strin
     for (const r of conversationReports) {
       lines.push(`### ${r.taskTitle} — ${r.presetTitle}（版本 ${r.version}，生成于 ${r.createdAt}）`);
       lines.push(`- 相关对话数：${r.conversationCount}`);
-      if (mode === "full") {
-        lines.push(`#### 报告正文`);
-        lines.push(r.content);
-      }
+      lines.push(`#### 报告正文`);
+      lines.push(r.content);
       lines.push(``);
     }
     parts.push(lines.join("\n"));
@@ -248,36 +217,7 @@ function buildDataSections(data: ResearchDataSnapshot, mode: SectionMode): strin
   return parts.join("\n\n");
 }
 
-// ── 自适应：先尝试全量，超限则降级到统计摘要 ──
-async function buildDataSectionsAdaptive(data: ResearchDataSnapshot): Promise<{
-  text: string;
-  mode: "full" | "stats-only";
-}> {
-  const modelLimit = await getEffectiveModelLimit();
-  const safeLimit = modelLimit - OUTPUT_TOKEN_BUFFER;
-
-  // 先建统计摘要版（体积很小）
-  const statsText = buildDataSections(data, "stats-only");
-  const statsTokens = estimateTokens(statsText);
-
-  // 如果连统计摘要都超限（极端情况），直接返回统计摘要
-  if (statsTokens > safeLimit) {
-    return { text: statsText, mode: "stats-only" };
-  }
-
-  // 尝试全量版
-  const fullText = buildDataSections(data, "full");
-  const fullTokens = estimateTokens(fullText);
-
-  if (fullTokens <= safeLimit) {
-    return { text: fullText, mode: "full" };
-  }
-
-  // 超限 → 降级到 stats-only，并在数据质量段说明
-  const warningLine = `\n## 数据量提示\n- 全量数据估算约 ${fullTokens.toLocaleString()} token，超出模型窗口（${modelLimit.toLocaleString()} token）安全限值，已自动降级为统计摘要模式。\n- 如需使用全量数据，建议减少选中的课堂或数据类型。\n`;
-  return { text: statsText + warningLine, mode: "stats-only" };
-}
-
+// ── 论文/课题提示词：全量直发，不做窗口预判与降级 ──
 async function buildPaperPrompt(
   title: string,
   data: ResearchDataSnapshot,
@@ -285,21 +225,18 @@ async function buildPaperPrompt(
   keywords?: string,
   candidates: any[] = []
 ): Promise<string> {
-  const { text: dataSection, mode } = await buildDataSectionsAdaptive(data);
-  const modeNote = mode === "stats-only"
-    ? "\n> 注：以下数据为统计摘要版。对话原文和报告正文因超出模型窗口上限未包含。论文中的具体案例可基于统计特征合理推导。"
-    : "";
+  const dataSection = buildDataSections(data);
   const candidateSection = buildCandidatePromptSection(candidates);
 
   if (paperStyle === "CASE_ANALYSIS") {
-    return buildPracticeCasePaperPrompt(title, dataSection, modeNote, candidateSection);
+    return buildPracticeCasePaperPrompt(title, dataSection, candidateSection);
   }
   // 默认为 PRACTICE_RESEARCH（含未指定）
-  return buildPracticeResearchPaperPrompt(title, dataSection, modeNote, candidateSection);
+  return buildPracticeResearchPaperPrompt(title, dataSection, candidateSection);
 }
 
 // ── 实践研究类（6 要素：引言→理论依据→实施路径→案例分析→效果评价→结语） ──
-function buildPracticeResearchPaperPrompt(title: string, dataSection: string, modeNote: string, candidateSection: string = ""): string {
+function buildPracticeResearchPaperPrompt(title: string, dataSection: string, candidateSection: string = ""): string {
   return `基于以下真实数据和选定题目，撰写一份完整的"实践研究类"教育学术论文初稿。
 本论文适用于整体性教学改革（学段/单元/课程层级的实践探索），需呈现完整的研究过程与教学效果。
 
@@ -307,7 +244,7 @@ function buildPracticeResearchPaperPrompt(title: string, dataSection: string, mo
 ${title}
 
 # 数据基础
-${dataSection}${modeNote}
+${dataSection}
 
 # 论文结构（8500-10000字）
 
@@ -424,7 +361,7 @@ ${candidateSection || "[1] 参考文献1\n[2] 参考文献2\n..."}
 }
 
 // ── 案例分析类（6 章节：引言→理论依据→教学设计原则→教学案例展示→教学反思→结语） ──
-function buildPracticeCasePaperPrompt(title: string, dataSection: string, modeNote: string, candidateSection: string = ""): string {
+function buildPracticeCasePaperPrompt(title: string, dataSection: string, candidateSection: string = ""): string {
   return `基于以下真实数据和选定题目，撰写一份完整的"案例分析类"教育学术论文初稿。
 本论文适用于单课时/单案例的精读与剖析，聚焦一个或数个典型教学案例的深度分析。
 
@@ -432,7 +369,7 @@ function buildPracticeCasePaperPrompt(title: string, dataSection: string, modeNo
 ${title}
 
 # 数据基础
-${dataSection}${modeNote}
+${dataSection}
 
 # 论文结构（8500-9500字）
 
@@ -566,10 +503,7 @@ async function buildProposalPrompt(
   keywords?: string,
   candidates: any[] = []
 ): Promise<string> {
-  const { text: dataSection, mode } = await buildDataSectionsAdaptive(data);
-  const modeNote = mode === "stats-only"
-    ? "\n> 注：以下数据为统计摘要版。对话原文和报告正文因超出模型窗口上限未包含。方案中的具体案例可基于统计特征合理推导。"
-    : "";
+  const dataSection = buildDataSections(data);
   const candidateSection = buildCandidatePromptSection(candidates);
 
   const methodGuide = researchMethod ? getMethodGuide(researchMethod) : "";
@@ -590,7 +524,7 @@ async function buildProposalPrompt(
 ${title}
 
 # 数据基础
-${dataSection}${modeNote}
+${dataSection}
 
 # 方案结构（**8500-10000 中文字**，每节下限必须达到，严格按以下标题与编号执行）
 

@@ -1,6 +1,6 @@
 {
-  "version": "v2026.08.11",
+  "version": "v2026.08.16",
   "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
-  "changelog": "修复注册表单邮箱校验失败（TDesign inputRef production build 延迟）；修复 start.bat 中文乱码（改为 UTF-8）；修复 start.bat ipconfig 解析 IP 错误；启动脚本显示本机 IP 地址和学生端入口",
-  "releaseDate": "2026-08-11"
+  "changelog": "优化登陆",
+  "releaseDate": "2026-08-16"
 }

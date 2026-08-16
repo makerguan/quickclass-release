@@ -67,7 +67,7 @@ interface ResearchProject {
   id: string;
   projectName: string;
   projectType: "PAPER" | "PROPOSAL";
-  status: "DRAFT" | "TITLES_READY" | "COMPLETED";
+  status: "DRAFT" | "TITLES_READY" | "COMPLETED" | "FAILED" | "GENERATING";
   keywords: string | null;
   selectedTitle: string | null;
   selectedIndex: number | null;
@@ -125,6 +125,18 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     loadProject();
   }, [params.id]);
 
+  const showGenError = (hint: string, kind: string) => {
+    const actionable =
+      kind === "CONTEXT_OVERFLOW" || kind === "MODEL_NOT_FOUND" || kind === "AUTH";
+    MessagePlugin.error({
+      content: actionable
+        ? `${hint}（可在系统设置中调整模型 / API Key）`
+        : hint,
+      duration: 8000,
+      closeBtn: true,
+    });
+  };
+
   const handleGenerate = async () => {
     if (selectedIndex === null || !project) return;
     setGenerating(true);
@@ -150,6 +162,7 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
       const reader = res.body?.getReader();
       const decoder = new TextDecoder();
       let text = "";
+      let fatalHandled = false;
 
       if (reader) {
         while (true) {
@@ -162,9 +175,27 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
           setProgress(Math.min(95, Math.round((text.length / target) * 100)));
         }
       }
-      setProgress(100);
-      MessagePlugin.success("生成完成");
-      await loadProject();
+
+      // 检测结构化错误标记 [FATAL]{...}
+      const fatalIdx = text.lastIndexOf("[FATAL]");
+      if (fatalIdx >= 0) {
+        fatalHandled = true;
+        // FATAL 之前的正文照常渲染（不丢已生成内容）
+        const bodyText = text.slice(0, fatalIdx);
+        if (bodyText.trim()) setStreamedText(bodyText);
+        try {
+          const err = JSON.parse(text.slice(fatalIdx + 7).trim());
+          showGenError(err.hint, err.kind);
+        } catch {
+          // 兼容旧的 [ERROR] 文本：当普通失败提示，不崩
+          const errText = text.slice(fatalIdx).replace(/^\[ERROR\]\s*/, "");
+          showGenError("生成失败：" + errText, "UNKNOWN");
+        }
+      } else {
+        setProgress(100);
+        MessagePlugin.success("生成完成");
+        await loadProject();
+      }
     } catch (e: any) {
       if (e.name !== "AbortError") MessagePlugin.error("生成失败");
     } finally {
