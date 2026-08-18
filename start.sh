@@ -5,7 +5,7 @@
 set -e
 
 cd "$(dirname "$0")"
-export DATABASE_URL="file:./dev.db"
+export DATABASE_URL="file:./prisma/dev.db"
 
 echo "========================================"
 echo "  QuickClass 启动器 v2026.08.16"
