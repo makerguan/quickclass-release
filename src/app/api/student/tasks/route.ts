@@ -89,7 +89,7 @@ export async function GET(req: NextRequest) {
           ...qa,
           questions: qa.Question,
         })),
-        explorations: sp.ExplorationActivity,
+        explorations: sp.ExplorationActivity.map((e) => { const { htmlContent, ...rest } = e; return rest; }),
         projectSubmissions: sp.ProjectSubmission?.map(ps => ({
           id: ps.id,
           title: ps.title,
