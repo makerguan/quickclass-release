@@ -268,6 +268,10 @@ export function renderInsightTemplate(options: TemplateRenderOptions): string {
   let content: string;
   if (level === "pc") {
     content = replaceConversationVars(templateContent, vars as ConversationTemplateVars, isStudent);
+    const dlg = (vars as ConversationTemplateVars).personalDialogContents;
+    if (dlg && !templateContent.includes("{personalDialogContents}")) {
+      content += (content ? "\n\n" : "") + "## 学生对话数据\n" + dlg;
+    }
   } else {
     content = replaceTaskVars(templateContent, vars as TaskTemplateVars);
   }
