@@ -153,18 +153,22 @@ export default function StudentChatPage() {
   }, [activePresetId, activeType]);
 
   const fetchData = async () => {
+    const token = localStorage.getItem("token");
+    // 1) 先拉课堂列表并立即渲染（接口已瘦身，体积小、响应快）
     try {
-      const token = localStorage.getItem("token");
-      const [tasksRes, convsRes] = await Promise.all([
-        fetch("/api/student/tasks", { headers: { Authorization: `Bearer ${token}` } }),
-        fetch("/api/conversations", { headers: { Authorization: `Bearer ${token}` } }),
-      ]);
+      const tasksRes = await fetch("/api/student/tasks", { headers: { Authorization: `Bearer ${token}` } });
       if (tasksRes.ok) setTasks(await tasksRes.json());
+    } catch {
+      console.error("加载课堂失败");
+    } finally {
+      setLoadingData(false); // 列表先出来，不再等对话记录
+    }
+    // 2) 对话记录后台异步补充（仅影响"已学"标记，不阻塞列表渲染）
+    try {
+      const convsRes = await fetch("/api/conversations", { headers: { Authorization: `Bearer ${token}` } });
       if (convsRes.ok) setConversations(await convsRes.json());
     } catch {
-      console.error("加载数据失败");
-    } finally {
-      setLoadingData(false);
+      console.error("加载对话记录失败");
     }
   };
 
