@@ -3183,7 +3183,7 @@ export default function TeacherTasksPage() {
                                           <Button theme="primary" variant="text" size="small"
                                             icon={<BrowseIcon />}
                                             onClick={async () => {
-                                              if (e.enableAiCompanion) {
+                                              {
                                                 const token = localStorage.getItem("token") || "";
                                                 const res = await fetch(`/api/exploration-activities/${e.id}`, {
                                                   headers: { Authorization: `Bearer ${token}` },
