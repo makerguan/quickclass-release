@@ -85,12 +85,12 @@ export async function GET(req: NextRequest) {
       subProjects: task.subProjects.map(({ ExplorationActivity, PresetConversation, QuizActivity, ProjectSubmission, ...spRest }) => ({
         ...spRest,
         presetConversations: PresetConversation,
-        quizActivities: sp.QuizActivity?.map(qa => ({
+        quizActivities: QuizActivity?.map(qa => ({
           ...qa,
           questions: qa.Question,
         })),
-        explorations: sp.ExplorationActivity.map((e) => { const { htmlContent, ...rest } = e; return rest; }),
-        projectSubmissions: sp.ProjectSubmission?.map(ps => ({
+        explorations: ExplorationActivity.map((e) => { const { htmlContent, ...rest } = e; return rest; }),
+        projectSubmissions: ProjectSubmission?.map(ps => ({
           id: ps.id,
           title: ps.title,
           description: ps.description,
