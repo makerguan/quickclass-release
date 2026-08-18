@@ -82,9 +82,9 @@ export async function GET(req: NextRequest) {
     // 映射字段名以匹配前端期望
     const mappedTasks = tasks.map(task => ({
       ...task,
-      subProjects: task.subProjects.map(sp => ({
-        ...sp,
-        presetConversations: sp.PresetConversation,
+      subProjects: task.subProjects.map(({ ExplorationActivity, PresetConversation, QuizActivity, ProjectSubmission, ...spRest }) => ({
+        ...spRest,
+        presetConversations: PresetConversation,
         quizActivities: sp.QuizActivity?.map(qa => ({
           ...qa,
           questions: qa.Question,
