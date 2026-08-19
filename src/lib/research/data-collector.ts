@@ -375,10 +375,14 @@ export async function collectResearchData(
   let quizReports: ResearchDataSnapshot["quizReports"];
   let missingReports: string[] = [];
   if (dataTypes.includes("quizReport")) {
+    const quizIdsForReport = await prisma.quizActivity.findMany({
+      where: { subProjectId: { in: subProjectIds } },
+      select: { id: true, title: true, SubProject: { include: { task: { select: { title: true } } } } },
+    });
     const reports = await prisma.aIInsight.findMany({
       where: {
         type: "quiz_class",
-        scopeId: { in: (quizData?.perQuizStats.map((q) => q.quizId) || []) },
+        scopeId: { in: quizIdsForReport.map((q) => q.id) },
       },
       orderBy: { version: "desc" },
     });
@@ -389,10 +393,7 @@ export async function collectResearchData(
       if (r.scopeId && !latestMap.has(r.scopeId)) latestMap.set(r.scopeId, r);
     }
 
-    const quizList = await prisma.quizActivity.findMany({
-      where: { id: { in: [...latestMap.keys()] } },
-      include: { SubProject: { include: { task: true } } },
-    });
+    const quizList = quizIdsForReport.filter((q) => latestMap.has(q.id));
 
     quizReports = quizList.map((q) => {
       const r = latestMap.get(q.id)!;
@@ -416,15 +417,13 @@ export async function collectResearchData(
 
     // 缺失报告的作业
     const quizIdsWithReports = new Set(quizReports.map((r) => r.quizId));
-    if (quizData) {
-      for (const s of quizData.perQuizStats) {
-        if (!quizIdsWithReports.has(s.quizId)) {
-          missingReports.push(`${s.taskTitle} - ${s.quizTitle}`);
-        }
+    for (const q of quizIdsForReport) {
+      if (!quizIdsWithReports.has(q.id)) {
+        missingReports.push(`${q.SubProject?.task?.title || ""} - ${q.title}`);
       }
-      if (missingReports.length > 0) {
-        warnings.push(`共 ${missingReports.length} 个作业尚未生成 AI 报告，建议先到课堂→作业→报告页生成`);
-      }
+    }
+    if (missingReports.length > 0) {
+      warnings.push(`共 ${missingReports.length} 个作业尚未生成 AI 报告，建议先到课堂→作业→报告页生成`);
     }
   }
 
