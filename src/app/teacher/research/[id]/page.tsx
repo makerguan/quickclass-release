@@ -10,6 +10,7 @@ import {
   Dialog,
   Textarea,
 } from "tdesign-react";
+import { copyText } from "@/lib/clipboard";
 import {
   DownloadIcon,
   CopyIcon,
@@ -238,9 +239,10 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
     }
   };
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(streamedText || project?.contentText || "");
-    MessagePlugin.success("已复制到剪贴板");
+  const handleCopy = async () => {
+    const ok = await copyText(streamedText || project?.contentText || "");
+    if (ok) MessagePlugin.success("已复制到剪贴板");
+    else MessagePlugin.error("复制失败，请手动复制");
   };
 
   const handleReverify = async () => {
