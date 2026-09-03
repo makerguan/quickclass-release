@@ -311,11 +311,23 @@ export default function StudentChatPage() {
     const exp = tasks
       .flatMap(t => t.subProjects.flatMap(sp => sp.explorations || []))
       .find(e => e.id === explorationId);
+    const [html, setHtml] = useState<string>("");
+    useEffect(() => {
+      let cancelled = false;
+      setHtml("");
+      const tk = localStorage.getItem("token");
+      if (!tk) return;
+      fetch(`/api/student/explorations/${explorationId}`, { headers: { Authorization: `Bearer ${tk}` } })
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (!cancelled && d && typeof d.htmlContent === "string") setHtml(d.htmlContent); })
+        .catch(() => {});
+      return () => { cancelled = true; };
+    }, [explorationId]);
     if (!exp) return null;
     return (
       <ExplorationPanel
         explorationId={exp.id}
-        htmlContent={exp.htmlContent || ""}
+        htmlContent={html}
         enableSubmissionEnabled={exp.enableSubmission}
         enableAiCompanion={exp.enableAiCompanion}
         onBack={onBack}
