@@ -38,6 +38,8 @@ export async function GET(
     const projects = await prisma.studentProject.findMany({
       where: {
         submissionId: id,
+        // 只看本班学生的作品
+        classId: me.classId,
         // 学生端不显示被下架的（除非是自己的）
         OR: [
           { hidden: false },

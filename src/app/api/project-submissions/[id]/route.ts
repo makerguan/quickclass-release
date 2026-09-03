@@ -8,7 +8,7 @@ import { deleteAttachmentFile } from "@/lib/project-submit";
 async function authorizeTeacher(submissionId: string, teacherId: string) {
   const sub = await prisma.projectSubmission.findUnique({
     where: { id: submissionId },
-    include: { SubProject: { include: { task: { select: { teacherId: true } } } } },
+    include: { SubProject: { include: { task: { select: { id: true, teacherId: true } } } } },
   });
   if (!sub) return { error: "项目任务不存在", status: 404 };
   if (sub.SubProject.task.teacherId !== teacherId)
@@ -36,9 +36,11 @@ export async function GET(
     const page = Math.max(1, Number(searchParams.get("page")) || 1);
     const pageSize = Math.min(200, Math.max(1, Number(searchParams.get("pageSize")) || 20));
     const search = (searchParams.get("search") || "").trim();
+    const classId = (searchParams.get("classId") || "").trim();
 
-    // 该任务下所有学生提交
+    // 该任务下所有学生提交（可按班级筛选）
     const where: any = { submissionId: id };
+    if (classId) where.classId = classId;
     if (search) {
       where.OR = [
         { title: { contains: search } },
@@ -55,6 +57,7 @@ export async function GET(
         take: pageSize,
         include: {
           User: { select: { id: true, name: true } },
+          Class: { select: { id: true, name: true } },
           attachments: true,
           _count: { select: { likes: true } },
           likes: { where: { studentId: String(payload.userId) }, select: { id: true } },
@@ -77,12 +80,18 @@ export async function GET(
     const classStudentCount = await prisma.user.count({
       where: { classId: { in: classIds }, role: "STUDENT" },
     });
+    const classes = await prisma.class.findMany({
+      where: { id: { in: classIds } },
+      select: { id: true, name: true },
+      orderBy: { createdAt: "asc" },
+    });
 
     const result = items.map((it) => ({
       id: it.id,
       studentId: it.studentId,
       // 下架的项目不显示学生姓名
       studentName: it.hidden ? "***" : it.User.name,
+      className: it.Class?.name || "",
       title: it.title,
       description: it.description,
       pinned: it.pinned,
@@ -103,6 +112,7 @@ export async function GET(
 
     return NextResponse.json({
       submission: auth.sub,
+      classes,
       total,
       pageSize,
       page,

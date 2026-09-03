@@ -946,7 +946,7 @@ onClick={() => {
           </>
         )}
 
-        {activeType !== "quiz" && activeType !== "exploration" && !activePresetId && (
+        {activeType !== "quiz" && activeType !== "exploration" && activeType !== "project" && !activePresetId && (
           <div className="flex-1 flex items-center justify-center">
             <div className="text-center text-gray-400">
               <p className="text-lg mb-2">👋 你好！</p>

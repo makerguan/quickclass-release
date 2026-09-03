@@ -1,6 +1,6 @@
 {
-  "version": "v2026.08.16",
+  "version": "v2026.09.03",
   "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
-  "changelog": "优化登陆",
-  "releaseDate": "2026-08-16"
+  "changelog": "学生项目提交面板：进入后不再显示聊天欢迎提示语；图片类作品点击预览支持 90° 旋转、左右翻转、放大缩小、拖拽查看与一键重置",
+  "releaseDate": "2026-09-03"
 }

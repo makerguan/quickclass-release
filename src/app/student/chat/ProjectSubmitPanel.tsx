@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Button, Input, Tag, MessagePlugin, Dialog } from "tdesign-react";
+import { Button, Input, Tag, MessagePlugin, Dialog, DialogPlugin } from "tdesign-react";
 import { UploadIcon, HeartIcon, BrowseIcon } from "tdesign-icons-react";
 
 interface AttachmentInfo {
@@ -79,6 +79,49 @@ export default function ProjectSubmitPanel({
   const [submitting, setSubmitting] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const [lightbox, setLightbox] = useState<{ url: string; isIframe?: boolean } | null>(null);
+
+  // 灯箱图片变换状态
+  const [lbRotate, setLbRotate] = useState(0);
+  const [lbFlip, setLbFlip] = useState(false);
+  const [lbScale, setLbScale] = useState(1);
+  const [lbPos, setLbPos] = useState({ x: 0, y: 0 });
+  const dragRef = useRef<{ startX: number; startY: number; baseX: number; baseY: number } | null>(null);
+
+  // 每次打开灯箱时重置变换
+  useEffect(() => {
+    setLbRotate(0);
+    setLbFlip(false);
+    setLbScale(1);
+    setLbPos({ x: 0, y: 0 });
+    dragRef.current = null;
+  }, [lightbox]);
+
+  const zoomStep = 0.25;
+  const zoomIn = () => setLbScale((s) => Math.min(4, +(s + zoomStep).toFixed(2)));
+  const zoomOut = () => setLbScale((s) => Math.max(0.25, +(s - zoomStep).toFixed(2)));
+  const rotate90 = () => setLbRotate((r) => (r + 90) % 360);
+  const toggleFlip = () => setLbFlip((f) => !f);
+  const resetTransform = () => {
+    setLbRotate(0);
+    setLbFlip(false);
+    setLbScale(1);
+    setLbPos({ x: 0, y: 0 });
+  };
+
+  const onImgPointerDown = (e: React.PointerEvent<HTMLImageElement>) => {
+    dragRef.current = { startX: e.clientX, startY: e.clientY, baseX: lbPos.x, baseY: lbPos.y };
+    e.currentTarget.setPointerCapture(e.pointerId);
+  };
+  const onImgPointerMove = (e: React.PointerEvent<HTMLImageElement>) => {
+    if (!dragRef.current) return;
+    setLbPos({
+      x: dragRef.current.baseX + (e.clientX - dragRef.current.startX),
+      y: dragRef.current.baseY + (e.clientY - dragRef.current.startY),
+    });
+  };
+  const onImgPointerUp = () => {
+    dragRef.current = null;
+  };
 
   const loadAll = async () => {
     setLoading(true);
@@ -168,11 +211,17 @@ export default function ProjectSubmitPanel({
   const handleDeleteMine = async () => {
     if (!mine) return;
     const ok = await new Promise<boolean>((resolve) => {
-      Dialog.confirm({
+      const dialog = DialogPlugin.confirm({
         header: "删除提交",
         body: "确定删除自己的项目提交吗？删除后不可恢复。",
-        onConfirm: () => resolve(true),
-        onClose: () => resolve(false),
+        onConfirm: () => {
+          dialog.destroy();
+          resolve(true);
+        },
+        onClose: () => {
+          dialog.destroy();
+          resolve(false);
+        },
       });
     });
     if (!ok) return;
@@ -185,7 +234,8 @@ export default function ProjectSubmitPanel({
       await loadAll();
       onChanged?.();
     } else {
-      MessagePlugin.error("删除失败");
+      const msg = await res.text();
+      MessagePlugin.error(msg || "删除失败");
     }
   };
 
@@ -469,7 +519,7 @@ export default function ProjectSubmitPanel({
       {/* 灯箱 */}
       {lightbox && (
         <div
-          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center cursor-zoom-out"
+          className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center cursor-zoom-out overflow-hidden"
           onClick={() => setLightbox(null)}
         >
           {lightbox.isIframe ? (
@@ -481,8 +531,20 @@ export default function ProjectSubmitPanel({
           ) : (
             <img
               src={lightbox.url}
-              className="max-w-[90vw] max-h-[90vh] rounded-lg shadow-2xl object-contain"
+              className={`${
+                lbRotate === 90 || lbRotate === 270
+                  ? "max-w-[90vh] max-h-[90vw]"
+                  : "max-w-[90vw] max-h-[90vh]"
+              } rounded-lg shadow-2xl object-contain select-none touch-none cursor-grab active:cursor-grabbing transition-transform duration-150`}
+              style={{
+                transform: `translate(${lbPos.x}px, ${lbPos.y}px) rotate(${lbRotate}deg) scaleX(${lbFlip ? -1 : 1}) scale(${lbScale})`,
+              }}
               onClick={(e) => e.stopPropagation()}
+              onPointerDown={onImgPointerDown}
+              onPointerMove={onImgPointerMove}
+              onPointerUp={onImgPointerUp}
+              onPointerCancel={onImgPointerUp}
+              draggable={false}
             />
           )}
           <button
@@ -491,6 +553,54 @@ export default function ProjectSubmitPanel({
           >
             ✕
           </button>
+
+          {/* 图片工具条：旋转 / 翻转 / 缩放 */}
+          {!lightbox.isIframe && (
+            <div
+              className="absolute bottom-6 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-black/60 hover:bg-black/75 backdrop-blur rounded-full px-3 py-1.5 text-white shadow-lg"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button
+                className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center text-lg transition-colors"
+                onClick={rotate90}
+                title="旋转90°"
+              >
+                ⟳
+              </button>
+              <button
+                className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center text-lg transition-colors"
+                onClick={toggleFlip}
+                title="左右翻转"
+              >
+                ⇄
+              </button>
+              <button
+                className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center text-lg transition-colors"
+                onClick={zoomOut}
+                title="缩小"
+              >
+                －
+              </button>
+              <span className="text-xs w-12 text-center select-none" title="当前缩放比例">
+                {Math.round(lbScale * 100)}%
+              </span>
+              <button
+                className="w-9 h-9 rounded-full hover:bg-white/20 flex items-center justify-center text-lg transition-colors"
+                onClick={zoomIn}
+                title="放大"
+              >
+                ＋
+              </button>
+              <div className="w-px h-5 bg-white/25 mx-1" />
+              <button
+                className="h-9 px-3 rounded-full hover:bg-white/20 flex items-center justify-center text-xs transition-colors"
+                onClick={resetTransform}
+                title="重置为原始大小和方向"
+              >
+                重置
+              </button>
+            </div>
+          )}
         </div>
       )}
     </div>

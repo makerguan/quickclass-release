@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useState, useMemo, useCallback } from "react";
-import { Button, Input, Tag, MessagePlugin } from "tdesign-react";
+import { Button, Input, Tag, MessagePlugin, DialogPlugin } from "tdesign-react";
+import { DeleteIcon } from "tdesign-icons-react";
 
 interface BrowseItem {
   id: string;
   studentName: string;
   studentPhone?: string;
+  className?: string;
   title: string;
   textContent?: string;
   pinned?: boolean;
@@ -29,6 +31,7 @@ interface BrowseData {
     visibleToClass: boolean;
     allowLike: boolean;
   };
+  classes?: { id: string; name: string }[];
   items: BrowseItem[];
   total: number;
   page: number;
@@ -58,6 +61,7 @@ export default function ProjectBrowseView({
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState("");
   const [cols, setCols] = useState<number>(4);
+  const [classId, setClassId] = useState("");
   const [lightbox, setLightbox] = useState<{ url: string; isIframe?: boolean } | null>(null);
   const pageSize = 10;
 
@@ -94,10 +98,11 @@ export default function ProjectBrowseView({
   }, [submissionId]);
 
   const reload = useCallback(
-    (p: number, s: string) => {
+    (p: number, s: string, cid: string) => {
       setLoading(true);
       const token = localStorage.getItem("token") || "";
       const qs = new URLSearchParams({ page: String(p), pageSize: String(pageSize), search: s });
+      if (cid) qs.set("classId", cid);
       fetch(`/api/project-submissions/${submissionId}?${qs.toString()}`, {
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -122,7 +127,7 @@ export default function ProjectBrowseView({
       });
       if (res.ok) {
         MessagePlugin.success(!current ? "已置顶" : "已取消置顶");
-        reload(page, search);
+        reload(page, search, classId);
       } else {
         const msg = await res.text();
         MessagePlugin.error(msg || "操作失败");
@@ -141,13 +146,47 @@ export default function ProjectBrowseView({
       });
       if (res.ok) {
         MessagePlugin.success(!current ? "已下架" : "已恢复显示");
-        reload(page, search);
+        reload(page, search, classId);
       } else {
         const msg = await res.text();
         MessagePlugin.error(msg || "操作失败");
       }
     } catch {
       MessagePlugin.error("操作失败");
+    }
+  };
+
+  const deleteProject = async (projectId: string, studentName: string, title: string) => {
+    const ok = await new Promise<boolean>((resolve) => {
+      const dialog = DialogPlugin.confirm({
+        header: "删除作品",
+        body: `确定删除 ${studentName} 的作品「${title}」吗？删除后不可恢复。`,
+        confirmBtn: { content: "删除", theme: "danger" },
+        onConfirm: () => {
+          dialog.destroy();
+          resolve(true);
+        },
+        onClose: () => {
+          dialog.destroy();
+          resolve(false);
+        },
+      });
+    });
+    if (!ok) return;
+    try {
+      const res = await fetch(`/api/student-projects/${projectId}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        MessagePlugin.success("已删除");
+        reload(page, search, classId);
+      } else {
+        const msg = await res.text();
+        MessagePlugin.error(msg || "删除失败");
+      }
+    } catch {
+      MessagePlugin.error("删除失败");
     }
   };
 
@@ -229,18 +268,50 @@ export default function ProjectBrowseView({
           placeholder="搜索学生或题目"
           onEnter={() => {
             setPage(1);
-            reload(1, search);
+            reload(1, search, classId);
           }}
           className="flex-1 min-w-[160px]"
         />
         <Button
           onClick={() => {
             setPage(1);
-            reload(1, search);
+            reload(1, search, classId);
           }}
         >
           搜索
         </Button>
+        {(data?.classes?.length ?? 0) > 1 && (
+          <>
+            <span className="w-px h-6 bg-gray-200 mx-1" />
+            <Button
+              size="small"
+              variant={classId === "" ? "base" : "outline"}
+              theme={classId === "" ? "primary" : "default"}
+              onClick={() => {
+                setClassId("");
+                setPage(1);
+                reload(1, search, "");
+              }}
+            >
+              全部班级
+            </Button>
+            {data!.classes!.map((c) => (
+              <Button
+                key={c.id}
+                size="small"
+                variant={classId === c.id ? "base" : "outline"}
+                theme={classId === c.id ? "primary" : "default"}
+                onClick={() => {
+                  setClassId(c.id);
+                  setPage(1);
+                  reload(1, search, c.id);
+                }}
+              >
+                {c.name}
+              </Button>
+            ))}
+          </>
+        )}
         <span className="w-px h-6 bg-gray-200 mx-1" />
         {COL_OPTIONS.map((n) => (
           <Button
@@ -390,6 +461,9 @@ export default function ProjectBrowseView({
                   <div className="flex items-center justify-between mt-1">
                     <div className="flex items-center gap-1 min-w-0">
                       <span className="text-xs text-[#63666F] truncate">{it.studentName}</span>
+                      {(data?.classes?.length ?? 0) > 1 && it.className && (
+                        <span className="text-[10px] text-gray-400 shrink-0">{it.className}</span>
+                      )}
                       <button
                         className={`shrink-0 w-5 h-5 flex items-center justify-center rounded text-xs leading-none transition-colors ${
                           it.pinned
@@ -411,6 +485,13 @@ export default function ProjectBrowseView({
                         onClick={(e) => { e.stopPropagation(); toggleHide(it.id, !!it.hidden); }}
                       >
                         <svg viewBox="0 0 12 12" className="w-3 h-3 fill-current"><path d="M6 10L10 4H8V1H4v3H2z"/></svg>
+                      </button>
+                      <button
+                        className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-xs leading-none transition-colors text-gray-300 hover:text-red-400 hover:bg-red-50/50"
+                        title="删除该作品（不可恢复）"
+                        onClick={(e) => { e.stopPropagation(); deleteProject(it.id, it.studentName, it.title); }}
+                      >
+                        <DeleteIcon size="12px" />
                       </button>
                     </div>
                     <div className="flex items-center gap-1 shrink-0">
@@ -473,7 +554,7 @@ export default function ProjectBrowseView({
             onClick={() => {
               const p = data.page - 1;
               setPage(p);
-              reload(p, search);
+              reload(p, search, classId);
             }}
           >
             上一页
@@ -488,7 +569,7 @@ export default function ProjectBrowseView({
             onClick={() => {
               const p = data.page + 1;
               setPage(p);
-              reload(p, search);
+              reload(p, search, classId);
             }}
           >
             下一页

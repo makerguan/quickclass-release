@@ -1,0 +1,6 @@
+{
+  "version": "v2026.09.02",
+  "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
+  "changelog": "新建/编辑课堂支持按学科核心素养 AI 生成课堂目标；已有目标可 AI 优化（保留教师设计意图），支持一键撤销；目标与素养维度严格一一对应",
+  "releaseDate": "2026-09-02"
+}

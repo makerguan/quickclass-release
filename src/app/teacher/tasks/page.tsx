@@ -34,6 +34,7 @@ import {
   PlayIcon,
   SaveIcon,
   FileIcon,
+  DownloadIcon,
   BrowseIcon,
 } from "tdesign-icons-react";
 import Link from "next/link";
@@ -157,6 +158,10 @@ export default function TeacherTasksPage() {
   const [formGrade, setFormGrade] = useState("");
   const [formSubject, setFormSubject] = useState("");
   const [formClassIds, setFormClassIds] = useState<string[]>([]);
+
+  // AI 按学科核心素养生成/优化课堂目标
+  const [generatingObjectives, setGeneratingObjectives] = useState(false);
+  const [objectivesBackup, setObjectivesBackup] = useState<string | null>(null);
 
   // 学习活动 inline 编辑
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
@@ -1732,6 +1737,7 @@ export default function TeacherTasksPage() {
     setFormDescription("");
     setFormGrade("");
     setFormSubject("");
+    setObjectivesBackup(null);
     setFormClassIds([]);
     setSelectedKbIds([]);
     setEditingTask(null);
@@ -2149,6 +2155,61 @@ export default function TeacherTasksPage() {
       setSelectedKbIds([]);
     }
     setFormVisible(true);
+  };
+
+  // AI 按学科核心素养生成/优化课堂目标（目标框有内容时为优化模式）
+  const handleAIObjectives = async () => {
+    if (!formTitle.trim()) {
+      MessagePlugin.error("请先填写课题");
+      return;
+    }
+    if (!formGrade) {
+      MessagePlugin.error("请先选择年级");
+      return;
+    }
+    if (!formSubject) {
+      MessagePlugin.error("请先选择学科");
+      return;
+    }
+    setGeneratingObjectives(true);
+    const wasOptimize = formDescription.trim().length > 0;
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch("/api/tasks/generate-objectives", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          title: formTitle,
+          grade: formGrade,
+          subject: formSubject,
+          currentContent: formDescription.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        MessagePlugin.error(data.error || "生成失败，请重试");
+        return;
+      }
+      setObjectivesBackup(formDescription);
+      setFormDescription(data.objectives);
+      if (data.warning) {
+        MessagePlugin.warning(data.warning);
+      } else {
+        MessagePlugin.success(wasOptimize ? "已按学科核心素养优化课堂目标" : "已按学科核心素养生成课堂目标");
+      }
+    } catch {
+      MessagePlugin.error("网络错误，请重试");
+    } finally {
+      setGeneratingObjectives(false);
+    }
+  };
+
+  // 撤销 AI 生成/优化，恢复之前的内容
+  const restoreObjectives = () => {
+    if (objectivesBackup !== null) {
+      setFormDescription(objectivesBackup);
+      setObjectivesBackup(null);
+    }
   };
 
   const handleSave = async () => {
@@ -2784,6 +2845,42 @@ export default function TeacherTasksPage() {
                                 a.click();
                                 MessagePlugin.success("课堂已导出");
                               }).catch(() => MessagePlugin.error("导出失败"));
+                            }}
+                          />
+                        </Tooltip>
+                        <Tooltip content="导出手册">
+                          <Button
+                            theme="default"
+                            variant="text"
+                            size="small"
+                            icon={<DownloadIcon />}
+                            onClick={() => {
+                              const token = localStorage.getItem("token") || "";
+                              fetch(`/api/tasks/${task.id}/manual`, {
+                                headers: { Authorization: `Bearer ${token}` },
+                              })
+                                .then((res) => {
+                                  if (!res.ok) {
+                                    return res.json().then((d) => {
+                                      throw new Error(d.detail || d.error || "导出失败");
+                                    });
+                                  }
+                                  return res.blob();
+                                })
+                                .then((blob) => {
+                                  const uri = URL.createObjectURL(blob);
+                                  const a = document.createElement("a");
+                                  const safeName = task.title
+                                    .replace(/[\\/:*?"<>|\r\n\t]/g, "_")
+                                    .replace(/\s+/g, "_")
+                                    .substring(0, 30);
+                                  a.href = uri;
+                                  a.download = `${safeName}_教学手册.docx`;
+                                  a.click();
+                                  URL.revokeObjectURL(uri);
+                                  MessagePlugin.success("教学手册已导出");
+                                })
+                                .catch((err) => MessagePlugin.error(err.message || "导出失败"));
                             }}
                           />
                         </Tooltip>
@@ -3778,11 +3875,32 @@ export default function TeacherTasksPage() {
                     />
                   </div>
                 </div>
-                <label className="block text-sm text-gray-700 mb-1">课堂目标 <span className="text-red-500">*</span></label>
+                <div className="flex items-center justify-between mb-1">
+                  <label className="block text-sm text-gray-700">课堂目标 <span className="text-red-500">*</span></label>
+                  <div className="flex items-center gap-2">
+                    {objectivesBackup !== null && (
+                      <span
+                        className="text-xs text-[#0052D9] cursor-pointer hover:underline"
+                        onClick={restoreObjectives}
+                      >
+                        撤销
+                      </span>
+                    )}
+                    <Button
+                      size="small"
+                      variant="outline"
+                      theme="primary"
+                      loading={generatingObjectives}
+                      onClick={handleAIObjectives}
+                    >
+                      {formDescription.trim() ? "AI 优化" : "AI 生成"}
+                    </Button>
+                  </div>
+                </div>
                 <Textarea
                   value={formDescription}
                   onChange={(v) => setFormDescription(v)}
-                  placeholder="课堂目标（必填，用于 AI 生成）"
+                  placeholder="课堂目标（必填）。填写课题、年级、学科后，可点击右上角按钮按学科核心素养 AI 生成"
                   rows={3}
                 />
               </div>

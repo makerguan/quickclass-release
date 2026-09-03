@@ -128,7 +128,7 @@ export async function PUT(
   }
 }
 
-// DELETE: 学生删除自己的提交（级联删附件 + 物理文件）
+// DELETE: 删除提交（学生仅能删自己的；教师可删自己创建任务下的任意提交）
 export async function DELETE(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -138,13 +138,31 @@ export async function DELETE(
     const token = req.headers.get("authorization")?.replace("Bearer ", "");
     if (!token) return new Response("未登录", { status: 401 });
     const payload = await verifyToken(token);
-    if (!payload || payload.role !== "STUDENT")
-      return new Response("无权限", { status: 403 });
+    if (!payload || (payload.role !== "STUDENT" && payload.role !== "TEACHER"))
+      return new Response("你没有权限删除该作品", { status: 403 });
 
-    const auth = await authorizeStudent(id, String(payload.userId));
-    if (auth.error) return new Response(auth.error, { status: auth.status });
+    const p = await prisma.studentProject.findUnique({
+      where: { id },
+      include: {
+        attachments: true,
+        ProjectSubmission: {
+          include: { SubProject: { include: { task: { select: { teacherId: true } } } } },
+        },
+      },
+    });
+    if (!p) return new Response("提交不存在", { status: 404 });
 
-    const stored = auth.p!.attachments[0]?.storedName || null;
+    if (payload.role === "TEACHER") {
+      // 教师仅能删除自己创建任务下的作品
+      if (p.ProjectSubmission.SubProject.task.teacherId !== String(payload.userId))
+        return new Response("你没有权限删除该作品", { status: 403 });
+    } else {
+      // 学生仅能删除自己的作品
+      if (p.studentId !== String(payload.userId))
+        return new Response("你没有权限删除该作品", { status: 403 });
+    }
+
+    const stored = p.attachments[0]?.storedName || null;
 
     await dbWrite(() => prisma.studentProject.delete({ where: { id } }));
     if (stored) deleteAttachmentFile(stored);
