@@ -1417,6 +1417,7 @@ export default function TeacherTasksPage() {
     setExplorationDesignPrompt(e.designPrompt || ""); // 互动设计提示词（如果有保存的话）
     setExplorationPrompt(e.analysisPrompt || "");
     // 源码编辑区保持纯净稿（去除 AI 伴学注入代码），预览区使用含注入版本
+    // 列表接口已瘦身不再返回 htmlContent，统一从详情接口按需拉取（避免列表页传输大段HTML）
     const rawHtml = e.htmlContent || "";
     if (e.enableAiCompanion) {
       setExplorationHtml(stripAiCompanionCode(rawHtml));
@@ -1437,28 +1438,31 @@ export default function TeacherTasksPage() {
     setShowAiCompanionPrompt(false);
     setExplorationModalVisible(true);
 
-    // 如果启用了AI伴学，从API获取最新数据（含注入版HTML + 提示词，列表可能过期）
-    if (e.enableAiCompanion) {
-      (async () => {
-        try {
-          const token = localStorage.getItem("token") || "";
-          const detailRes = await fetch(`/api/exploration-activities/${e.id}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (detailRes.ok) {
-            const detail = await detailRes.json();
-            // 预览用注入版HTML（含AI伴学UI），源码区保持纯净
-            if (detail.htmlContent) {
-              setExplorationPreview(detail.htmlContent);
-            }
-            if (detail.aiCompanionPrompt && detail.aiCompanionPrompt.length > 50) {
-              setAiCompanionPromptText(detail.aiCompanionPrompt);
-              setAiCompanionStatus("ready");
-            }
+    // 从详情接口获取完整 htmlContent（列表已瘦身，编辑时按需拉取）
+    // 详情含注入版HTML + 最新提示词；预览用注入版，源码区保持纯净
+    (async () => {
+      try {
+        const token = localStorage.getItem("token") || "";
+        const detailRes = await fetch(`/api/exploration-activities/${e.id}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (detailRes.ok) {
+          const detail = await detailRes.json();
+          if (detail.htmlContent) {
+            const clean = e.enableAiCompanion ? stripAiCompanionCode(detail.htmlContent) : detail.htmlContent;
+            setExplorationHtml(clean);          // 源码编辑区：纯净稿
+            setExplorationPreview(detail.htmlContent); // 预览区：注入版
+            setOriginalHtmlForInjection(clean);
           }
-        } catch {}
-      })();
-    }
+          if (detail.aiCompanionPrompt && detail.aiCompanionPrompt.length > 50) {
+            setAiCompanionPromptText(detail.aiCompanionPrompt);
+            setAiCompanionStatus("ready");
+          }
+        }
+      } catch {
+        // 详情拉取失败则保持列表已有数据
+      }
+    })();
   };
 
   // 打开教学预览（只读 iframe）
