@@ -268,6 +268,11 @@ export function renderInsightTemplate(options: TemplateRenderOptions): string {
   let content: string;
   if (level === "pc") {
     content = replaceConversationVars(templateContent, vars as ConversationTemplateVars, isStudent);
+    // 兜底：模板未引用 {personalDialogContents} 但确有对话数据时自动追加，防止空模板/缺占位符导致对话数据丢失
+    const dlg = (vars as ConversationTemplateVars).personalDialogContents;
+    if (dlg && !templateContent.includes("{personalDialogContents}")) {
+      content += (content ? "\n\n" : "") + "## 学生对话数据\n" + dlg;
+    }
   } else {
     content = replaceTaskVars(templateContent, vars as TaskTemplateVars);
   }
