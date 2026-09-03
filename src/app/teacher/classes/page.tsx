@@ -15,6 +15,7 @@ import {
   Switch,
   Tooltip,
 } from "tdesign-react";
+import { copyText } from "@/lib/clipboard";
 import { AddIcon, ShareIcon, CopyIcon, DeleteIcon, CheckCircleIcon, UserIcon, UploadIcon, FileIcon } from "tdesign-icons-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import * as XLSX from "xlsx";
@@ -117,12 +118,9 @@ export default function TeacherClassesPage() {
     } else {
       text += `输入姓名/学号和密码（或姓名+邀请码）即可开始与AI对话学习！`;
     }
-    try {
-      await navigator.clipboard.writeText(text);
-      MessagePlugin.success("已复制到剪贴板");
-    } catch {
-      MessagePlugin.error("复制失败，请手动复制");
-    }
+    const ok = await copyText(text);
+    if (ok) MessagePlugin.success("已复制到剪贴板");
+    else MessagePlugin.error("复制失败，请手动复制");
   };
 
   const handleDeleteClass = async () => {
