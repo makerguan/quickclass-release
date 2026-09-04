@@ -1,6 +1,5 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import { readVersionInfoFromDir } from "@/lib/version-info";
 
 // 最新版本信息文件地址（存放在 Gitee 仓库中）
 const LATEST_VERSION_URL =
@@ -12,16 +11,10 @@ const LATEST_VERSION_URL =
  */
 export async function GET() {
   try {
-    // 1. 直接读取本地版本号（避免通过 HTTP 请求自身）
-    const versionPath = path.join(process.cwd(), "VERSION.md");
-    let currentVersion = "unknown";
-    if (fs.existsSync(versionPath)) {
-      const content = fs.readFileSync(versionPath, "utf-8");
-      const versionMatch = content.match(/当前版本：\*\*(v[\d.]+(?:-[\w]+)?)\*\*/);
-      if (versionMatch) {
-        currentVersion = versionMatch[1];
-      }
-    }
+    // 1. 读取本地当前版本号（避免通过 HTTP 请求自身）
+    //    优先 public/latest.json（当前版本号唯一真源），VERSION.md 兜底
+    const currentVersion =
+      readVersionInfoFromDir(process.cwd()).version || "unknown";
 
     // 2. 拉取最新版本信息
     const res = await fetch(LATEST_VERSION_URL, {

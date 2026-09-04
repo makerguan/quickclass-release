@@ -6,6 +6,7 @@ import { execSync } from "child_process";
 import { createReadStream } from "fs";
 import { createWriteStream } from "fs";
 import { Readable } from "stream";
+import { readVersionInfoFromDir } from "@/lib/version-info";
 
 const STAGING_DIR = path.join(process.cwd(), "..", "quickclass-upgrade-staging");
 
@@ -133,21 +134,11 @@ export async function POST(request: Request) {
       );
     }
 
-    // 读取版本号
+    // 读取新包版本号：优先 public/latest.json（当前版本号唯一真源），VERSION.md 兜底
+    const newPkgInfo = readVersionInfoFromDir(STAGING_DIR);
     let newVersion = "未知";
-    try {
-      const pkg = JSON.parse(
-        fs.readFileSync(path.join(STAGING_DIR, "package.json"), "utf-8")
-      );
-      if (pkg.version) newVersion = pkg.version;
-    } catch {}
-
-    // 读取 VERSION.md 获取版本号
-    const versionMdPath = path.join(STAGING_DIR, "VERSION.md");
-    if (fs.existsSync(versionMdPath)) {
-      const content = fs.readFileSync(versionMdPath, "utf-8");
-      const m = content.match(/当前版本：\*\*(v[^*]+)\*\*/);
-      if (m) newVersion = m[1];
+    if (newPkgInfo.version && newPkgInfo.version !== "unknown") {
+      newVersion = newPkgInfo.version;
     }
 
     if (!fs.existsSync(path.join(STAGING_DIR, "prisma", "schema.prisma"))) {

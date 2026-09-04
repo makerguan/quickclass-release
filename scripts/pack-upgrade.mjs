@@ -18,17 +18,18 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const VERSION_PATH = path.join(ROOT, "VERSION.md");
 const LATEST_PATH = path.join(ROOT, "public", "latest.json");
 
-// 1. 读取版本
+// 1. 读取版本：优先 public/latest.json（当前版本号唯一真源），VERSION.md 兜底
 let version = "unknown";
 let changelog = "";
-if (fs.existsSync(VERSION_PATH)) {
+if (fs.existsSync(LATEST_PATH)) {
+  const latest = JSON.parse(fs.readFileSync(LATEST_PATH, "utf-8"));
+  if (latest.version) version = latest.version;
+  changelog = latest.changelog || "";
+}
+if (version === "unknown" && fs.existsSync(VERSION_PATH)) {
   const content = fs.readFileSync(VERSION_PATH, "utf-8");
   const m = content.match(/当前版本：\*\*(v[\d.]+(?:-[\w]+)?)\*\*/);
   if (m) version = m[1];
-}
-if (fs.existsSync(LATEST_PATH)) {
-  const latest = JSON.parse(fs.readFileSync(LATEST_PATH, "utf-8"));
-  changelog = latest.changelog || "";
 }
 
 const zipName = `quickclass-upgrade-${version}.zip`;

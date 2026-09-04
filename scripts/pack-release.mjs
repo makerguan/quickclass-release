@@ -19,13 +19,16 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const RELEASE_DIR = join(ROOT, '跨平台安装包');
 
-// 读取版本信息
-const versionMd = readFileSync(join(ROOT, 'VERSION.md'), 'utf-8');
-const versionMatch = versionMd.match(/\*\*(v[^*]+)\*\*/);
-const version = versionMatch ? versionMatch[1] : 'unknown';
-
+// 读取版本信息：优先 public/latest.json（当前版本号唯一真源），VERSION.md 兜底
 const latestJson = JSON.parse(readFileSync(join(ROOT, 'public/latest.json'), 'utf-8'));
 const changelog = latestJson.changelog || '';
+let version = latestJson.version || '';
+if (!version && existsSync(join(ROOT, 'VERSION.md'))) {
+  const versionMd = readFileSync(join(ROOT, 'VERSION.md'), 'utf-8');
+  const versionMatch = versionMd.match(/\*\*(v[^*]+)\*\*/);
+  version = versionMatch ? versionMatch[1] : '';
+}
+if (!version) version = 'unknown';
 
 console.log('==========================================');
 console.log(`  QuickClass 发布打包`);

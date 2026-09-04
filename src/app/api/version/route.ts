@@ -1,31 +1,10 @@
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import { readVersionInfoFromDir } from "@/lib/version-info";
 
 export async function GET() {
   try {
-    // 读取 VERSION.md
-    const versionPath = path.join(process.cwd(), "VERSION.md");
-    let version = "unknown";
-    let changelog = "";
-
-    if (fs.existsSync(versionPath)) {
-      const content = fs.readFileSync(versionPath, "utf-8");
-      
-      // 提取版本号
-      const versionMatch = content.match(/当前版本：\*\*(v[\d.]+(?:-[\w]+)?)\*\*/);
-      if (versionMatch) {
-        version = versionMatch[1];
-      }
-
-      // 提取当前版本的更新日志
-      const changelogMatch = content.match(
-        new RegExp(`### ${version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[\\s\\S]*?(?=### |---|$)`)
-      );
-      if (changelogMatch) {
-        changelog = changelogMatch[0].trim();
-      }
-    }
+    // 版本号权威来源：public/latest.json（当前版本号唯一真源），VERSION.md 兜底
+    const { version, changelog } = readVersionInfoFromDir(process.cwd());
 
     return NextResponse.json({
       version,
