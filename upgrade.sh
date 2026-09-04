@@ -58,11 +58,19 @@ BACKUP_DIR="../quickclass-backups"
 mkdir -p "$BACKUP_DIR"
 BACKUP_FILE="$BACKUP_DIR/dev-$CURRENT_VERSION-$(date +%Y%m%d-%H%M%S).db"
 
-if [ -f "prisma/dev.db" ]; then
-    cp prisma/dev.db "$BACKUP_FILE"
+# 以 .env 的 DATABASE_URL 定位真实数据库（不写死路径，防止备份空库）
+DB_PATH="$(node scripts/db-locate.mjs 2>/dev/null)" || DB_PATH=""
+if [ -z "$DB_PATH" ]; then
+    echo "  [错误] 无法定位数据库文件路径，请检查 .env 中的 DATABASE_URL"
+    exit 1
+fi
+
+if [ -f "$DB_PATH" ] && [ -s "$DB_PATH" ]; then
+    cp "$DB_PATH" "$BACKUP_FILE"
     echo "  ✓ 数据库已备份到: $BACKUP_FILE"
 else
-    echo "  ⚠ 未找到数据库文件，跳过备份"
+    echo "  [错误] 数据库文件缺失或为空: $DB_PATH，已中止升级（数据安全优先）"
+    exit 1
 fi
 
 # 2. 停止服务
@@ -87,10 +95,11 @@ echo "  ✓ 已解压到临时目录"
 echo ""
 echo "[4/6] 迁移数据库和配置..."
 
-# 迁移数据库
-if [ -f "prisma/dev.db" ]; then
-    cp prisma/dev.db "$TEMP_DIR/prisma/dev.db"
-    echo "  ✓ 数据库已迁移"
+# 迁移数据库（按真实路径迁移到新目录默认位置 prisma/dev.db）
+if [ -f "$DB_PATH" ] && [ -s "$DB_PATH" ]; then
+    mkdir -p "$TEMP_DIR/prisma"
+    cp "$DB_PATH" "$TEMP_DIR/prisma/dev.db"
+    echo "  ✓ 数据库已迁移（源: $DB_PATH）"
 fi
 
 # 迁移 AI 配置（如果有）
