@@ -31,6 +31,11 @@ export function ensureUploadDir() {
   }
 }
 
+// 清理目录/文件名中的非法字符
+export function sanitizeName(name: string): string {
+  return name.replace(/[/\0]/g, "_").trim() || "未命名";
+}
+
 export function getExt(filename: string): string {
   const idx = filename.lastIndexOf(".");
   return idx >= 0 ? filename.slice(idx + 1).toLowerCase() : "";
@@ -65,12 +70,35 @@ export function validateFile(
 }
 
 // 写入文件，返回 { storedName, originalName, fileType, fileSize }
+// hierarchy 可选，传入后按"课堂/项目/班级/学生_时间戳.扩展名"层级存储
 export async function saveUploadedFile(
-  file: File
+  file: File,
+  hierarchy?: {
+    taskName: string;
+    projectName: string;
+    className: string;
+    studentName: string;
+  }
 ): Promise<{ storedName: string; originalName: string; fileType: string; fileSize: number }> {
   ensureUploadDir();
   const ext = getExt(file.name);
-  const storedName = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}.${ext}`;
+  const timestamp = Date.now();
+  const random = Math.random().toString(36).slice(2, 10);
+
+  let storedName: string;
+  if (hierarchy) {
+    const subDir = [
+      sanitizeName(hierarchy.taskName),
+      sanitizeName(hierarchy.projectName),
+      sanitizeName(hierarchy.className),
+    ].join("/");
+    const fullDir = path.join(UPLOAD_DIR, subDir);
+    fs.mkdirSync(fullDir, { recursive: true });
+    storedName = `${subDir}/${sanitizeName(hierarchy.studentName)}_${timestamp}-${random}.${ext}`;
+  } else {
+    storedName = `${timestamp}-${random}.${ext}`;
+  }
+
   const buffer = Buffer.from(await file.arrayBuffer());
   fs.writeFileSync(path.join(UPLOAD_DIR, storedName), buffer);
   return {

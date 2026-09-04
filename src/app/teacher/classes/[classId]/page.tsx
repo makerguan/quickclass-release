@@ -255,6 +255,9 @@ export default function ClassDetailPage() {
             <p className="font-medium mb-1">此操作将同时删除：</p>
             <ul className="list-disc list-inside space-y-0.5 text-red-600">
               <li>该学生的所有对话记录和消息</li>
+              <li>该学生的互动探究提交和学伴对话记录</li>
+              <li>该学生的练习记录和作业答题数据</li>
+              <li>该学生的项目提交和附件数据</li>
               <li>该学生的 AI 分析结果</li>
             </ul>
             <p className="mt-2 font-medium">此操作不可撤销！</p>
@@ -311,8 +314,10 @@ export default function ClassDetailPage() {
             <p className="font-medium mb-1">此操作将同时删除：</p>
             <ul className="list-disc list-inside space-y-0.5 text-red-600">
               <li>这些学生的所有对话记录和消息</li>
+              <li>这些学生的互动探究提交和学伴对话记录</li>
+              <li>这些学生的练习记录和作业答题数据</li>
+              <li>这些学生的项目提交和附件数据</li>
               <li>这些学生的 AI 分析结果</li>
-              <li>这些学生的互动探究和作业答题数据</li>
             </ul>
             <p className="mt-2 font-medium">此操作不可撤销！</p>
           </div>

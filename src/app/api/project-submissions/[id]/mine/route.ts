@@ -124,7 +124,23 @@ export async function POST(
     const errMsg = validateFile(file, sub.category, sub.fileSizeLimit);
     if (errMsg) return new Response(errMsg, { status: 400 });
 
-    const saved = await saveUploadedFile(file);
+    // 查询层级名称用于文件存储路径
+    const [classInfo, subInfo, studentInfo] = await Promise.all([
+      prisma.class.findUnique({ where: { id: classId }, select: { name: true } }),
+      prisma.projectSubmission.findUnique({
+        where: { id },
+        include: { SubProject: { include: { task: { select: { title: true } } } } },
+      }),
+      prisma.user.findUnique({ where: { id: studentId }, select: { name: true } }),
+    ]);
+    const hierarchy = {
+      taskName: subInfo?.SubProject?.task?.title || "未知课堂",
+      projectName: subInfo?.title || "未知项目",
+      className: classInfo?.name || "未知班级",
+      studentName: studentInfo?.name || "未知学生",
+    };
+
+    const saved = await saveUploadedFile(file, hierarchy);
 
     const created = await dbWrite(() =>
       prisma.studentProject.create({
