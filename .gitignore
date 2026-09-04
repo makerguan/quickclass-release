@@ -2,12 +2,6 @@
 
 # dependencies
 /node_modules
-/.pnp
-.pnp.js
-.yarn/install-state.gz
-
-# testing
-/coverage
 
 # next.js
 /.next/
@@ -19,11 +13,6 @@
 # distribution
 /dist
 *.zip
-quickclass-docker.tar
-
-# distribution scripts
-scripts/run-docker.bat
-scripts/stop-docker.bat
 
 # misc
 .DS_Store
@@ -31,33 +20,27 @@ scripts/stop-docker.bat
 
 # debug
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
 # vercel
 .vercel
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts
 
 /src/generated/prisma
 
-# docker image (太大，不提交)
-quickclass-offline.tar
-quickclass-offline.tar.gz
-quickclass-dist.zip
-
-# windows distribution
-/win/
+# database
 prisma/dev.db
 prisma/dev.db-journal
 
 # test artifacts
 .playwright-cli/
 
-# 开发文档（秘密，不同步到测试/安装包，不推送到 GitHub）
-README.md
+# 环境变量（每个部署环境独立配置，不提交）
+.env
+
+# 数据库嵌套目录（历史遗留，不提交）
+prisma/prisma/
 
 # 不跟踪分发目录（各自有独立仓库自管）
 dist-test/
