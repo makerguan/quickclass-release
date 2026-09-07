@@ -1,0 +1,6 @@
+{
+  "version": "v2026.09.03-V2",
+  "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
+  "changelog": "课堂管理列表加载大幅提速；学生端课堂列表优先渲染、探究内容 HTML 懒加载；修复对话活动分析数据丢失、研究项目报告收集为空与探究项目 500；复制功能 HTTP 兼容优化",
+  "releaseDate": "2026-09-03"
+}
