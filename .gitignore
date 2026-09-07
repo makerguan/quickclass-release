@@ -29,9 +29,12 @@ npm-debug.log*
 
 /src/generated/prisma
 
-# database
-prisma/dev.db
-prisma/dev.db-journal
+# database（DATABASE_URL 的 file:./prisma/dev.db 由 Prisma 相对 schema 目录解析，
+# 实际库文件位于 prisma/prisma/dev.db）
+**/dev.db
+**/dev.db-journal
+**/dev.db-wal
+**/dev.db-shm
 
 # test artifacts
 .playwright-cli/
@@ -39,12 +42,10 @@ prisma/dev.db-journal
 # 环境变量（每个部署环境独立配置，不提交）
 .env
 
-# 数据库嵌套目录（历史遗留，不提交）
-prisma/prisma/
-
 # 不跟踪分发目录（各自有独立仓库自管）
 dist-test/
 跨平台安装包/
+prisma/prisma/
 
 # 用户上传文件（每个部署环境独立生成）
 uploads/
