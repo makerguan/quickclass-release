@@ -49,12 +49,22 @@ if (-not (Test-Path $BackupDir)) {
 $Timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $BackupFile = Join-Path $BackupDir "dev-$CurrentVersion-$Timestamp.db"
 
-if (Test-Path "prisma\dev.db") {
-    Copy-Item "prisma\dev.db" $BackupFile -Force
-    Write-Host "  ✓ 数据库已备份到: $BackupFile" -ForegroundColor Green
-} else {
-    Write-Host "  ⚠ 未找到数据库文件，跳过备份" -ForegroundColor Yellow
+# 以 .env 的 DATABASE_URL 定位真实数据库（不写死路径，防止备份空库）
+$DbPath = (node scripts\db-locate.mjs 2>$null | Select-Object -First 1)
+if ([string]::IsNullOrWhiteSpace($DbPath)) {
+    Write-Host "  [错误] 无法定位数据库文件路径，请检查 .env 中的 DATABASE_URL" -ForegroundColor Red
+    exit 1
 }
+if (-not (Test-Path $DbPath)) {
+    Write-Host "  [错误] 数据库文件缺失: $DbPath，已中止升级（数据安全优先）" -ForegroundColor Red
+    exit 1
+}
+if ((Get-Item $DbPath).Length -eq 0) {
+    Write-Host "  [错误] 数据库文件为空(0 字节): $DbPath，已中止升级（数据安全优先）" -ForegroundColor Red
+    exit 1
+}
+Copy-Item $DbPath $BackupFile -Force
+Write-Host "  ✓ 数据库已备份到: $BackupFile" -ForegroundColor Green
 
 # 2. 停止服务
 Write-Host ""
@@ -105,10 +115,12 @@ try {
 Write-Host ""
 Write-Host "[4/6] 迁移数据库和配置..." -ForegroundColor Yellow
 
-# 迁移数据库
-if (Test-Path "prisma\dev.db") {
-    Copy-Item "prisma\dev.db" "$TempDir\prisma\dev.db" -Force
-    Write-Host "  ✓ 数据库已迁移" -ForegroundColor Green
+# 迁移数据库（按真实路径迁移到新目录默认位置 prisma\dev.db）
+if (Test-Path $DbPath) {
+    $TempPrisma = Join-Path $TempDir "prisma"
+    if (-not (Test-Path $TempPrisma)) { New-Item -ItemType Directory -Path $TempPrisma -Force | Out-Null }
+    Copy-Item $DbPath (Join-Path $TempPrisma "dev.db") -Force
+    Write-Host "  ✓ 数据库已迁移（源: $DbPath）" -ForegroundColor Green
 }
 
 # 迁移环境变量

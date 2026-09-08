@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -9,6 +10,50 @@ import { Readable } from "stream";
 import { readVersionInfoFromDir } from "@/lib/version-info";
 
 const STAGING_DIR = path.join(process.cwd(), "..", "quickclass-upgrade-staging");
+
+/**
+ * 解析当前正在使用的 SQLite 数据库绝对路径（数据安全：升级备份必须以"正在用的库"为对象）
+ *
+ * 规则：
+ *  1. 以运行时 DATABASE_URL 为唯一事实来源（Next.js 已自动加载 .env，与 Prisma 一致）；
+ *  2. file: 相对路径按 schema.prisma 所在目录（项目 prisma/ 目录）解析；
+ *  3. 未配置 DATABASE_URL 时回退官方默认 file:./dev.db；
+ *  4. DATABASE_URL 不是 file: 协议（QuickClass 仅支持 SQLite）时返回 null，调用方须中止升级。
+ */
+function resolveRealDbPath(): string | null {
+  const url = (process.env.DATABASE_URL || "file:./dev.db").trim();
+  if (!url.startsWith("file:")) return null;
+
+  const rest = url.slice("file:".length).replace(/\\/g, "/").trim();
+  if (/^[a-zA-Z]:\//.test(rest) || rest.startsWith("/")) {
+    // 绝对路径（Windows 盘符 / Unix 根路径）
+    return path.resolve(rest);
+  }
+  if (rest === "") return null;
+
+  const schemaDir = locateSchemaDir();
+  if (!schemaDir) return null;
+  return path.resolve(schemaDir, rest);
+}
+
+/** 从当前目录向上查找 prisma/schema.prisma 所在目录 */
+function locateSchemaDir(): string | null {
+  let dir = process.cwd();
+  for (let i = 0; i < 10; i++) {
+    if (fs.existsSync(path.join(dir, "prisma", "schema.prisma"))) {
+      return path.join(dir, "prisma");
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  return null;
+}
+
+/** 计算文件 md5（十六进制） */
+function md5File(filePath: string): string {
+  return crypto.createHash("md5").update(fs.readFileSync(filePath)).digest("hex");
+}
 
 /**
  * 使用 Node.js 原生 API 解压 zip 文件（跨平台兼容）
@@ -157,15 +202,51 @@ export async function POST(request: Request) {
       );
     }
 
-    // 备份当前数据库到 staging
-    const currentDb = path.join(process.cwd(), "prisma", "dev.db");
-    if (fs.existsSync(currentDb)) {
-      const stagingPrisma = path.join(STAGING_DIR, "prisma");
-      if (!fs.existsSync(stagingPrisma)) {
-        fs.mkdirSync(stagingPrisma, { recursive: true });
-      }
-      fs.copyFileSync(currentDb, path.join(stagingPrisma, "dev.db"));
+    // ===== 备份当前数据库（数据安全优先）=====
+    // 1) 以运行时 DATABASE_URL 定位真实数据库，绝不写死路径（历史 bug：写死 prisma/dev.db 备份到空库）
+    const currentDb = resolveRealDbPath();
+    if (!currentDb) {
+      cleanStaging();
+      return NextResponse.json(
+        { error: "无法定位当前数据库：DATABASE_URL 不是 file: SQLite 路径，已中止升级（数据安全优先）" },
+        { status: 400 }
+      );
     }
+
+    // 2) 自检：数据库文件必须真实存在且非空，防止"备份空库/错库"后仍继续升级
+    if (!fs.existsSync(currentDb)) {
+      cleanStaging();
+      return NextResponse.json(
+        { error: `未找到数据库文件: ${currentDb}，已中止升级（数据安全优先，请确认 .env 中 DATABASE_URL 正确）` },
+        { status: 400 }
+      );
+    }
+    const dbStat = fs.statSync(currentDb);
+    if (!dbStat.isFile() || dbStat.size === 0) {
+      cleanStaging();
+      return NextResponse.json(
+        { error: `数据库文件为空(0 字节): ${currentDb}，拒绝以空库继续升级（数据安全优先）` },
+        { status: 400 }
+      );
+    }
+
+    // 3) 备份到 staging，并校验备份完整性（大小与 md5 一致才允许继续）
+    const stagingPrisma = path.join(STAGING_DIR, "prisma");
+    if (!fs.existsSync(stagingPrisma)) {
+      fs.mkdirSync(stagingPrisma, { recursive: true });
+    }
+    const stagedDb = path.join(stagingPrisma, "dev.db");
+    fs.copyFileSync(currentDb, stagedDb);
+    const backupOk =
+      fs.statSync(stagedDb).size === dbStat.size && md5File(stagedDb) === md5File(currentDb);
+    if (!backupOk) {
+      cleanStaging();
+      return NextResponse.json(
+        { error: "数据库备份校验失败（大小或 md5 不一致），已中止升级（数据安全优先）" },
+        { status: 500 }
+      );
+    }
+    console.log(`[升级] 数据库已备份: ${currentDb} (${dbStat.size} bytes)`);
 
     // 复制 .env.local 到 staging（如果有）
     const envLocal = path.join(process.cwd(), ".env.local");

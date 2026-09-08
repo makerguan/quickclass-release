@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button, MessagePlugin } from "tdesign-react";
 import { CheckCircleIcon, ErrorCircleIcon } from "tdesign-icons-react";
+import { normalizeQuestionType } from "@/lib/question-type";
 
 interface Question {
   id: string;
@@ -12,6 +13,15 @@ interface Question {
   answer: string;
   difficulty: string;
   order: number;
+}
+
+/** 后端返回的每题判定结果（前端一律以此为准，不再自行判定对错） */
+interface AnswerResult {
+  isCorrect: boolean;
+  score?: number | null;
+  maxScore?: number | null;
+  comment?: string | null;
+  gradedBy?: string | null;
 }
 
 interface QuizPanelProps {
@@ -29,6 +39,8 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
   const [result, setResult] = useState<{ score: number; totalQuestions: number; correctCount: number; passScore?: number } | null>(null);
+  // 每题的后端判定结果：key = questionId
+  const [answerResults, setAnswerResults] = useState<Record<string, AnswerResult>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -40,6 +52,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
     setSubmitted(false);
     setAnswers({});
     setResult(null);
+    setAnswerResults({});
     setCurrentIndex(0);
     setLoading(true);
 
@@ -67,8 +80,19 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
             correctCount: correct 
           });
           const ansMap: Record<string, string> = {};
-          answersData.forEach((a: any) => { ansMap[a.questionId] = a.selectedAnswer; });
+          const resultMap: Record<string, AnswerResult> = {};
+          answersData.forEach((a: any) => {
+            ansMap[a.questionId] = a.selectedAnswer;
+            resultMap[a.questionId] = {
+              isCorrect: !!a.isCorrect,
+              score: a.score,
+              maxScore: a.maxScore,
+              comment: a.comment,
+              gradedBy: a.gradedBy,
+            };
+          });
           setAnswers(ansMap);
+          setAnswerResults(resultMap);
           
           // 如果已提交但 questions 为空（从缓存恢复的情况），强制刷新题目数据以显示答案
           if (answersData.length > 0 && (!quizData.questions || quizData.questions.length === 0)) {
@@ -118,7 +142,22 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
       if (res.ok) {
         setSubmitted(true);
         setResult({ score: data.score, totalQuestions: data.totalQuestions, correctCount: data.correctCount, passScore: data.passScore });
-        MessagePlugin.success(`提交成功！得分：${data.score}分`);
+        // 以服务端判定为准
+        const resultMap: Record<string, AnswerResult> = {};
+        (data.results || []).forEach((r: any) => {
+          resultMap[r.questionId] = {
+            isCorrect: !!r.isCorrect,
+            score: r.score,
+            maxScore: r.maxScore,
+            comment: r.comment,
+          };
+        });
+        setAnswerResults(resultMap);
+        if (data.ungradedCount > 0) {
+          MessagePlugin.warning(`已提交，但有 ${data.ungradedCount} 道题未能自动批改，请联系老师`);
+        } else {
+          MessagePlugin.success(`提交成功！得分：${data.score}分`);
+        }
         onSubmit();
       } else {
         // 如果是"已提交"错误（403），说明后端已有完整记录，锁定界面
@@ -145,7 +184,8 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
   }
 
   const getOptions = (q: any): Record<string, string> => {
-    if (q?.type === "TRUE_FALSE" || q?.type === "JUDGEMENT") {
+    const t = normalizeQuestionType(q?.type);
+    if (t === "TRUE_FALSE" || t === "JUDGEMENT") {
       return { T: "正确", F: "错误" };
     }
     const opts = parseOptions(q?.options || {});
@@ -155,40 +195,65 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
   const currentQ = questions[currentIndex];
   const opts = getOptions(currentQ);
 
+  // 回退判定：仅在后端未返回该题结果时使用，规则与后端 ai-grading 保持一致
+  // （trim + 大写；多选题按集合比较，顺序无关），避免前后端口径不一
+  const isChoiceCorrect = (q: Question, userAns?: string) => {
+    const norm = (s?: string | null) => (s || "").trim().toUpperCase();
+    const correct = norm(q.answer);
+    const selected = norm(userAns);
+    if (!selected) return false;
+    if (normalizeQuestionType(q.type) === "MULTIPLE_CHOICE") {
+      const asSet = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean).sort().join(",");
+      return asSet(correct) === asSet(selected);
+    }
+    return correct === selected;
+  };
+
   // 已提交：渲染全部题目卡片
   const renderSubmittedAll = () => (
     <div className="flex-1 overflow-y-auto p-4 space-y-4">
       {questions.map((q, idx) => {
         const qOpts = getOptions(q);
         const userAns = answers[q.id];
-        // 多选题：顺序无关，按集合比较（先 trim、大写、过滤空、排序、再 join）
-        const normalizeChoice = (s: string | undefined | null) =>
-          (s || "").split(",").map(x => x.trim().toUpperCase()).filter(Boolean).sort().join(",");
-        const isRight = q.type === "MULTIPLE_CHOICE"
-          ? normalizeChoice(q.answer) === normalizeChoice(userAns)
-          : q.answer === userAns;
+        // 一律以后端判定为准，前端不再自行判定对错
+        const backend = answerResults[q.id];
+        const isRight = backend ? backend.isCorrect : isChoiceCorrect(q, userAns);
+        const ungraded = !!backend && backend.gradedBy === "pending";
         return (
           <div key={q.id} className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
             {/* 题号和题目 */}
             <div className="flex items-start gap-3 mb-4">
               <div className={`w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold ${
-                isRight ? "bg-green-100 text-green-600" : "bg-red-100 text-red-500"
+                ungraded ? "bg-orange-100 text-orange-500" : isRight ? "bg-green-100 text-green-600" : "bg-red-100 text-red-500"
               }`}>
-                {isRight ? "✓" : "✗"}
+                {ungraded ? "?" : isRight ? "✓" : "✗"}
               </div>
               <div className="flex-1">
-                <div className="text-sm font-medium text-[#63666F] mb-1">第 {idx + 1} 题</div>
+                <div className="text-sm font-medium text-[#63666F] mb-1 flex items-center gap-2">
+                  <span>第 {idx + 1} 题</span>
+                  {ungraded && (
+                    <span className="text-xs px-1.5 py-0.5 rounded bg-orange-100 text-orange-600">未批改</span>
+                  )}
+                  {!ungraded && backend?.maxScore ? (
+                    <span className="text-xs text-[#8B8F99]">{backend.score ?? 0} / {backend.maxScore} 分</span>
+                  ) : null}
+                </div>
                 <div className="text-base font-medium text-[#1A1A1A]">{q.content}</div>
+                {backend?.comment && !ungraded && (
+                  <div className="text-xs text-[#8B8F99] mt-1">评语：{backend.comment}</div>
+                )}
               </div>
             </div>
             {/* 选项 */}
             <div className="space-y-2 ml-11">
               {Object.entries(qOpts).map(([k, v]) => {
-                const userList = (userAns || "").split(",").filter(Boolean);
-                const correctList = (q.answer || "").split(",").map(s => s.trim()).filter(Boolean);
-                const isMultiCheck = q.type === "MULTIPLE_CHOICE";
-                const isSelected = isMultiCheck ? userList.includes(k) : userAns === k;
-                const isCorrect = isMultiCheck ? correctList.includes(k) : q.answer === k;
+                // 与后端一致：统一大写 + trim，避免大小写/空格导致判定偏差
+                const key = String(k).trim().toUpperCase();
+                const userList = (userAns || "").toUpperCase().split(",").map(s => s.trim()).filter(Boolean);
+                const correctList = (q.answer || "").toUpperCase().split(",").map(s => s.trim()).filter(Boolean);
+                const isMultiCheck = normalizeQuestionType(q.type) === "MULTIPLE_CHOICE";
+                const isSelected = isMultiCheck ? userList.includes(key) : userList.join(",") === key;
+                const isCorrect = isMultiCheck ? correctList.includes(key) : correctList.join(",") === key;
                 let bgClass = "bg-gray-50";
                 if (isCorrect) bgClass = "bg-green-50 border border-green-200";
                 else if (isSelected && !isCorrect) bgClass = "bg-red-50 border border-red-200";

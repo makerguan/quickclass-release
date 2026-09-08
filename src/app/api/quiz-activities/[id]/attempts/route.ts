@@ -3,6 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { aiGrade, GradingQuestion } from "@/lib/ai-grading";
 
+/** 系统未返回判定时的评语，用于把"未批改"与"答错"区分开 */
+const UNGRADED_COMMENT = "未批改：系统未返回该题判定，请联系教师重新批改";
+
 // POST: 提交作业答案（含AI批阅主观题）
 export async function POST(
   req: NextRequest,
@@ -59,7 +62,9 @@ export async function POST(
     const gradingResult = await aiGrade(gradingQuestions, answers, false);
 
     // 确保 attempt 记录存在
-    let attempt = existingAttempt;
+    // 显式声明为最小结构：existingAttempt 带 QuestionAttempt 关系，
+    // 与 create() 的返回类型不兼容，这里只需要 id
+    let attempt: { id: string } | null = existingAttempt;
     if (!attempt) {
       attempt = await prisma.quizAttempt.create({
         data: { userId, quizActivityId: id },
@@ -78,7 +83,9 @@ export async function POST(
       const maxScore = grading?.maxScore != null
         ? grading.maxScore
         : perQuestionMax;
-      return { a, question, isCorrect, score, maxScore, grading };
+      // 系统未返回该题判定（题型漏批改 / AI 批阅失败）→ 显式标记，不再与"答错"混淆
+      const ungraded = !grading;
+      return { a, question, isCorrect, score, maxScore, grading, ungraded };
     });
 
     const correctCount = questionResults.filter((r) => r.isCorrect).length;
@@ -101,8 +108,8 @@ export async function POST(
             isCorrect: r.isCorrect,
             score: r.score,
             maxScore: r.maxScore,
-            comment: r.grading?.comment,
-            gradedBy: "ai",
+            comment: r.grading?.comment ?? (r.ungraded ? UNGRADED_COMMENT : null),
+            gradedBy: r.ungraded ? "pending" : "ai",
           },
         });
       }
@@ -128,7 +135,21 @@ export async function POST(
       totalQuestions: quiz.Question.length,
       correctCount,
       passScore: quiz.passScore ?? 60,
-      results: gradingResult.results,
+      ungradedCount: questionResults.filter((r) => r.ungraded).length,
+      // 未批改的题也一并返回，前端据此显示"未批改"而不是当成答错
+      results: [
+        ...gradingResult.results,
+        ...questionResults
+          .filter((r) => r.ungraded)
+          .map((r) => ({
+            questionId: r.a.questionId,
+            score: 0,
+            maxScore: r.maxScore,
+            isCorrect: false,
+            comment: UNGRADED_COMMENT,
+            gradedBy: "pending",
+          })),
+      ],
     });
   } catch (error) {
     console.error("提交作业失败:", error);
@@ -174,7 +195,9 @@ export async function GET(
         selectedAnswer: qa.selectedAnswer,
         isCorrect: qa.isCorrect,
         score: qa.score,
+        maxScore: qa.maxScore,
         comment: qa.comment,
+        gradedBy: qa.gradedBy,
         // 包含题目信息（用于显示标准答案）
         question: qa.Question,
       })),

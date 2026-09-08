@@ -35,6 +35,7 @@ import {
   SaveIcon,
   FileIcon,
   DownloadIcon,
+  BookIcon,
   BrowseIcon,
 } from "tdesign-icons-react";
 import Link from "next/link";
@@ -2879,6 +2880,45 @@ export default function TeacherTasksPage() {
                                   a.click();
                                   URL.revokeObjectURL(uri);
                                   MessagePlugin.success("教学手册已导出");
+                                })
+                                .catch((err) => MessagePlugin.error(err.message || "导出失败"));
+                            }}
+                          />
+                        </Tooltip>
+                        <Tooltip content="导出学习手册">
+                          <Button
+                            theme="default"
+                            variant="text"
+                            size="small"
+                            icon={<BookIcon />}
+                            onClick={() => {
+                              const token = localStorage.getItem("token") || "";
+                              fetch(`/api/tasks/${task.id}/study-guide`, {
+                                headers: { Authorization: `Bearer ${token}` },
+                              })
+                                .then((res) => {
+                                  if (!res.ok) {
+                                    return res.json().then((d) => {
+                                      throw new Error(d.detail || d.error || "导出失败");
+                                    });
+                                  }
+                                  return res.blob();
+                                })
+                                .then((blob) => {
+                                  const uri = URL.createObjectURL(blob);
+                                  const a = document.createElement("a");
+                                  const safeName = task.title
+                                    .replace(
+                                      /[\\/:*?"<>|\r\n\t\s·•,，。、？！：；…—–""''‘’《》〈〉【】（）()\[\]]+/g,
+                                      "_"
+                                    )
+                                    .replace(/^_+|_+$/g, "")
+                                    .substring(0, 30);
+                                  a.href = uri;
+                                  a.download = `${safeName}_学习手册.docx`;
+                                  a.click();
+                                  URL.revokeObjectURL(uri);
+                                  MessagePlugin.success("学习手册已导出");
                                 })
                                 .catch((err) => MessagePlugin.error(err.message || "导出失败"));
                             }}

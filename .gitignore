@@ -2,12 +2,6 @@
 
 # dependencies
 /node_modules
-/.pnp
-.pnp.js
-.yarn/install-state.gz
-
-# testing
-/coverage
 
 # next.js
 /.next/
@@ -19,11 +13,6 @@
 # distribution
 /dist
 *.zip
-quickclass-docker.tar
-
-# distribution scripts
-scripts/run-docker.bat
-scripts/stop-docker.bat
 
 # misc
 .DS_Store
@@ -31,37 +20,34 @@ scripts/stop-docker.bat
 
 # debug
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
 
 # vercel
 .vercel
 
 # typescript
 *.tsbuildinfo
-next-env.d.ts
 
 /src/generated/prisma
 
-# docker image (太大，不提交)
-quickclass-offline.tar
-quickclass-offline.tar.gz
-quickclass-dist.zip
-
-# windows distribution
-/win/
-prisma/dev.db
-prisma/dev.db-journal
+# database（DATABASE_URL 的 file:./prisma/dev.db 由 Prisma 相对 schema 目录解析，
+# 实际库文件位于 prisma/prisma/dev.db）
+**/dev.db
+**/dev.db-journal
+**/dev.db-wal
+**/dev.db-shm
+# 数据库备份（含真实账户数据，绝不入库）
+**/dev.db.bak*
 
 # test artifacts
 .playwright-cli/
 
-# 开发文档（秘密，不同步到测试/安装包，不推送到 GitHub）
-README.md
+# 环境变量（每个部署环境独立配置，不提交）
+.env
 
 # 不跟踪分发目录（各自有独立仓库自管）
 dist-test/
 跨平台安装包/
+prisma/prisma/
 
-# 本地密钥，禁止提交
-.env
+# 用户上传文件（每个部署环境独立生成）
+uploads/

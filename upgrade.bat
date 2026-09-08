@@ -63,12 +63,23 @@ for /f "tokens=2 delims==" %%a in ('wmic OS Get localdatetime /value') do set "D
 set "TIMESTAMP=%DT:~0,8%-%DT:~8,6%"
 set "BACKUP_FILE=%BACKUP_DIR%\dev-%CURRENT_VERSION%-%TIMESTAMP%.db"
 
-if exist "prisma\dev.db" (
-    copy "prisma\dev.db" "%BACKUP_FILE%" >nul
-    echo   [OK] 数据库已备份到: %BACKUP_FILE%
-) else (
-    echo   [!] 未找到数据库文件，跳过备份
+rem 以 .env 的 DATABASE_URL 定位真实数据库（不写死路径，防止备份空库）
+set "DB_PATH="
+for /f "delims=" %%i in ('node scripts\db-locate.mjs 2^>nul') do set "DB_PATH=%%i"
+if not defined DB_PATH (
+    echo   [错误] 无法定位数据库文件路径，请检查 .env 中的 DATABASE_URL
+    exit /b 1
 )
+if not exist "%DB_PATH%" (
+    echo   [错误] 数据库文件缺失: %DB_PATH%，已中止升级（数据安全优先）
+    exit /b 1
+)
+for %%z in ("%DB_PATH%") do if "%%~zz"=="0" (
+    echo   [错误] 数据库文件为空(0 字节): %DB_PATH%，已中止升级（数据安全优先）
+    exit /b 1
+)
+copy "%DB_PATH%" "%BACKUP_FILE%" >nul
+echo   [OK] 数据库已备份到: %BACKUP_FILE%
 
 echo.
 echo [2/6] 停止当前服务...
@@ -105,10 +116,11 @@ echo   [OK] 已解压到临时目录
 echo.
 echo [4/6] 迁移数据库和配置...
 
-REM 迁移数据库
-if exist "prisma\dev.db" (
-    copy "prisma\dev.db" "%TEMP_DIR%\prisma\dev.db" >nul
-    echo   [OK] 数据库已迁移
+REM 迁移数据库（按真实路径迁移到新目录默认位置 prisma\dev.db）
+if exist "%DB_PATH%" (
+    if not exist "%TEMP_DIR%\prisma" mkdir "%TEMP_DIR%\prisma" >nul
+    copy "%DB_PATH%" "%TEMP_DIR%\prisma\dev.db" >nul
+    echo   [OK] 数据库已迁移（源: %DB_PATH%）
 )
 
 REM 迁移环境变量

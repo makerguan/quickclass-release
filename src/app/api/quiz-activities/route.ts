@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { getAIConfig } from "@/lib/ai";
 import { buildQuizGeneratePrompt, parseQuestionsFromAIResponse } from "@/lib/prompts/quiz";
+import { normalizeQuestionType } from "@/lib/question-type";
 
 export async function POST(req: NextRequest) {
   try {
@@ -99,7 +100,8 @@ export async function POST(req: NextRequest) {
               updatedAt: new Date(),
               Question: {
                 create: parsed.map((q, idx) => ({
-                  type: q.type || "SINGLE_CHOICE",
+                  // 二次归一化：确保入库的是规范题型，避免批改时被白名单漏掉
+                  type: normalizeQuestionType(q.type) || "SINGLE_CHOICE",
                   content: q.content,
                   options: typeof q.options === "string" ? q.options : JSON.stringify(q.options || {}),
                   answer: q.answer,

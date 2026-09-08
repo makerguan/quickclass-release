@@ -355,6 +355,11 @@ export interface ManualProject {
   fileSizeLimit?: number;
 }
 
+export interface ManualKnowledgeBase {
+  name?: string;
+  content?: string;
+}
+
 export interface ManualTaskInput {
   title?: string;
   description?: string;
@@ -362,6 +367,7 @@ export interface ManualTaskInput {
   subject?: string;
   teacher?: string;
   school?: string;
+  knowledgeBases?: ManualKnowledgeBase[];
   presetConversations?: ManualConversation[];
   quizActivities?: ManualQuizActivity[];
   explorations?: ManualExploration[];

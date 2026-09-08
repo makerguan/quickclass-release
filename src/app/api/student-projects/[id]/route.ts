@@ -95,7 +95,24 @@ export async function PUT(
     if (file && file.size > 0) {
       const errMsg = validateFile(file, auth.p!.ProjectSubmission.category, auth.p!.ProjectSubmission.fileSizeLimit);
       if (errMsg) return new Response(errMsg, { status: 400 });
-      const saved = await saveUploadedFile(file);
+
+      // 查询层级名称用于文件存储路径
+      const [classInfo, subInfo, studentInfo] = await Promise.all([
+        prisma.class.findUnique({ where: { id: auth.p!.classId }, select: { name: true } }),
+        prisma.projectSubmission.findUnique({
+          where: { id: auth.p!.submissionId },
+          include: { SubProject: { include: { task: { select: { title: true } } } } },
+        }),
+        prisma.user.findUnique({ where: { id: auth.p!.studentId }, select: { name: true } }),
+      ]);
+      const hierarchy = {
+        taskName: subInfo?.SubProject?.task?.title || "未知课堂",
+        projectName: subInfo?.title || "未知项目",
+        className: classInfo?.name || "未知班级",
+        studentName: studentInfo?.name || "未知学生",
+      };
+
+      const saved = await saveUploadedFile(file, hierarchy);
       oldStored = auth.p!.attachments[0]?.storedName || null;
       updateData.attachments = {
         upsert: {

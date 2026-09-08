@@ -62,7 +62,16 @@ console.log("🔧 生成启动脚本...");
 // --- start.sh ---
 const startSh = `#!/bin/bash
 cd "$(dirname "$0")"
-export DATABASE_URL="file:./dev.db"
+
+# 数据库连接以 .env 为唯一事实来源；没有 .env 时用模板生成默认配置（默认库: prisma/dev.db）
+if [ ! -f ".env" ]; then cp .env.example .env; fi
+
+# 定位当前真实数据库绝对路径（读 .env 的 DATABASE_URL 并按 schema 目录解析）
+DB_PATH="\$(node scripts/db-locate.mjs 2>/dev/null)" || DB_PATH=""
+if [ -z "\$DB_PATH" ]; then
+    echo "[错误] 无法定位数据库文件路径，请检查 .env 中的 DATABASE_URL"
+    exit 1
+fi
 
 echo "=========================================="
 echo "   QuickClass 启动器 ${version}"
@@ -75,16 +84,26 @@ PENDING_FILE=".upgrade-pending"
 if [ -f "\$PENDING_FILE" ]; then
     echo "[升级] 检测到升级包，正在执行自动升级..."
     STAGING_DIR=\$(python3 -c "import json; print(json.load(open('\$PENDING_FILE')).get('stagingDir',''))" 2>/dev/null || echo "../quickclass-upgrade-staging")
-    echo "  备份数据库..."
-    cp -f prisma/dev.db "\$STAGING_DIR/prisma/dev.db" 2>/dev/null || true
-    echo "  从 staging 覆盖文件..."
-    rsync -a --delete "\$STAGING_DIR/" ./ --exclude=".upgrade-pending" --exclude="node_modules/" --exclude=".next/" 2>/dev/null || \
+    echo "  备份数据库 (\$DB_PATH) ..."
+    if [ ! -f "\$DB_PATH" ] || [ ! -s "\$DB_PATH" ]; then
+        echo "[错误] 数据库文件缺失或为空，已中止升级（数据安全优先）"
+        exit 1
+    fi
+    mkdir -p "\$STAGING_DIR/prisma"
+    cp -f "\$DB_PATH" "\$STAGING_DIR/prisma/dev.db"
+    echo "  从 staging 覆盖文件（不删除本地数据/补丁文件）..."
+    rsync -a "\$STAGING_DIR/" ./ --exclude=".upgrade-pending" --exclude="node_modules/" --exclude=".next/" 2>/dev/null || \
     cp -rf "\$STAGING_DIR"/* ./ 2>/dev/null || true
+    echo "  把数据库放回原位..."
+    mkdir -p "\$(dirname "\$DB_PATH")"
+    cp -f "\$STAGING_DIR/prisma/dev.db" "\$DB_PATH" 2>/dev/null || true
     echo "  清理升级标记..."
     rm -f "\$PENDING_FILE"
     rm -rf "\$STAGING_DIR"
     echo "  重新安装依赖..."
     npm install --no-audit --no-fund
+    echo "  同步数据库结构（幂等，不清数据）..."
+    npx prisma db push --skip-generate || echo "[警告] 数据库结构同步未完成，请检查上方错误"
     echo "  重新构建..."
     npm run build
     echo "[升级] 升级完成！"
@@ -100,8 +119,9 @@ if [ ! -d "node_modules/next" ]; then
     fi
 fi
 
-if [ ! -f "prisma/dev.db" ] && [ -f "prisma/dev.db.initial" ]; then
-    cp prisma/dev.db.initial prisma/dev.db
+if [ ! -f "\$DB_PATH" ] && [ -f "prisma/dev.db.initial" ]; then
+    mkdir -p "\$(dirname "\$DB_PATH")"
+    cp prisma/dev.db.initial "\$DB_PATH"
 fi
 
 echo "[2/4] 生成 Prisma 客户端..."
@@ -115,13 +135,17 @@ npx prisma generate > /dev/null 2>&1 || {
     fi
 }
 
-echo "[3/4] 初始化数据库（空数据库）..."
-if [ ! -f "prisma/dev.db" ]; then
+echo "[3/4] 初始化数据库（仅在真实数据库不存在时创建）..."
+if [ ! -f "\$DB_PATH" ]; then
     npx prisma db push --skip-generate --accept-data-loss
 fi
 
 echo "[4/4] 构建生产版本..."
 if [ ! -f ".next/BUILD_ID" ]; then
+    if [ -f "\$DB_PATH" ] && [ -s "\$DB_PATH" ]; then
+        echo "  同步数据库结构（幂等，不清数据）..."
+        npx prisma db push --skip-generate || echo "[警告] 数据库结构同步未完成，请检查上方错误"
+    fi
     npm run build
 fi
 
@@ -148,7 +172,19 @@ fs.writeFileSync(path.join(tmpDir, "start.sh"), startSh, { mode: 0o755 });
 // --- start.bat ---
 const startBat = `@echo off\r
 cd /d "%~dp0"\r
-set "DATABASE_URL=file:./dev.db"\r
+setlocal enabledelayedexpansion\r
+\r
+rem 数据库连接以 .env 为唯一事实来源；没有 .env 时用模板生成默认配置（默认库: prisma\\dev.db）\r
+if not exist ".env" copy ".env.example" ".env" >nul\r
+\r
+rem 定位当前真实数据库绝对路径\r
+set "DB_PATH="\r
+for /f "delims=" %%i in ('node scripts\\db-locate.mjs 2^>nul') do set "DB_PATH=%%i"\r
+if not defined DB_PATH (\r
+    echo [错误] 无法定位数据库文件路径，请检查 .env 中的 DATABASE_URL\r
+    pause\r
+    exit /b 1\r
+)\r
 \r
 echo ========================================\r
 echo   QuickClass 启动器 ${version}\r
@@ -158,15 +194,26 @@ echo ========================================\r
 rem 检测并应用待处理的升级\r
 if exist ".upgrade-pending" (\r
     echo [升级] 检测到待处理的升级，正在应用...\r
-    echo   正在备份数据库...\r
-    if exist "prisma\\dev.db" copy "prisma\\dev.db" "..\\quickclass-upgrade-staging\\prisma\\dev.db" >nul 2>&1\r
-    echo   正在覆盖文件...\r
+    echo   正在备份数据库 (!DB_PATH!)...\r
+    if not exist "%DB_PATH%" (\r
+        echo   [错误] 数据库文件缺失或为空，已中止升级（数据安全优先）\r
+        exit /b 1\r
+    )\r
+    if not exist "..\\quickclass-upgrade-staging\\prisma" mkdir "..\\quickclass-upgrade-staging\\prisma" >nul 2>&1\r
+    copy "%DB_PATH%" "..\\quickclass-upgrade-staging\\prisma\\dev.db" >nul 2>&1\r
+    echo   正在覆盖文件（不删除本地数据文件）...\r
     xcopy "..\\quickclass-upgrade-staging" . /E /Y /Q >nul 2>&1\r
+    echo   正在把数据库放回原位...\r
+    for %%p in ("%DB_PATH%") do set "DB_DIR=%%~dpp"\r
+    if not exist "!DB_DIR!" mkdir "!DB_DIR!" >nul 2>&1\r
+    copy "..\\quickclass-upgrade-staging\\prisma\\dev.db" "%DB_PATH%" >nul 2>&1\r
     echo   正在清理升级标记...\r
     del /F /Q ".upgrade-pending" >nul 2>&1\r
     rmdir /S /Q "..\\quickclass-upgrade-staging" >nul 2>&1\r
     echo   正在重新安装依赖...\r
     call npm install --no-audit --no-fund\r
+    rem 数据库结构增量同步（幂等，不清数据），新版本表结构自动应用\r
+    call npx prisma db push --skip-generate\r
     echo   正在重新构建...\r
     call npm run build\r
     echo [升级] 完成！\r
@@ -183,8 +230,10 @@ if not exist "node_modules\\next" (\r
     )\r
 )\r
 \r
-if not exist "prisma\\dev.db" if exist "prisma\\dev.db.initial" (\r
-    copy "prisma\\dev.db.initial" "prisma\\dev.db" >nul\r
+if not exist "%DB_PATH%" if exist "prisma\\dev.db.initial" (\r
+    for %%p in ("%DB_PATH%") do set "DB_DIR=%%~dpp"\r
+    if not exist "!DB_DIR!" mkdir "!DB_DIR!" >nul 2>&1\r
+    copy "prisma\\dev.db.initial" "%DB_PATH%" >nul\r
 )\r
 \r
 echo [2/5] 正在生成 Prisma 客户端...\r
@@ -200,13 +249,19 @@ if errorlevel 1 (\r
     )\r
 )\r
 \r
-echo [3/5] 正在初始化数据库（空库）...\r
-if not exist "prisma\\dev.db" (\r
+echo [3/5] 正在初始化数据库（仅在真实数据库不存在时创建）...\r
+if not exist "%DB_PATH%" (\r
     call npx prisma db push --skip-generate --accept-data-loss\r
 )\r
 \r
 echo [4/5] 正在构建生产版本...\r
 if not exist ".next\\BUILD_ID" (\r
+    if exist "%DB_PATH%" (\r
+        rem 数据库结构增量同步（幂等，不清数据），新版本表结构自动应用\r
+        for %%z in ("%DB_PATH%") do if not "%%~zz"=="0" (\r
+            call npx prisma db push --skip-generate\r
+        )\r
+    )\r
     call npm run build\r
 )\r
 \r
@@ -294,7 +349,7 @@ try {
   execSync(
     `cd "${ROOT}" && zip -r "${zipPath}" \
       src prisma public scripts 模板 \
-      package.json package-lock.json \
+      .env.example package.json package-lock.json \
       next.config.mjs tsconfig.json tailwind.config.ts \
       postcss.config.mjs next-env.d.ts VERSION.md \
       upgrade.sh upgrade.bat upgrade.ps1 \

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { deleteAttachmentFile } from "@/lib/project-submit";
 
 export async function DELETE(
   req: NextRequest,
@@ -59,7 +60,15 @@ export async function DELETE(
     // 3. 删除练习记录（ExerciseAttempt 没有 onDelete Cascade）
     await prisma.exerciseAttempt.deleteMany({ where: { userId: studentId } });
 
-    // 4. 删除学生（级联删除 AIInsight、QuizAttempt、Evaluation、LearningProgress）
+    // 4. 删除项目提交的物理文件（数据库记录由 User.delete 级联删除）
+    const projectFiles = await prisma.projectAttachment.findMany({
+      where: { Project: { studentId } },
+      select: { storedName: true },
+    });
+    projectFiles.forEach((f) => deleteAttachmentFile(f.storedName));
+
+    // 5. 删除学生（级联删除 AIInsight、QuizAttempt、Evaluation、LearningProgress、
+    //    AiCompanionMessage、StudentProject、ProjectAttachment 数据库记录、ProjectLike）
     await prisma.user.delete({ where: { id: studentId } });
 
     return NextResponse.json({ success: true, message: "学生及关联数据已删除" });

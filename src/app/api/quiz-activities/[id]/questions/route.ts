@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { normalizeQuestionType } from "@/lib/question-type";
 
 export async function GET(
   req: NextRequest,
@@ -57,13 +58,13 @@ export async function PUT(
     await prisma.question.deleteMany({ where: { quizActivityId: id } });
 
     // 写入新题目
-    const totalScore = questions.reduce((sum: number, q: any) => sum + (q.score || 0), 100 / questions.length);
     const created = await Promise.all(
       questions.map((q: any, idx: number) =>
         prisma.question.create({
           data: {
             quizActivityId: id,
-            type: q.type || "SINGLE_CHOICE",
+            // 归一化题型：防止 "single" 之类的非规范值入库后无法批改（静默 0 分）
+            type: normalizeQuestionType(q.type) || "SINGLE_CHOICE",
             content: q.content,
             options: q.type === "TRUE_FALSE" || q.type === "JUDGEMENT"
               ? "{}"
