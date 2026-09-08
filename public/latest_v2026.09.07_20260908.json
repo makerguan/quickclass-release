@@ -1,0 +1,6 @@
+{
+  "version": "v2026.09.07",
+  "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
+  "changelog": "新增课堂学习手册导出（docx）；修复删除班级报服务器错误（SQLite 外键约束导致删除失败）；项目提交文件分级存储并支持删除学生时清理物理文件；数据库升级安全加固，任意部署路径升级均不丢数据",
+  "releaseDate": "2026-09-07"
+}
