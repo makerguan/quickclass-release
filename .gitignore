@@ -35,6 +35,8 @@ npm-debug.log*
 **/dev.db-journal
 **/dev.db-wal
 **/dev.db-shm
+# 数据库备份（含真实账户数据，绝不入库）
+**/dev.db.bak*
 
 # test artifacts
 .playwright-cli/

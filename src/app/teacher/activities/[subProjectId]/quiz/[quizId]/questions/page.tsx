@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { MessagePlugin } from "tdesign-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
+import { normalizeQuestionType } from "@/lib/question-type";
 
 interface Question {
   id?: string;
@@ -42,7 +43,23 @@ export default function TeacherQuizQuestionsPage() {
       .then((data) => {
         if (!data || !data.id) throw new Error("作业不存在");
         setQuiz(data);
-        if (data.questions) setQuestions(data.questions);
+        if (data.questions) {
+          // 自动修正非规范题型：AI 出题常返回 "single" 之类，
+          // 这类值会让批改时白名单匹配失败 → 整题不批改 → 静默记 0 分
+          const fixed = data.questions.map((q: Question) => {
+            const t = normalizeQuestionType(q.type);
+            return t && t !== q.type ? { ...q, type: t } : q;
+          });
+          const fixedCount = fixed.filter(
+            (q: Question, i: number) => q.type !== data.questions[i].type
+          ).length;
+          setQuestions(fixed);
+          if (fixedCount > 0) {
+            MessagePlugin.warning(
+              `检测到 ${fixedCount} 道题的题型格式不标准（如 AI 生成的 "single"），已自动修正，请确认后保存`
+            );
+          }
+        }
         setHasSubmissions((data._count?.attempts || 0) > 0);
         setLoading(false);
       })
@@ -58,13 +75,18 @@ export default function TeacherQuizQuestionsPage() {
     for (let i = 0; i < questions.length; i++) {
       const q = questions[i];
       if (!q.content.trim()) return `第 ${i + 1} 题：题目内容不能为空`;
-      if (q.type === "TRUE_FALSE") {
+      // 题型必须是系统支持的类型，否则批改时被跳过 → 整题记 0 分
+      const type = normalizeQuestionType(q.type);
+      if (!type) {
+        return `第 ${i + 1} 题：题型无法识别（${q.type || "空"}），请在题型下拉中重新选择`;
+      }
+      if (type === "TRUE_FALSE" || type === "JUDGEMENT") {
         if (!q.answer || (q.answer !== "T" && q.answer !== "F")) return `第 ${i + 1} 题：判断题必须设置答案为 T 或 F`;
-      } else if (q.type === "SINGLE_CHOICE") {
+      } else if (type === "SINGLE_CHOICE") {
         if (!q.answer || !["A","B","C","D"].includes(q.answer)) return `第 ${i + 1} 题：单选题必须设置答案（A/B/C/D）`;
         const opts = typeof q.options === "string" ? JSON.parse(q.options || "{}") : (q.options || {});
         if (!opts.A?.trim() || !opts.B?.trim()) return `第 ${i + 1} 题：至少填写 A、B 两个选项`;
-      } else if (q.type === "MULTIPLE_CHOICE") {
+      } else if (type === "MULTIPLE_CHOICE") {
         if (!q.answer || q.answer.split(",").filter(Boolean).length === 0) return `第 ${i + 1} 题：多选题至少选择一个答案`;
         const opts = typeof q.options === "string" ? JSON.parse(q.options || "{}") : (q.options || {});
         if (!opts.A?.trim() || !opts.B?.trim()) return `第 ${i + 1} 题：至少填写 A、B 两个选项`;
@@ -381,8 +403,9 @@ function QuestionCard({ q, idx, total, onUpdate, onDelete, onMoveUp, onMoveDown,
 /* ---- 题目预览组件 ---- */
 function QuestionPreview({ question, onClose }: { question: Question; onClose: () => void }) {
   const opts = typeof question.options === "string" ? JSON.parse(question.options || "{}") : (question.options || {});
-  const isJudge = question.type === "TRUE_FALSE";
-  const isMulti = question.type === "MULTIPLE_CHOICE";
+  const qType = normalizeQuestionType(question.type);
+  const isJudge = qType === "TRUE_FALSE" || qType === "JUDGEMENT";
+  const isMulti = qType === "MULTIPLE_CHOICE";
   const choices = isJudge ? ["T","F"] : isMulti ? (question.answer || "").split(",").filter(Boolean) : ["A","B","C","D"];
   
   return (

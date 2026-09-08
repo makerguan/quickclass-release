@@ -4,6 +4,13 @@
  */
 
 import { getAIConfig } from "./ai";
+import {
+  normalizeQuestionType,
+  isOptionKeyAnswer,
+  guessObjectiveType,
+  OBJECTIVE_TYPES,
+  SUBJECTIVE_TYPES,
+} from "./question-type";
 
 export interface GradingQuestion {
   id: string;
@@ -63,6 +70,43 @@ function gradeObjective(q: GradingQuestion, answer: string): GradingResult {
 }
 
 /**
+ * 把 AI 给的得分转成合法数值：非数字/负数一律记 0，且不超过该题满分
+ */
+function toScore(raw: unknown, maxScore: number): number {
+  const n = typeof raw === "number" ? raw : parseFloat(String(raw ?? ""));
+  if (!isFinite(n) || n < 0) return 0;
+  return Math.min(n, maxScore);
+}
+
+/**
+ * 定位 AI 返回项对应的题目：精确 id → 忽略大小写 → 数字序号
+ */
+function resolveQuestionById(
+  rawId: unknown,
+  questions: GradingQuestion[],
+  used: Set<string>
+): GradingQuestion | undefined {
+  if (rawId == null) return undefined;
+  const id = String(rawId).trim();
+  if (!id) return undefined;
+
+  const direct = questions.find((q) => q.id === id && !used.has(q.id));
+  if (direct) return direct;
+
+  const lower = id.toLowerCase();
+  const ignoreCase = questions.find((q) => q.id.toLowerCase() === lower && !used.has(q.id));
+  if (ignoreCase) return ignoreCase;
+
+  const numMatch = id.match(/(\d+)/);
+  if (numMatch) {
+    const idx = parseInt(numMatch[1], 10) - 1;
+    const byIndex = questions[idx];
+    if (byIndex && !used.has(byIndex.id)) return byIndex;
+  }
+  return undefined;
+}
+
+/**
  * 调用 AI 批阅填空/简答题
  */
 async function gradeByAI(
@@ -85,11 +129,15 @@ async function gradeByAI(
 
   let prompt = `${studentContext}你是一位资深教师，请对以下主观题进行评分。\n\n`;
 
+  // 注意：必须把 questionId 明确告诉 AI，否则 AI 无从得知（id 是 cuid），
+  // 返回的结果会全部对不上号而被丢弃，导致主观题一律 0 分。
+  let seq = 0;
   if (fillAnswers.length > 0) {
     prompt += "【填空题】\n";
     fillAnswers.forEach((a) => {
       const q = fillQuestions.find((q) => q.id === a.questionId)!;
-      prompt += `题目：${q.content}\n学生答案：${a.selectedAnswer}\n正确答案：${q.answer}\n分值：${q.score}分\n\n`;
+      seq += 1;
+      prompt += `第${seq}题 questionId：${q.id}\n题目：${q.content}\n学生答案：${a.selectedAnswer}\n正确答案：${q.answer}\n分值：${q.score}分\n\n`;
     });
   }
 
@@ -97,7 +145,8 @@ async function gradeByAI(
     prompt += "【简答题】\n";
     shortAnswers.forEach((a) => {
       const q = shortQuestions.find((q) => q.id === a.questionId)!;
-      prompt += `题目：${q.content}\n学生答案：${a.selectedAnswer}\n参考答案：${q.answer}\n分值：${q.score}分\n\n`;
+      seq += 1;
+      prompt += `第${seq}题 questionId：${q.id}\n题目：${q.content}\n学生答案：${a.selectedAnswer}\n参考答案：${q.answer}\n分值：${q.score}分\n\n`;
     });
   }
 
@@ -132,17 +181,43 @@ async function gradeByAI(
 
   const parsed = JSON.parse(jsonMatch[0]);
 
-  const results: GradingResult[] = (parsed.results || []).map((r: any) => {
-    const q = questions.find((q) => q.id === r.questionId);
-    if (!q) return null; // AI 返回了不存在的 questionId，跳过
-    return {
-      questionId: r.questionId,
-      score: Math.min(r.score, q.score), // 不超过满分
+  const parsedList: any[] = Array.isArray(parsed.results) ? parsed.results : [];
+  const results: GradingResult[] = [];
+  const usedIds = new Set<string>();
+
+  const pushResult = (r: any, q: GradingQuestion) => {
+    const score = toScore(r?.score, q.score);
+    results.push({
+      questionId: q.id,
+      score,
       maxScore: q.score,
-      comment: r.comment || "",
-      isCorrect: r.score >= q.score * 0.6, // 60%以上算基本正确
-    };
-  }).filter((r: GradingResult | null): r is GradingResult => r !== null);
+      comment: r?.comment || "",
+      isCorrect: score >= q.score * 0.6, // 60%以上算基本正确
+    });
+    usedIds.add(q.id);
+  };
+
+  for (const r of parsedList) {
+    const q = resolveQuestionById(r?.questionId, questions, usedIds);
+    if (q) pushResult(r, q);
+  }
+
+  // 兜底：AI 返回的 questionId 一个都对不上（编造 ID / 只给序号）时，按顺序配对，
+  // 避免整份主观题被静默丢弃记 0 分
+  if (results.length === 0 && parsedList.length === questions.length && questions.length > 0) {
+    console.warn("[aiGrade] AI 返回的 questionId 全部无法匹配，已按题目顺序兜底配对");
+    parsedList.forEach((r: any, i: number) => {
+      const q = questions[i];
+      if (q) pushResult(r, q);
+    });
+  }
+
+  const missing = questions.filter((q) => !usedIds.has(q.id));
+  if (missing.length > 0) {
+    console.error(
+      `[aiGrade] 以下题目 AI 未返回评分（将记为待批改）：${missing.map((q) => q.id).join(", ")}`
+    );
+  }
 
   return { results, learningAdvice: parsed.learningAdvice };
 }
@@ -160,12 +235,31 @@ export async function aiGrade(
   generateAdvice = false,
   studentName?: string
 ): Promise<AIGradingOutput> {
-  const objectiveQuestions = questions.filter((q) =>
-    q.type === "SINGLE_CHOICE" || q.type === "MULTIPLE_CHOICE" || q.type === "TRUE_FALSE" || q.type === "JUDGEMENT"
-  );
-  const subjectiveQuestions = questions.filter((q) =>
-    q.type === "FILL_BLANK" || q.type === "SHORT_ANSWER"
-  );
+  // 题型先归一化（"single" / "多选" 等脏值 → 规范类型），
+  // 仍无法识别的按答案形态兜底分流，绝不静默跳过——
+  // 历史 bug：非规范题型被两个名单同时排除，整题不批改却记为 0 分。
+  const objectiveQuestions: GradingQuestion[] = [];
+  const subjectiveQuestions: GradingQuestion[] = [];
+
+  for (const q of questions) {
+    const type = normalizeQuestionType(q.type);
+    if (type && (OBJECTIVE_TYPES as readonly string[]).includes(type)) {
+      objectiveQuestions.push({ ...q, type: type as GradingQuestion["type"] });
+    } else if (type && (SUBJECTIVE_TYPES as readonly string[]).includes(type)) {
+      subjectiveQuestions.push({ ...q, type: type as GradingQuestion["type"] });
+    } else if (isOptionKeyAnswer(q.answer)) {
+      // 答案是纯选项字母（A-D / T / F）→ 按客观题精确匹配
+      const guessed = guessObjectiveType(q);
+      console.warn(
+        `[aiGrade] 题型无法识别（"${q.type}"），按${guessed}批改。题目ID：${q.id}`
+      );
+      objectiveQuestions.push({ ...q, type: guessed as GradingQuestion["type"] });
+    } else {
+      // 其余（含答案为文本的填空题）交给 AI 语义评分
+      console.warn(`[aiGrade] 题型无法识别（"${q.type}"），按主观题批改。题目ID：${q.id}`);
+      subjectiveQuestions.push({ ...q, type: "SHORT_ANSWER" });
+    }
+  }
 
   const results: GradingResult[] = [];
   let learningAdvice: string | undefined;

@@ -2,6 +2,8 @@
  * 课堂作业提示词模板变量替换
  */
 
+import { normalizeQuestionType } from "../question-type";
+
 export interface QuizTemplateVars {
   task: {
     title: string;
@@ -241,7 +243,9 @@ export function parseQuestionsFromAIResponse(
     }
 
     // 3. 自动判断题型
-    let type = q.type || "SINGLE_CHOICE";
+    // 先归一化：AI 常返回 "single" / "多选" / "truefalse" 等非规范写法，
+    // 直接入库会导致批改时白名单匹配失败 → 整题不批改 → 静默 0 分
+    let type = normalizeQuestionType(q.type) || "SINGLE_CHOICE";
     let answer = String(q.answer || "").toUpperCase().trim();
 
     // 如果答案只有 T/F 或选项有 T/F，判定为判断题
