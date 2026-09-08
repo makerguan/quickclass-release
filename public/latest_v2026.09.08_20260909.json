@@ -1,0 +1,6 @@
+{
+  "version": "v2026.09.08",
+  "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
+  "changelog": "修复课堂作业「全做对却得分不满」：AI 出题返回的非规范题型（如 single）原样入库，批改时被白名单跳过导致整题静默记 0 分；修复主观题 AI 批阅结果被全部丢弃（提示词未传 questionId）；学生端对错与得分改为以后端判定为准，新增每题得分与「未批改」标记；教师端保存题目时自动修正非法题型并校验；使用指南新增 WorkBuddy 技能支持与教学/学习手册导出说明",
+  "releaseDate": "2026-09-08"
+}

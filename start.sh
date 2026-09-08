@@ -1,10 +1,35 @@
 #!/bin/bash
 # QuickClass 启动脚本 (macOS/Linux)
-# QuickClass 启动器 v2026.09.03
+# QuickClass 启动器 v2026.09.09
 
 set -e
 
 cd "$(dirname "$0")"
+
+# 将本地 node_modules/.bin 加入 PATH（绕开 npx 去仓库拉最新预发布版的隐患）
+export PATH="$(pwd)/node_modules/.bin:$PATH"
+
+echo "========================================"
+echo "  QuickClass 启动器 v2026.09.09"
+echo "  指南见 安装指南.md / readme.md"
+echo "========================================"
+
+# [前置检查] 必须完整解压后再运行（防止用户在压缩包预览中直接双击）
+if [ ! -f "package.json" ]; then
+    echo ""
+    echo "  [错误] 未找到 package.json，请先将压缩包完整解压到文件夹，"
+    echo "  再运行文件夹内的 start.sh（不要在压缩包里直接运行）。"
+    exit 1
+fi
+
+# [前置检查] Node.js 必须已安装且在 PATH 中（后续所有步骤依赖 node/npm）
+if ! command -v node >/dev/null 2>&1; then
+    echo ""
+    echo "  [错误] 未检测到 Node.js！"
+    echo "  请先安装 Node.js LTS 版本: https://nodejs.org/zh-cn"
+    echo "  安装完成后重新运行 start.sh。"
+    exit 1
+fi
 
 # 数据库连接以 .env 为唯一事实来源；没有 .env 时用模板生成默认配置（默认库: prisma/dev.db）
 if [ ! -f ".env" ]; then
@@ -17,11 +42,6 @@ if [ -z "$DB_PATH" ]; then
     echo "[错误] 无法定位数据库文件路径，请检查 .env 中的 DATABASE_URL"
     exit 1
 fi
-
-echo "========================================"
-echo "  QuickClass 启动器 v2026.09.03"
-echo "  使用指南见 使用指南.md"
-echo "========================================"
 
 # 检测并应用待处理的升级
 if [ -f ".upgrade-pending" ]; then
@@ -44,14 +64,14 @@ if [ -f ".upgrade-pending" ]; then
     echo "  正在重新安装依赖..."
     npm install --no-audit --no-fund
     echo "  正在同步数据库结构（幂等，不清数据）..."
-    npx prisma db push --skip-generate || echo "[警告] 数据库结构同步未完成，请检查上方错误"
+    prisma db push --skip-generate || echo "[警告] 数据库结构同步未完成，请检查上方错误"
     echo "  正在重新构建..."
     npm run build
     echo "[升级] 完成！"
 fi
 
-# 1. 安装依赖（如缺失）
-if [ ! -f "node_modules/.package-lock.json" ]; then
+# 1. 安装依赖（如缺失，直接检查 prisma 二进制；旧版 .package-lock.json 空文件哨兵不可靠）
+if [ ! -x "node_modules/.bin/prisma" ]; then
     if [ -d "node_modules" ]; then
         echo "[1/5] 检测到 node_modules 不完整，正在重新安装依赖（约 2-5 分钟）..."
         rm -rf node_modules
@@ -63,20 +83,22 @@ if [ ! -f "node_modules/.package-lock.json" ]; then
         echo "[错误] 依赖安装失败！请检查网络"
         exit 1
     fi
-    # 安装成功后标记，避免下次重复检查
-    touch node_modules/.package-lock.json
+    if [ ! -x "node_modules/.bin/prisma" ]; then
+        echo "[错误] 依赖安装完成但 prisma 二进制缺失，请检查上方 npm 输出"
+        exit 1
+    fi
 else
     echo "[1/5] 依赖已就绪"
 fi
 
 # 2. 生成 Prisma 客户端
 echo "[2/5] 正在生成 Prisma 客户端..."
-npx prisma generate
+prisma generate
 
 # 3. 初始化数据库（仅在真实数据库不存在时创建，位置以 .env 为准）
 if [ ! -f "$DB_PATH" ]; then
     echo "[3/5] 正在初始化数据库 ($DB_PATH) ..."
-    npx prisma db push --skip-generate --accept-data-loss
+    prisma db push --skip-generate --accept-data-loss
 else
     echo "[3/5] 数据库已就绪"
 fi
@@ -86,7 +108,7 @@ if [ ! -f ".next/BUILD_ID" ]; then
     echo "[4/5] 正在构建生产版本..."
     if [ -f "$DB_PATH" ] && [ -s "$DB_PATH" ]; then
         echo "  正在同步数据库结构（幂等，不清数据）..."
-        npx prisma db push --skip-generate || echo "[警告] 数据库结构同步未完成，请检查上方错误"
+        prisma db push --skip-generate || echo "[警告] 数据库结构同步未完成，请检查上方错误"
     fi
     npm run build
 else
@@ -109,4 +131,4 @@ echo ""
 echo "  按 Ctrl+C 停止服务器。"
 echo ""
 
-npx next start -H 0.0.0.0 -p 3000
+next start -H 0.0.0.0 -p 3000
