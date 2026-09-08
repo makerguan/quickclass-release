@@ -2,11 +2,8 @@ import { NextResponse } from "next/server";
 import { readVersionInfoFromDir } from "@/lib/version-info";
 
 // 最新版本信息文件地址（存放在 Gitee 仓库中）
-// dev 为默认发布分支（latest.json 随每次发版更新）；main 为兜底
-const LATEST_VERSION_URLS = [
-  "https://gitee.com/maoyouhui/quickclass-release/raw/dev/public/latest.json",
-  "https://gitee.com/maoyouhui/quickclass-release/raw/main/public/latest.json",
-];
+const LATEST_VERSION_URL =
+  "https://gitee.com/maoyouhui/quickclass-release/raw/main/public/latest.json";
 
 /**
  * 检查版本更新
@@ -19,23 +16,13 @@ export async function GET() {
     const currentVersion =
       readVersionInfoFromDir(process.cwd()).version || "unknown";
 
-    // 2. 拉取最新版本信息（按顺序尝试，任一成功即用）
-    let latest: { version?: string; [k: string]: unknown } | null = null;
-    for (const url of LATEST_VERSION_URLS) {
-      try {
-        const res = await fetch(url, {
-          cache: "no-store",
-          signal: AbortSignal.timeout(5000), // 5 秒超时
-        });
-        if (!res.ok) continue;
-        latest = await res.json();
-        if (latest?.version) break;
-      } catch {
-        // 单个地址失败不中断，继续尝试下一个
-      }
-    }
+    // 2. 拉取最新版本信息
+    const res = await fetch(LATEST_VERSION_URL, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(5000), // 5 秒超时
+    });
 
-    if (!latest?.version) {
+    if (!res.ok) {
       return NextResponse.json({
         current: currentVersion,
         hasUpdate: false,
@@ -43,7 +30,8 @@ export async function GET() {
       });
     }
 
-    const latestVersion = latest.version;
+    const latest = await res.json();
+    const latestVersion = latest.version || "";
 
     // 3. 比较版本号
     const hasUpdate = compareVersions(latestVersion, currentVersion) > 0;
