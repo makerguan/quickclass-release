@@ -13,6 +13,20 @@
 
 ## 更新日志
 
+### v2026.09.09
+
+**修复问题**
+- Windows 双击 `start.bat` 启动失败：原脚本大量使用 `if/else` 括号嵌套块，部分环境下解析异常导致中途报错退出；重构为 `goto`/标签的线性流程，消除错误源头
+- 启动时不再经 `npx` 联网拉包：将本地 `node_modules\.bin` 优先加入 `PATH`，直接调用本机 `prisma` / `next`，避免 npx 从仓库拉取最新预发布版导致环境不一致或失败（`start.sh` 同步调整）
+
+**功能增强**
+- 环境预检：未完整解压（缺少 `package.json`）、未安装 Node.js、Node 版本低于 18 时，立即给出明确中文提示并退出，Windows 与 macOS/Linux 行为一致
+- 依赖完整性检测更可靠：由检查 `node_modules/.package-lock.json` 空哨兵文件改为检查 `node_modules/.bin/prisma` 可执行文件，缺失时自动重装
+- `prisma generate` 失败时自动尝试 `offline-packages` 离线包兜底后重新生成
+- 启动各阶段失败原因统一追加写入 `start.log`，便于离线环境排查（已加入 .gitignore）
+
+---
+
 ### v2026.09.08
 
 **修复问题**
