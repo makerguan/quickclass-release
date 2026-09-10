@@ -42,6 +42,8 @@ npm-debug.log*
 
 # test artifacts
 .playwright-cli/
+# 本地临时测试草稿（batch-test、e2e-batch、seed-sim 等，各机器自建，绝不入库）
+*.tmp.cjs
 
 # 环境变量（每个部署环境独立配置，不提交）
 .env
