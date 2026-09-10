@@ -882,39 +882,58 @@ export default function TeacherTasksPage() {
     input.click();
   };
 
-  // 自动生成提示词
+  // 自动生成提示词（流式：教师输入的想法作为最高优先级主题）
   const autoGeneratePrompt = async () => {
     if (!explorationPanelSpId) return;
     setGeneratingPrompt(true);
-    let msg = await MessagePlugin.loading("正在读取课堂信息...", 0);
-    let stage = 0;
+    const startAt = Date.now();
+    let received = 0;
+    let msg = await MessagePlugin.loading("AI 思考中... 0s", 0);
     const timer = setInterval(async () => {
-      stage++;
-      if (stage === 1) { msg.close(); msg = await MessagePlugin.loading("正在分析知识点...", 0); }
-      if (stage === 2) { msg.close(); msg = await MessagePlugin.loading("正在生成互动设计提示词...", 0); }
-    }, 1500);
+      const s = Math.round((Date.now() - startAt) / 1000);
+      msg.close();
+      msg = await MessagePlugin.loading(received > 0 ? `已生成 ${received} 字...` : `AI 思考中... ${s}s`, 0);
+    }, 1000);
+    let text = "";
     try {
       const token = localStorage.getItem("token") || "";
       const res = await fetch("/api/exploration-activities/generate-prompt", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ subProjectId: explorationPanelSpId }),
+        body: JSON.stringify({
+          subProjectId: explorationPanelSpId,
+          // 教师当前输入的想法（最高优先级主题），可为空（为空时后端按课堂信息生成）
+          teacherIdea: explorationDesignPrompt,
+          title: explorationTitle,
+        }),
       });
-      clearInterval(timer);
-      msg.close();
-      const data = await res.json();
-      if (res.ok) {
-        setExplorationTitle(data.title || "探究活动");
-        setExplorationDesignPrompt(data.prompt || "");
-        MessagePlugin.success("互动设计提示词已生成");
-      } else {
-        MessagePlugin.error(data.error || "生成提示词失败");
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: "生成提示词失败" }));
+        MessagePlugin.error((err as any).error || "生成提示词失败");
+        return;
       }
+      // 消费流式响应，实时显示已生成字数
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+        received = text.length;
+      }
+      // 解析「标题：/提示词：」结构
+      const titleMatch = text.match(/标题[：:]\s*(.+?)(?:\n|---|$)/);
+      const promptMatch = text.match(/提示词[：:]\s*([\s\S]+)/);
+      const title = titleMatch ? titleMatch[1].trim().slice(0, 50) : "探究活动";
+      const prompt = promptMatch ? promptMatch[1].trim() : text.trim();
+      setExplorationTitle(title);
+      setExplorationDesignPrompt(prompt);
+      MessagePlugin.success("互动设计提示词已生成");
     } catch {
-      clearInterval(timer);
-      msg.close();
       MessagePlugin.error("生成提示词失败");
     } finally {
+      clearInterval(timer);
+      msg.close();
       setGeneratingPrompt(false);
     }
   };
@@ -926,8 +945,9 @@ export default function TeacherTasksPage() {
       return;
     }
     setGeneratingHtml(true);
-    // 实时字节数进度提示
-    let msg = await MessagePlugin.loading("正在构思网页结构... 0 B", 0);
+    // 实时进度提示：首字节前显示思考计时，之后显示已生成字符数
+    const startAt = Date.now();
+    let msg = await MessagePlugin.loading("AI 思考中... 0s", 0);
     let receivedBytes = 0;
     let timer: NodeJS.Timeout | undefined = undefined;
     try {
@@ -935,7 +955,7 @@ export default function TeacherTasksPage() {
       const response = await fetch("/api/exploration-activities/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ 
+        body: JSON.stringify({
           prompt: explorationDesignPrompt,
         }),
       });
@@ -946,19 +966,20 @@ export default function TeacherTasksPage() {
         setGeneratingHtml(false);
         return;
       }
-      // 读取流式响应，实时更新字节数
+      // 读取流式响应，实时更新进度
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();
       let htmlContent = "";
       timer = setInterval(async () => {
+        const s = Math.round((Date.now() - startAt) / 1000);
         msg.close();
-        msg = await MessagePlugin.loading(`正在生成... ${receivedBytes} B`, 0);
-      }, 1500);
+        msg = await MessagePlugin.loading(receivedBytes > 0 ? `正在生成网页... ${receivedBytes.toLocaleString()} 字符` : `AI 思考中... ${s}s`, 0);
+      }, 1000);
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         htmlContent += decoder.decode(value, { stream: true });
-        receivedBytes = new Blob([htmlContent]).size;
+        receivedBytes = htmlContent.length;
       }
       clearInterval(timer);
       msg.close();
@@ -4497,7 +4518,7 @@ export default function TeacherTasksPage() {
               <Textarea
                 value={explorationDesignPrompt}
                 onChange={(v) => setExplorationDesignPrompt(v)}
-                placeholder="描述你想要生成的互动学习网页：主题、互动机制、视觉风格、题目内容等"
+                placeholder="描述你想要的互动网页：主题、互动机制、视觉风格等。点「生成提示词」时将以此为核心主题（留空则按课堂信息生成）"
                 rows={5}
               />
             </div>
