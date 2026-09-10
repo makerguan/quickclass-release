@@ -8,7 +8,6 @@ import {
 } from "recharts";
 import { Switch, MessagePlugin, Dialog } from "tdesign-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
-import { useAppVersion } from "@/lib/useAppVersion";
 
 interface Question {
   id?: string;
@@ -22,7 +21,6 @@ interface Question {
 }
 
 export default function QuizReportPage() {
-  const appVersion = useAppVersion();
   const params = useParams();
   const router = useRouter();
   const subProjectId = params.subProjectId as string;
@@ -579,11 +577,6 @@ export default function QuizReportPage() {
             <div className="flex items-center justify-between px-4 py-3 border-b">
               <div className="flex items-center gap-2">
                 <div className="font-medium text-gray-700 text-sm">✨ AI 学情分析报告</div>
-                {aiReport && aiReportVersions.length > 0 && (
-                  <span className="text-xs text-[#63666F]">
-                    · 第 {aiReportVersions[aiReportVersionIndex]?.version} 版 · {appVersion}
-                  </span>
-                )}
                 {/* 版本切换 + 删除 */}
                 {aiReportVersions.length > 1 && (
                   <div className="flex items-center ml-3 gap-2">

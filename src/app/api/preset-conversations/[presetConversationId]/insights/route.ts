@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
 import { aiQueue } from "@/lib/ai-queue";
+import { dbWrite } from "@/lib/db-queue";
 import { generateText } from "ai";
 import {
   ANALYST_SYSTEM,
@@ -308,28 +309,39 @@ let content: string;
       }
     }
 
-    // 保存分析结果
-    const insightType = type === "class" ? "pc_class" : "pc_student";
-    const existing = await prisma.aIInsight.findFirst({
-      where: {
-        classId,
-        type: insightType,
-        scopeId: presetConversationId,
-        ...(type === "student" ? { userId: studentId } : { userId: null }),
-      },
-      orderBy: { version: "desc" },
-    });
-    const version = (existing?.version || 0) + 1;
+    // 并发批量时 AI 服务端偶发返回空文本，空内容写入只会产生无意义
+    // 报告且前端误判为成功；此处直接报错，让批量分析计入失败数便于重试
+    if (!content || !content.trim()) {
+      return NextResponse.json({ error: "AI 返回了空内容，请重试" }, { status: 500 });
+    }
 
-    const saved = await prisma.aIInsight.create({
-      data: {
-        type: insightType,
-        classId,
-        userId: type === "student" ? studentId : null,
-        scopeId: presetConversationId,
-        content,
-        version,
-      },
+    // 保存分析结果。版本查询 + 写入作为一个原子段走 dbWrite 串行队列：
+    // 前端批量并发时多个请求同时保存，串行化可避免 SQLite 写锁冲突，
+    // 也保证"读版本号→写新版本"之间不被其他请求插队
+    const insightType = type === "class" ? "pc_class" : "pc_student";
+    const { existing, version, saved } = await dbWrite(async () => {
+      const existing = await prisma.aIInsight.findFirst({
+        where: {
+          classId,
+          type: insightType,
+          scopeId: presetConversationId,
+          ...(type === "student" ? { userId: studentId } : { userId: null }),
+        },
+        orderBy: { version: "desc" },
+      });
+      const version = (existing?.version || 0) + 1;
+
+      const saved = await prisma.aIInsight.create({
+        data: {
+          type: insightType,
+          classId,
+          userId: type === "student" ? studentId : null,
+          scopeId: presetConversationId,
+          content,
+          version,
+        },
+      });
+      return { existing, version, saved };
     });
 
     return NextResponse.json({ content, version, id: saved.id, previousContent: existing?.content || null, previousId: existing?.id || null });
@@ -402,6 +414,9 @@ ${convTexts || "（无对话记录）"}`;
       model: chatModel as Parameters<typeof generateText>[0]["model"],
       system: ANALYST_SYSTEM,
       messages: [{ role: "user", content: prompt }],
+      // 网关默认输出上限 4096 tokens（实测硬上限 65536）：长报告会被截断，思考耗尽
+      // 预算时正文为空；显式给足空间
+      maxOutputTokens: 65536,
     })
   );
   return result.text;
@@ -466,6 +481,9 @@ async function generatePCClassInsightWithTemplate(
       model: chatModel as Parameters<typeof generateText>[0]["model"],
       system: ANALYST_SYSTEM,
       messages: [{ role: "user", content: finalPrompt }],
+      // 网关默认输出上限 4096 tokens（实测硬上限 65536）：长报告会被截断，思考耗尽
+      // 预算时正文为空；显式给足空间
+      maxOutputTokens: 65536,
     })
   );
   return result.text;
@@ -522,6 +540,9 @@ async function generatePCStudentInsight(
       model: chatModel as Parameters<typeof generateText>[0]["model"],
       system: ANALYST_SYSTEM,
       messages: [{ role: "user", content: prompt }],
+      // 网关默认输出上限 4096 tokens（实测硬上限 65536）：长报告会被截断，思考耗尽
+      // 预算时正文为空；显式给足空间
+      maxOutputTokens: 65536,
     })
   );
   return result.text;
@@ -580,6 +601,9 @@ async function generatePCStudentInsightWithTemplate(
       model: chatModel as Parameters<typeof generateText>[0]["model"],
       system: ANALYST_SYSTEM,
       messages: [{ role: "user", content: finalPrompt }],
+      // 网关默认输出上限 4096 tokens（实测硬上限 65536）：长报告会被截断，思考耗尽
+      // 预算时正文为空；显式给足空间
+      maxOutputTokens: 65536,
     })
   );
   return result.text;

@@ -14,7 +14,7 @@ import {
 import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import { usePromptPreview, PromptPreviewDialog } from "@/components/prompt-preview";
-import { useAppVersion } from "@/lib/useAppVersion";
+import { formatInsightTime } from "@/lib/format-time";
 
 // ===== 辅助函数 =====
 
@@ -116,7 +116,6 @@ interface AnalysisTemplate {
 }
 
 export default function TaskInsightsPage() {
-  const appVersion = useAppVersion();
   const params = useParams();
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -164,6 +163,8 @@ export default function TaskInsightsPage() {
   const [loadingStudentId, setLoadingStudentId] = useState<string | null>(null);
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
   const [batchAnalyzing, setBatchAnalyzing] = useState(false);
+  // 批量分析进度：done/total，显示在"一键分析全部"按钮上
+  const [batchProgress, setBatchProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   // 学生学情分析版本切换：studentId -> 选中的版本在 versions 数组中的下标（0 表示最新）
   const [studentVersionIndex, setStudentVersionIndex] = useState<Record<string, number>>({});
 
@@ -441,6 +442,10 @@ export default function TaskInsightsPage() {
 
   const generateStudentInsight = async (studentId: string) => {
     if (!selectedClassId) return;
+    if (batchAnalyzing) {
+      MessagePlugin.warning("批量分析进行中，请等待完成后再单独分析");
+      return;
+    }
     setLoadingStudentId(studentId);
     setExpandedStudentId(studentId);
     try {
@@ -465,6 +470,10 @@ export default function TaskInsightsPage() {
 
   const generatePCInsight = async (type: "class" | "student", studentId?: string) => {
     if (!selectedPCId || !selectedClassId) return;
+    if (batchAnalyzing) {
+      MessagePlugin.warning("批量分析进行中，请等待完成后再单独分析");
+      return;
+    }
     if (type === "student" && !studentId) return;
     if (type === "student") {
       setLoadingStudentId(studentId!);
@@ -511,8 +520,11 @@ export default function TaskInsightsPage() {
   // ===== 批量分析所有学生 =====
   
   const batchAnalyzeAllStudents = async () => {
+    if (batchAnalyzing) return; // 防重复触发
     if (!selectedClassId || !currentClass) return;
-    
+    // 与原逻辑一致：对话维度必须选中具体对话活动，否则不发起请求
+    if (viewLevel === "dialogue" && !selectedPCId) return;
+
     const students = viewLevel === "dialogue"
       ? pcStudents.filter((s) => s.convCount > 0)
       : currentClass.students.filter((s) => s.convCount > 0);
@@ -522,53 +534,56 @@ export default function TaskInsightsPage() {
     }
 
     setBatchAnalyzing(true);
-    
+    setBatchProgress({ done: 0, total: students.length });
+
     let successCount = 0;
     let failCount = 0;
-    
-    for (const student of students) {
-      try {
-        let res: Response;
-        const token = localStorage.getItem("token");
-        
-        if (viewLevel === "dialogue" && selectedPCId) {
-          res = await fetch(`/api/preset-conversations/${selectedPCId}/insights`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ classId: selectedClassId, type: "student", studentId: student.id }),
-          });
-        } else if (viewLevel === "task") {
-          res = await fetch(`/api/tasks/${taskId}/insights`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-            body: JSON.stringify({ classId: selectedClassId, type: "student", studentId: student.id }),
-          });
-        } else {
-          continue;
-        }
+    let doneCount = 0;
 
-        if (res.ok) {
-          successCount++;
-        } else {
-          failCount++;
-        }
+    const token = localStorage.getItem("token");
+    const requestUrl = viewLevel === "dialogue" && selectedPCId
+      ? `/api/preset-conversations/${selectedPCId}/insights`
+      : `/api/tasks/${taskId}/insights`;
 
-        // 每分析完一个就更新列表
-        if (viewLevel === "dialogue" && selectedPCId) {
-          await fetchPCInsights(selectedPCId, selectedClassId);
-        } else if (viewLevel === "task") {
-          await fetchTaskInsights(selectedClassId);
-        }
-        
-        // 短暂延迟避免请求过快
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      } catch {
-        failCount++;
+    // 分批并发：每批 6 个同时分析（后端 aiQueue 并发上限内，留限流余量），
+    // 批内请求互不阻塞；列表刷新统一放到最后，避免每个学生都刷新一次
+    const BATCH_SIZE = 6;
+    for (let i = 0; i < students.length; i += BATCH_SIZE) {
+      const batch = students.slice(i, i + BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async (student) => {
+          try {
+            const res = await fetch(requestUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+              body: JSON.stringify({ classId: selectedClassId, type: "student", studentId: student.id }),
+            });
+            return res.ok;
+          } catch {
+            return false;
+          }
+        })
+      );
+      for (const ok of results) {
+        if (ok) successCount++;
+        else failCount++;
       }
+      doneCount += batch.length;
+      setBatchProgress({ done: doneCount, total: students.length });
     }
-    
+
+    // 全部完成后统一刷新一次列表
+    try {
+      if (viewLevel === "dialogue" && selectedPCId) {
+        await fetchPCInsights(selectedPCId, selectedClassId);
+      } else if (viewLevel === "task") {
+        await fetchTaskInsights(selectedClassId);
+      }
+    } catch { /* 刷新失败不影响结果提示 */ }
+
     setBatchAnalyzing(false);
-    
+    setBatchProgress({ done: 0, total: 0 });
+
     if (successCount > 0) {
       MessagePlugin.success(`已完成 ${successCount} 名学生的分析${failCount > 0 ? `，${failCount} 名失败` : ""}`);
     } else {
@@ -842,11 +857,6 @@ export default function TaskInsightsPage() {
                         <div className="flex items-center gap-2">
                           <span className={`text-[#63666F] text-xs transition-transform ${expandedPcClass ? 'rotate-90' : ''}`}>▶</span>
                           <h4 className="font-medium text-sm">{pcOptions.find(o => o.value === selectedPCId)?.label || (selectedPCId ? "班级分析" : "请选择对话活动")}</h4>
-                          {pcClassInsight && (
-                            <span className="text-xs text-[#63666F]">
-                              · 第 {pcClassInsight.version} 版 · {appVersion}
-                            </span>
-                          )}
                           {pcClassInsightVersions.length > 1 && (
                             <div className="flex items-center ml-3 gap-2">
                               <span className="text-xs text-gray-400">版本：</span>
@@ -933,7 +943,7 @@ export default function TaskInsightsPage() {
                             }}
                             disabled={pcStudents.filter((s) => s.convCount > 0).length === 0}
                           >
-                            {batchAnalyzing ? "分析中..." : "一键分析全部"}
+                            {batchAnalyzing ? `分析中 ${batchProgress.done}/${batchProgress.total}` : "一键分析全部"}
                           </Button>
                         </div>
                       </div>
@@ -956,7 +966,7 @@ export default function TaskInsightsPage() {
                                   </div>
                                   <span className="text-sm font-medium">{student.name}</span>
                                   {ins && <Tag theme="success" variant="light" size="small">V{ins.version}</Tag>}
-                                  {ins && <span className="text-xs text-[#63666F]">{appVersion}</span>}
+                                  {ins && <span className="text-xs text-[#63666F]">{formatInsightTime(ins.createdAt)}</span>}
                                   {versions.length > 1 && (
                                     <div className="flex items-center gap-1 ml-1 pl-2 border-l border-gray-200">
                                       <span className="text-xs text-gray-400">版本：</span>
@@ -969,7 +979,7 @@ export default function TaskInsightsPage() {
                                                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                                             }`}
                                             onClick={(e) => { e.stopPropagation(); setStudentVersionIndex((p) => ({ ...p, [student.id]: i })); }}
-                                            title={`第 ${v.version} 版 · ${appVersion}`}
+                                            title={`第 ${v.version} 版${v.createdAt ? ` · ${formatInsightTime(v.createdAt)}` : ""}`}
                                           >
                                             v{v.version}
                                           </button>
@@ -1043,11 +1053,11 @@ export default function TaskInsightsPage() {
                       <span className={`text-[#63666F] text-xs transition-transform ${expandedTaskClass ? 'rotate-90' : ''}`}>▶</span>
                       <div>
                         <h3 className="font-medium text-[#1A1A1A] text-sm">{taskClassInsight ? task.title : "课堂级学情洞察"}</h3>
-                        <p className="text-xs text-[#63666F] mt-0.5">
-                          {taskClassInsight
-                            ? `第 ${taskClassInsight.version} 版 · ${appVersion}`
-                            : `数据来源：${insightDataSource === "TASK_INSIGHTS" ? "各学习活动分析结果" : "原始对话记录"}`}
-                        </p>
+                        {!taskClassInsight && (
+                          <p className="text-xs text-[#63666F] mt-0.5">
+                            {`数据来源：${insightDataSource === "TASK_INSIGHTS" ? "各学习活动分析结果" : "原始对话记录"}`}
+                          </p>
+                        )}
                       </div>
                       {taskClassInsightVersions.length > 1 && (
                         <div className="flex items-center ml-3 gap-2">
@@ -1153,7 +1163,7 @@ export default function TaskInsightsPage() {
                         }}
                         disabled={currentClass.students.filter((s) => s.convCount > 0).length === 0}
                       >
-                        {batchAnalyzing ? "分析中..." : "一键分析全部"}
+                        {batchAnalyzing ? `分析中 ${batchProgress.done}/${batchProgress.total}` : "一键分析全部"}
                       </Button>
                     </div>
                   </div>
@@ -1191,7 +1201,7 @@ export default function TaskInsightsPage() {
                                             : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                                         }`}
                                         onClick={(e) => { e.stopPropagation(); setStudentVersionIndex((p) => ({ ...p, [student.id]: i })); }}
-                                        title={`第 ${v.version} 版 · ${appVersion}`}
+                                        title={`第 ${v.version} 版${v.createdAt ? ` · ${formatInsightTime(v.createdAt)}` : ""}`}
                                       >
                                         v{v.version}
                                       </button>

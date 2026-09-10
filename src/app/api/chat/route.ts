@@ -224,6 +224,8 @@ export async function POST(req: NextRequest) {
               model: chatModel,
               system: systemPrompt,
               messages: formattedMessages,
+              // 统一输出上限 64K（网关默认 4096 会截断长输出，实测硬上限 65536）
+              maxOutputTokens: 65536,
             });
           });
 

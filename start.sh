@@ -9,6 +9,9 @@ cd "$(dirname "$0")"
 # 将本地 node_modules/.bin 加入 PATH（绕开 npx 去仓库拉最新预发布版的隐患）
 export PATH="$(pwd)/node_modules/.bin:$PATH"
 
+# npm 缓存指到项目内 .npm-cache，绕开全局缓存目录的权限限制，普通权限即可完成安装
+export npm_config_cache="$(pwd)/.npm-cache"
+
 echo "========================================"
 echo "  QuickClass 启动器 v2026.09.09"
 echo "  指南见 安装指南.md / readme.md"

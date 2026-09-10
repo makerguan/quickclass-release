@@ -94,6 +94,8 @@ ${currentContent.trim()}
           model: chatModel,
           system: "你是一位专业的中小学学科教研专家。输出必须与给定的素养维度严格一一对应。",
           messages: [{ role: "user", content: p }],
+          // 统一输出上限 64K（网关默认 4096 会截断长输出，实测硬上限 65536）
+          maxOutputTokens: 65536,
         })
       );
 

@@ -49,6 +49,8 @@ ${context}
         model: chatModel,
         system: "你是一位专业的教育分析师。",
         messages: [{ role: "user", content: promptTemplate }],
+        // 统一输出上限 64K（网关默认 4096 会截断长输出，实测硬上限 65536）
+        maxOutputTokens: 65536,
       });
     });
 

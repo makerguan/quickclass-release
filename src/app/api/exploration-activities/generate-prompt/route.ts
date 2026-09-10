@@ -95,6 +95,8 @@ export async function POST(req: NextRequest) {
       prompt: `课堂主题：${sp.task.title}
 课堂目标：${sp.task.description || sp.task.objectives || "无"}
 知识库内容：${knowledgeContent || "无"}`,
+      // 统一输出上限 64K（网关默认 4096 会截断长输出，实测硬上限 65536）
+      maxOutputTokens: 65536,
     });
 
     // 解析 AI 返回的标题和提示词

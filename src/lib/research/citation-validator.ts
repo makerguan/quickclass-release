@@ -122,7 +122,8 @@ ${items.join("\n\n")}`;
       model: chatModel,
       prompt,
       temperature: 0.1,
-      maxTokens: 2000,
+      // 统一输出上限 64K（原 maxTokens 是 AI SDK v4 字段名，v6 中无效未生效）
+      maxOutputTokens: 65536,
     });
     return res.text;
   });

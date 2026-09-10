@@ -323,11 +323,11 @@ export default function TeacherDashboardPage() {
               <div className="flex justify-between items-center mb-4">
                 <div>
                   <h3 className="font-medium text-[#1A1A1A]">AI 学情洞察</h3>
-                  <p className="text-xs text-[#63666F] mt-0.5">
-                    {classInsight
-                      ? `第 ${classInsight.version} 版 · ${formatDate(classInsight.createdAt)}`
-                      : "基于班级学生的 AI 对话记录与学习数据智能分析"}
-                  </p>
+                  {!classInsight && (
+                    <p className="text-xs text-[#63666F] mt-0.5">
+                      基于班级学生的 AI 对话记录与学习数据智能分析
+                    </p>
+                  )}
                 </div>
                 <div className="flex items-center gap-2">
                   {classInsight && previousInsights.class && (

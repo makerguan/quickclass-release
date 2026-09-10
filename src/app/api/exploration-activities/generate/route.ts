@@ -144,6 +144,8 @@ ${submissionInstruction}
       model: chatModel,
       system: systemPrompt,
       prompt: prompt.trim(),
+      // 统一输出上限 64K：探究 HTML 整页输出远超默认 4096，不传必截断
+      maxOutputTokens: 65536,
     });
 
     const encoder = new TextEncoder();
