@@ -1,6 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { createDashScopeClient } from "@/lib/ai";
 
 // POST: 根据课堂信息自动生成互动网页设计提示词
 export async function POST(req: NextRequest) {
@@ -10,7 +11,7 @@ export async function POST(req: NextRequest) {
     const payload = await verifyToken(token);
     if (!payload) return new Response("登录已过期", { status: 401 });
 
-    const { subProjectId } = await req.json();
+    const { subProjectId, teacherIdea } = await req.json();
     if (!subProjectId) return new Response("缺少 subProjectId", { status: 400 });
 
     const sp = await prisma.subProject.findUnique({
@@ -47,11 +48,19 @@ export async function POST(req: NextRequest) {
     }
 
     const { chatModel } = await createDashScopeClient();
-    const { generateText } = await import("ai");
+    const { streamText } = await import("ai");
 
-    const result = await generateText({
+    // 教师在输入框里写的想法是最高优先级主题；课堂信息仅作背景参考
+    const ideaSection = teacherIdea?.trim()
+      ? `【教师的想法（最高优先级，必须以此为核心主题展开设计）】\n${teacherIdea.trim()}`
+      : "";
+    const backgroundSection = `【课堂背景信息（仅作参考，与教师想法冲突时以教师想法为准）】\n课堂主题：${sp.task.title}\n课堂目标：${sp.task.description || sp.task.objectives || "无"}\n知识库内容：${knowledgeContent || "无"}`;
+
+    const { textStream } = await streamText({
       model: chatModel,
       system: `你是一位专业的互动探究学习设计师。根据提供的课堂信息，设计一个让学生"通过动手探索来理解知识"的网页探究活动。
+
+【优先级规则】若提供【教师的想法】，必须严格围绕其主题展开，不得偏题到其他学科或领域；课堂背景仅作辅助参考。
 
 【核心理念】互动探究≠做题闯关，而是让学生通过操作、观察、对比来发现规律、形成理解。
 
@@ -92,36 +101,37 @@ export async function POST(req: NextRequest) {
 标题：<你的标题>
 ---
 提示词：<你的详细提示词>`,
-      prompt: `课堂主题：${sp.task.title}
-课堂目标：${sp.task.description || sp.task.objectives || "无"}
-知识库内容：${knowledgeContent || "无"}`,
+      prompt: [ideaSection, backgroundSection].filter(Boolean).join("\n\n"),
       // 统一输出上限 64K（网关默认 4096 会截断长输出，实测硬上限 65536）
       maxOutputTokens: 65536,
     });
 
-    // 解析 AI 返回的标题和提示词
-    const text = result.text;
-    const titleMatch = text.match(/标题[：:]\s*(.+?)(?:\n|---|$)/);
-    const promptMatch = text.match(/提示词[：:]\s*([\s\S]+)/);
-    const title = titleMatch ? titleMatch[1].trim().slice(0, 50) : sp.task.title + "探究";
-    const prompt = promptMatch ? promptMatch[1].trim() : text.trim();
+    // 流式返回原始文本（标题/提示词解析由前端实时完成后进行）
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      async start(controller) {
+        try {
+          for await (const delta of textStream) {
+            controller.enqueue(encoder.encode(delta));
+          }
+        } catch (e) {
+          console.error("Stream error:", e);
+        } finally {
+          controller.close();
+        }
+      },
+    });
 
-    return NextResponse.json({ title, prompt });
+    return new Response(stream, {
+      headers: {
+        "Content-Type": "text/plain; charset=utf-8",
+        "Transfer-Encoding": "chunked",
+        "Cache-Control": "no-cache",
+      },
+    });
   } catch (e: any) {
     console.error(e);
     return new Response(e.message || "生成提示词失败", { status: 500 });
   }
 }
 
-async function createDashScopeClient() {
-  const config = await prisma.systemConfig.findFirst();
-  if (!config?.aiApiKey) {
-    throw new Error("AI 服务未配置，请先在系统设置中配置 API Key");
-  }
-  const { createOpenAI } = await import("@ai-sdk/openai");
-  const client = createOpenAI({
-    baseURL: config.aiBaseUrl,
-    apiKey: config.aiApiKey,
-  });
-  return { chatModel: client.chat(config.aiModel || "qwen-turbo") };
-}

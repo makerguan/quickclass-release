@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { createDashScopeClient } from "@/lib/ai";
+import { generateText } from "ai";
 
 // POST: 生成教学建议
 export async function POST(
@@ -98,28 +100,12 @@ export async function POST(
 请生成 2-3 条简洁的教学改进建议，用中文回复。`;
     }
 
-    const aiRes = await fetch(`${config.aiBaseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${config.aiApiKey}`,
-      },
-      body: JSON.stringify({
-        model: config.aiModel || "qwen-plus",
-        messages: [
-          { role: "system", content: "你是一个中学教师教学助手，擅长根据学情数据给出教学建议。" },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.7,
-      }),
+    const { text: advice } = await generateText({
+      model: chatModel,
+      system: "你是一个中学教师教学助手，擅长根据学情数据给出教学建议。",
+      prompt,
+      temperature: 0.7,
     });
-
-    if (!aiRes.ok) {
-      return NextResponse.json({ advice: "AI 服务调用失败。" });
-    }
-
-    const aiData = await aiRes.json();
-    const advice = aiData?.choices?.[0]?.message?.content || "生成失败";
 
     // 保存到数据库
     await prisma.explorationActivity.update({

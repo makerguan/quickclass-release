@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { createDashScopeClient } from "@/lib/ai";
+import { generateText } from "ai";
 import { aiPreviewPrompt, generateAutoScoringScript } from "@/lib/prompts/exploration-submit";
 
 export async function POST(req: NextRequest) {
@@ -53,30 +55,13 @@ export async function POST(req: NextRequest) {
     }
 
     const prompt = aiPreviewPrompt(htmlContent);
-    const model = config.aiModel || "qwen-plus";
 
-    const aiRes = await fetch(`${config.aiBaseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${config.aiApiKey}`,
-      },
-      body: JSON.stringify({
-        model,
-        messages: [
-          { role: "system", content: "你是一个 HTML 交互分析助手，擅长识别页面中的学生互动行为。" },
-          { role: "user", content: prompt },
-        ],
-        temperature: 0.1,
-      }),
+    const { text: content } = await generateText({
+      model: chatModel,
+      system: "你是一个 HTML 交互分析助手，擅长识别页面中的学生互动行为。",
+      prompt,
+      temperature: 0.1,
     });
-
-    if (!aiRes.ok) {
-      throw new Error(`AI API error: ${aiRes.status}`);
-    }
-
-    const aiData = await aiRes.json();
-    const content = aiData?.choices?.[0]?.message?.content ?? "";
 
     // 尝试解析 JSON
     let analysis;

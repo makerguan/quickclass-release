@@ -54,3 +54,7 @@ prisma/prisma/
 # 用户上传文件（每个部署环境独立生成）
 uploads/
 start.log
+
+# 本地构建/安装日志（不入库）
+npm-install.log
+npm-build.log

@@ -325,7 +325,7 @@ export function injectSubmitFunctionality(html: string, context: SubmitContext):
 
   // 6. 检查是否已有提交按钮（通过 root 包裹层判断）
   var finalBtnHtml = suffix ? submitButtonHTML.replace(/submitResults/g, "submitResults" + suffix) : submitButtonHTML;
-  if (!modified.includes("quickclass-submit-root")) {
+  if (!modified.includes('<div id="quickclass-submit-root"')) {
     if (modified.includes("</body>")) {
       modified = modified.replace("</body>", finalBtnHtml + "</body>");
     } else {

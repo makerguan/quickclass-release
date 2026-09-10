@@ -359,6 +359,19 @@ export async function POST(
       }
     }
 
+    // 未显式指定模板时，回退到教师默认分析模板（再回退公共默认模板）；
+    // 否则 customSection 为空，对话数据不会被注入提示词（对齐 exploration 分析路由）。
+    if (!templateContent) {
+      const defaultTemplate =
+        (await prisma.analysisTemplate.findFirst({
+          where: { teacherId: String(payload.userId), type, isDefault: true },
+        })) ||
+        (await prisma.analysisTemplate.findFirst({
+          where: { teacherId: null, type, isDefault: true },
+        }));
+      templateContent = defaultTemplate?.content || null;
+    }
+
     // 最终使用的提示词：班级分析优先用 classAnalysisPrompt
     const effectivePrompt = type === "class"
       ? (task.classAnalysisPrompt || task.analysisPrompt || templateContent)
