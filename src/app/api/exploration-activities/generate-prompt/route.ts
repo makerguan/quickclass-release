@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { createDashScopeClient } from "@/lib/ai";
 
 // POST: 根据课堂信息自动生成互动网页设计提示词
 export async function POST(req: NextRequest) {
@@ -111,15 +112,3 @@ export async function POST(req: NextRequest) {
   }
 }
 
-async function createDashScopeClient() {
-  const config = await prisma.systemConfig.findFirst();
-  if (!config?.aiApiKey) {
-    throw new Error("AI 服务未配置，请先在系统设置中配置 API Key");
-  }
-  const { createOpenAI } = await import("@ai-sdk/openai");
-  const client = createOpenAI({
-    baseURL: config.aiBaseUrl,
-    apiKey: config.aiApiKey,
-  });
-  return { chatModel: client.chat(config.aiModel || "qwen-turbo") };
-}
