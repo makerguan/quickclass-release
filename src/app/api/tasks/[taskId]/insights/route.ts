@@ -3,12 +3,50 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
 import { aiQueue } from "@/lib/ai-queue";
+import { dbWrite } from "@/lib/db-queue";
 import { generateText } from "ai";
 import {
   ANALYST_SYSTEM,
   buildTaskClassPrompt,
   buildTaskStudentPrompt,
 } from "@/lib/prompts";
+
+// ============================================================
+// 批量分析短期缓存：批量分析时多个学生请求会重复查询相同的
+// 任务级/班级级只读数据（课堂树、班级作业统计等），此处用
+// 60 秒 TTL 缓存让同一批次共享一份快照，减少重复数据库查询。
+// 注意：只缓存与具体学生无关的数据；AI 洞察查询不缓存。
+// ============================================================
+const INSIGHT_CACHE_TTL_MS = 60_000;
+const insightDataCache = new Map<string, { value: unknown; expires: number }>();
+
+async function cached<T>(key: string, loader: () => Promise<T>): Promise<T> {
+  const hit = insightDataCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.value as T;
+  const value = await loader();
+  insightDataCache.set(key, { value, expires: Date.now() + INSIGHT_CACHE_TTL_MS });
+  return value;
+}
+
+// ============================================================
+// 生成中请求合并（in-flight coalescing）：客户端超时后自动重试
+// （如 Node undici 默认 300s headersTimeout，服务端仍在生成）或
+// 前端重复触发时，同一目标的重复请求不再发起第二次 AI 调用，
+// 而是共享进行中请求的生成与落库结果。请求结束（无论成败）后
+// 自动移除条目，失败后可重新发起全新生成。
+// ============================================================
+const inflightGenerations = new Map<string, Promise<unknown>>();
+
+function coalesceGeneration<T>(key: string, factory: () => Promise<T>): Promise<T> {
+  const existing = inflightGenerations.get(key) as Promise<T> | undefined;
+  if (existing) {
+    console.log(`[insights] 合并重复生成请求: ${key}`);
+    return existing;
+  }
+  const promise = factory().finally(() => inflightGenerations.delete(key));
+  inflightGenerations.set(key, promise);
+  return promise;
+}
 
 // GET: 获取指定课堂的学情数据
 export async function GET(
@@ -294,8 +332,8 @@ export async function POST(
       return NextResponse.json(missingItems);
     }
 
-    // 获取任务详情
-    const task = await prisma.learningTask.findUnique({
+    // 获取任务详情（任务级只读数据，批量分析时经 60s 缓存共享）
+    const task = await cached(`task:${taskId}`, () => prisma.learningTask.findUnique({
       where: { id: taskId },
       include: {
         subProjects: {
@@ -306,7 +344,7 @@ export async function POST(
           orderBy: { sortOrder: "asc" },
         },
       },
-    });
+    }));
     if (!task) return NextResponse.json({ error: "课堂不存在" }, { status: 404 });
     if (task.teacherId !== String(payload.userId)) {
       return NextResponse.json({ error: "无权限" }, { status: 403 });
@@ -350,9 +388,9 @@ export async function POST(
       effectivePrompt.toLowerCase().includes('html')
     ) : false;
 
-    const assignment = await prisma.taskAssignment.findFirst({
+    const assignment = await cached(`assign:${taskId}:${classId}`, () => prisma.taskAssignment.findFirst({
       where: { taskId, classId },
-    });
+    }));
     if (!assignment) {
       return NextResponse.json({ error: "该班级未分配到此任务" }, { status: 400 });
     }
@@ -408,10 +446,11 @@ export async function POST(
         }).join("\n\n---\n\n");
       } else {
         promptText = await generateTaskStudentInsightWithTemplate(chatModel, taskNormalized, classId, studentId, insightDataSource, effectivePrompt, {
-          insightLevel, studentWordLimit, starCount, requireStarRating
+          insightLevel, studentWordLimit: isHtmlOutput ? undefined : studentWordLimit, starCount, requireStarRating, isHtmlOutput
         }, true);
         // 查询该学生的对话记录供预览
-        const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
+        // 注意：task 为 Prisma 原始对象，关系字段名是 PresetConversation
+        const presetIds = task.subProjects.flatMap((sp) => sp.PresetConversation.map((pc) => pc.id));
         const [student, conversations] = await Promise.all([
           prisma.user.findUnique({ where: { id: studentId }, select: { name: true } }),
           prisma.conversation.findMany({
@@ -429,37 +468,58 @@ export async function POST(
       return NextResponse.json({ prompt: promptText, dialogData });
     }
 
-    let content: string;
-    if (type === "class") {
-      content = await generateTaskClassInsightWithTemplate(chatModel, taskNormalized, classId, insightDataSource, effectivePrompt, {
-        insightLevel, classWordLimit: isHtmlOutput ? undefined : classWordLimit, starCount, requireStarRating, isHtmlOutput,
-      });
-    } else {
-      content = await generateTaskStudentInsightWithTemplate(chatModel, taskNormalized, classId, studentId, insightDataSource, effectivePrompt, {
-        insightLevel, studentWordLimit, starCount, requireStarRating
-      });
-    }
+    // 同目标生成去重：同一（任务+班级+类型+学生）的生成进行中时，
+    // 重复请求共享这一次生成与落库结果，不再发起第二次 AI 调用
+    const genKey = `${taskId}:${classId}:${insightType}:${type === "student" ? studentId : "-"}`;
 
-    const existingInsight = await prisma.aIInsight.findFirst({
-      where: {
-        classId,
-        type: insightType,
-        ...(type === "student" ? { userId: studentId } : { userId: null }),
-        scopeId: taskId,
-      },
-      orderBy: { version: "desc" },
-    });
-    const version = (existingInsight?.version || 0) + 1;
+    const { content, existingInsight, version, saved } = await coalesceGeneration(genKey, async () => {
+      let content: string;
+      if (type === "class") {
+        content = await generateTaskClassInsightWithTemplate(chatModel, taskNormalized, classId, insightDataSource, effectivePrompt, {
+          insightLevel, classWordLimit: isHtmlOutput ? undefined : classWordLimit, starCount, requireStarRating, isHtmlOutput,
+        });
+      } else {
+        // HTML/数字型报告与班级分析口径一致：不受字数限制
+        content = await generateTaskStudentInsightWithTemplate(chatModel, taskNormalized, classId, studentId, insightDataSource, effectivePrompt, {
+          insightLevel, studentWordLimit: isHtmlOutput ? undefined : studentWordLimit, starCount, requireStarRating, isHtmlOutput,
+        });
+      }
 
-    const saved = await prisma.aIInsight.create({
-      data: {
-        type: insightType,
-        classId,
-        ...(type === "student" ? { userId: studentId } : { userId: null }),
-        scopeId: taskId,
-        content,
-        version,
-      },
+      // 并发批量时 AI 服务端偶发返回空文本（实测约 20%），空内容写入
+      // 只会产生无意义报告且前端误判为成功；此处直接报错，让批量
+      // 分析将其计入失败数，用户可对失败学生重试
+      if (!content || !content.trim()) {
+        throw new Error("AI 返回了空内容，请重试");
+      }
+
+      // 版本查询 + 写入作为一个原子段走 dbWrite 串行队列：
+      // 前端批量并发时多个请求同时保存，串行化可避免 SQLite 写锁
+      // 冲突，也保证"读版本号→写新版本"之间不被其他请求插队
+      const { existingInsight, version, saved } = await dbWrite(async () => {
+        const existingInsight = await prisma.aIInsight.findFirst({
+          where: {
+            classId,
+            type: insightType,
+            ...(type === "student" ? { userId: studentId } : { userId: null }),
+            scopeId: taskId,
+          },
+          orderBy: { version: "desc" },
+        });
+        const version = (existingInsight?.version || 0) + 1;
+
+        const saved = await prisma.aIInsight.create({
+          data: {
+            type: insightType,
+            classId,
+            ...(type === "student" ? { userId: studentId } : { userId: null }),
+            scopeId: taskId,
+            content,
+            version,
+          },
+        });
+        return { existingInsight, version, saved };
+      });
+      return { content, existingInsight, version, saved };
     });
 
     return NextResponse.json({
@@ -572,6 +632,8 @@ async function generateTaskClassInsight(
         model: chatModel as Parameters<typeof generateText>[0]["model"],
         system: ANALYST_SYSTEM,
         messages: [{ role: "user", content: prompt }],
+        // 网关默认输出上限 4096 tokens（实测硬上限 65536）：不传时长报告会被截断
+        maxOutputTokens: 65536,
       })
     );
     return result.text;
@@ -663,6 +725,9 @@ async function generateTaskClassInsight(
       model: chatModel as Parameters<typeof generateText>[0]["model"],
       system: ANALYST_SYSTEM,
       messages: [{ role: "user", content: prompt }],
+      // 网关默认输出上限 4096 tokens（实测硬上限 65536）：HTML 长报告必然被截断，
+      // 思考耗尽预算时正文为空（并发批量时空内容约 20%）；显式给足空间
+      maxOutputTokens: 65536,
     })
   );
   return result.text;
@@ -756,6 +821,8 @@ const prompt = buildTaskStudentPrompt({
         model: chatModel as Parameters<typeof generateText>[0]["model"],
         system: ANALYST_SYSTEM,
         messages: [{ role: "user", content: prompt }],
+        // 网关默认输出上限 4096 tokens（实测硬上限 65536）：不传时长报告会被截断
+        maxOutputTokens: 65536,
       })
     );
     return result.text;
@@ -807,6 +874,9 @@ const prompt = buildTaskStudentPrompt({
       model: chatModel as Parameters<typeof generateText>[0]["model"],
       system: ANALYST_SYSTEM,
       messages: [{ role: "user", content: prompt }],
+      // 网关默认输出上限 4096 tokens（实测硬上限 65536）：HTML 长报告必然被截断，
+      // 思考耗尽预算时正文为空（并发批量时空内容约 20%）；显式给足空间
+      maxOutputTokens: 65536,
     })
   );
   return result.text;
@@ -827,7 +897,7 @@ async function generateTaskClassInsightWithTemplate(
   classId: string,
   dataSource: string,
   templateContent: string | null,
-  config: { insightLevel: string; classWordLimit: number; starCount: number; requireStarRating: boolean; isHtmlOutput?: boolean },
+  config: { insightLevel: string; classWordLimit?: number; starCount: number; requireStarRating: boolean; isHtmlOutput?: boolean },
   isPreview?: boolean
 ): Promise<string> {
   const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
@@ -970,6 +1040,9 @@ async function generateTaskClassInsightWithTemplate(
       model: chatModel as Parameters<typeof generateText>[0]["model"],
       system: ANALYST_SYSTEM,
       messages: [{ role: "user", content: prompt }],
+      // 网关默认输出上限 4096 tokens（实测硬上限 65536）：HTML 长报告必然被截断，
+      // 思考耗尽预算时正文为空（并发批量时空内容约 20%）；显式给足空间
+      maxOutputTokens: 65536,
     })
   );
   return result.text;
@@ -992,7 +1065,7 @@ async function generateTaskStudentInsightWithTemplate(
   studentId: string,
   dataSource: string,
   templateContent: string | null,
-  config: { insightLevel: string; studentWordLimit: number; starCount: number; requireStarRating: boolean },
+  config: { insightLevel: string; studentWordLimit?: number; starCount: number; requireStarRating: boolean; isHtmlOutput?: boolean },
   isPreview?: boolean
 ): Promise<string> {
   const presetIds = task.subProjects.flatMap((sp) => sp.presetConversations.map((pc) => pc.id));
@@ -1018,15 +1091,24 @@ async function generateTaskStudentInsightWithTemplate(
 
   const useSubInsights = dataSource === "TASK_INSIGHTS";
 
-  // 收集下层学生分析结果
+  // 收集下层学生分析结果：一次查询取回该学生在全部对话活动下的洞察，
+  // 内存按活动分组取最新版本（与原来逐活动 findMany({take:1}) 等价，
+  // 但把 N 次查询合并为 1 次）
+  const allPcInsights = await prisma.aIInsight.findMany({
+    where: { classId, type: "pc_student", userId: studentId, scopeId: { in: presetIds } },
+    orderBy: { version: "desc" },
+  });
+  const latestInsightByScope = new Map<string, (typeof allPcInsights)[number]>();
+  for (const ins of allPcInsights) {
+    if (ins.scopeId && !latestInsightByScope.has(ins.scopeId)) {
+      latestInsightByScope.set(ins.scopeId, ins);
+    }
+  }
   const pcStudentInsights: Array<{ studentName: string; pcTitle: string; content: string }> = [];
   for (const pc of allPCs) {
-    const insights = await prisma.aIInsight.findMany({
-      where: { classId, type: "pc_student", userId: studentId, scopeId: pc.id },
-      orderBy: { version: "desc" }, take: 1,
-    });
-    if (insights.length > 0) {
-      pcStudentInsights.push({ studentName: student.name, pcTitle: pc.title, content: insights[0].content });
+    const latest = latestInsightByScope.get(pc.id);
+    if (latest) {
+      pcStudentInsights.push({ studentName: student.name, pcTitle: pc.title, content: latest.content });
     }
   }
 
@@ -1090,6 +1172,9 @@ const prompt = buildTaskStudentPrompt({
       model: chatModel as Parameters<typeof generateText>[0]["model"],
       system: ANALYST_SYSTEM,
       messages: [{ role: "user", content: prompt }],
+      // 网关默认输出上限 4096 tokens（实测硬上限 65536）：HTML 长报告必然被截断，
+      // 思考耗尽预算时正文为空（并发批量时空内容约 20%）；显式给足空间
+      maxOutputTokens: 65536,
     })
   );
   return result.text;
@@ -1257,7 +1342,10 @@ function buildCompanionDialogContents(
 
 /** 构建班级作业统计数据（班级层面汇总，每项作业一条统计） */
 async function buildClassQuizStats(taskId: string, classId: string): Promise<string> {
-  const subProjects = await prisma.subProject.findMany({
+  // 班级作业统计为班级级只读数据：批量分析全班时每个学生请求都会
+  // 调用本函数，此处经 60s 缓存共享同一份快照，避免重复全量拉取
+  // 全班答题明细（同一批次内所有学生使用相同的班级统计口径）
+  const subProjects = await cached(`classQuiz:${taskId}:${classId}`, () => prisma.subProject.findMany({
     where: { taskId },
     include: {
       QuizActivity: {
@@ -1270,7 +1358,7 @@ async function buildClassQuizStats(taskId: string, classId: string): Promise<str
         },
       },
     },
-  });
+  }));
 
   const parts: string[] = [];
   for (const sp of subProjects) {

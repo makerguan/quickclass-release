@@ -5,7 +5,7 @@ import { Card } from "tdesign-react";
 import { ChartBarIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import StudentLayout from "@/components/layout/StudentLayout";
-import { useAppVersion } from "@/lib/useAppVersion";
+import { formatInsightTime } from "@/lib/format-time";
 
 interface InsightRecord {
   id: string;
@@ -17,7 +17,6 @@ interface InsightRecord {
 }
 
 export default function StudentEvaluationPage() {
-  const appVersion = useAppVersion();
   const [insights, setInsights] = useState<InsightRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -80,7 +79,7 @@ export default function StudentEvaluationPage() {
                     </span>
                   </h3>
                   <p className="text-xs text-[#63666F] mt-1">
-                    版本 {appVersion}
+                    {formatInsightTime(insight.createdAt)}
                   </p>
                 </div>
               </div>

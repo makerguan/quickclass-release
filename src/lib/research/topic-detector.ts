@@ -61,6 +61,8 @@ export async function generateTitles(
       model: chatModel,
       system: "你是资深教育研究方法论专家，擅长从教学数据中发现可立项的研究题目。",
       prompt,
+      // 统一输出上限 64K（网关默认 4096 会截断长输出，实测硬上限 65536）
+      maxOutputTokens: 65536,
     });
   });
 

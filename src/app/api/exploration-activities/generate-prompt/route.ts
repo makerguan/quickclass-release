@@ -102,6 +102,8 @@ export async function POST(req: NextRequest) {
 ---
 提示词：<你的详细提示词>`,
       prompt: [ideaSection, backgroundSection].filter(Boolean).join("\n\n"),
+      // 统一输出上限 64K（网关默认 4096 会截断长输出，实测硬上限 65536）
+      maxOutputTokens: 65536,
     });
 
     // 流式返回原始文本（标题/提示词解析由前端实时完成后进行）

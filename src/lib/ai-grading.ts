@@ -165,6 +165,8 @@ async function gradeByAI(
     body: JSON.stringify({
       model: aiConfig.model,
       messages: [{ role: "user", content: prompt }],
+      // 统一输出上限 64K（原生 fetch 走 OpenAI 兼容字段名）
+      max_tokens: 65536,
     }),
   });
 
@@ -327,6 +329,8 @@ export async function generateTeachingAdvice(
     body: JSON.stringify({
       model: aiConfig.model,
       messages: [{ role: "user", content: prompt }],
+      // 统一输出上限 64K（原生 fetch 走 OpenAI 兼容字段名）
+      max_tokens: 65536,
     }),
   });
 

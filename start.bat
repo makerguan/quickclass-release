@@ -6,6 +6,10 @@ cd /d "%~dp0"
 rem 将本地 node_modules\.bin 加入 PATH，避免 npx 去仓库拉最新预发布版
 set "PATH=%CD%\node_modules\.bin;%PATH%"
 
+rem npm 缓存指到项目内 .npm-cache，绕开全局缓存目录(如 E:\node_js\node_cache)的权限限制，
+rem 普通用户权限即可正常安装依赖，无需以管理员身份运行
+set "npm_config_cache=%CD%\.npm-cache"
+
 setlocal enabledelayedexpansion
 
 echo ========================================

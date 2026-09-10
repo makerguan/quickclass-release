@@ -475,6 +475,7 @@ export function buildTaskStudentPrompt(params: BuildTaskStudentParams): string {
       requireStarRating: params.config?.requireStarRating ?? false,
       studentWordLimit: params.config?.studentWordLimit || null,
       classWordLimit: null,
+      isHtmlOutput: params.config?.isHtmlOutput ?? false,
     },
   );
 }

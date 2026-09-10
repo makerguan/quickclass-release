@@ -6,7 +6,6 @@ import { Button, Tag, Select, MessagePlugin, Dialog } from "tdesign-react";
 import { ArrowLeftIcon, ChartBarIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
-import { useAppVersion } from "@/lib/useAppVersion";
 
 interface StudentRecord {
   studentId: string;
@@ -106,7 +105,6 @@ function InsightContent({ content, className = "" }: { content: string; classNam
 type TabKey = "statistics" | "submissions" | "ai";
 
 export default function ExplorationAnalysisPage() {
-  const appVersion = useAppVersion();
   const router = useRouter();
   const params = useParams();
   const explorationId = params.explorationId as string;
@@ -568,11 +566,6 @@ export default function ExplorationAnalysisPage() {
         <div className="flex items-center gap-2">
           <ChartBarIcon className="text-[#FF6B35]" />
           <span className="font-medium text-gray-700 text-sm">AI 分析报告</span>
-          {aiReport && (
-            <span className="text-xs text-[#63666F]">
-              · 第 {aiReport.version} 版 · {appVersion}
-            </span>
-          )}
           {aiReportVersions.length > 1 && (
             <div className="flex items-center ml-3 gap-2">
               <span className="text-xs text-gray-400">版本：</span>

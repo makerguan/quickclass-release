@@ -5,7 +5,7 @@ import { Card, Button } from "tdesign-react";
 import { ChartBarIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import StudentLayout from "@/components/layout/StudentLayout";
-import { useAppVersion } from "@/lib/useAppVersion";
+import { formatInsightTime } from "@/lib/format-time";
 
 interface InsightRecord {
   id: string;
@@ -74,7 +74,6 @@ function InsightContent({ content, className = "" }: { content: string; classNam
 }
 
 export default function StudentInsightsPage() {
-  const appVersion = useAppVersion();
   const [data, setData] = useState<InsightsData>({ personalInsights: [], classInsight: null });
   const [loading, setLoading] = useState(true);
   const [showComparison, setShowComparison] = useState(false);
@@ -148,7 +147,7 @@ export default function StudentInsightsPage() {
                     </span>
                   </h3>
                   <p className="text-xs text-[#63666F] mt-1">
-                    版本 {appVersion}
+                    {formatInsightTime(latestInsight.createdAt)}
                   </p>
                 </div>
                 {previousInsight && (
@@ -178,7 +177,7 @@ export default function StudentInsightsPage() {
                     </span>
                   </h3>
                   <p className="text-xs text-[#63666F] mt-1">
-                    版本 {appVersion}
+                    {formatInsightTime(previousInsight.createdAt)}
                   </p>
                 </div>
                 <div className="bg-[#FFF8F0] p-5 rounded-lg text-sm leading-relaxed border border-[#ED7B2F]/20">
@@ -217,7 +216,7 @@ export default function StudentInsightsPage() {
                           V{insight.version}
                         </span>
                         <span className="text-sm text-[#63666F]">
-                          {appVersion}
+                          {formatInsightTime(insight.createdAt)}
                         </span>
                       </div>
                       {idx === 0 && (

@@ -60,6 +60,8 @@ export async function* streamPaperGeneration(
       model: chatModel,
       system: "你是教育学领域资深学者，擅长撰写实证研究论文。",
       prompt,
+      // 网关默认输出上限 4096 tokens（实测硬上限 65536）：不传时长文必然截断
+      maxOutputTokens: 65536,
     });
   });
 
@@ -88,7 +90,7 @@ export async function* streamProposalGeneration(
       model: chatModel,
       system: "你是资深教育研究专家，擅长撰写课题研究方案。",
       prompt,
-      maxOutputTokens: 14000, // 保障 8500-10000 中文字输出不被截断（AI SDK v6 字段名）
+      maxOutputTokens: 65536, // 保障万字中文输出+思考预算不被截断（网关实测硬上限 65536）
     });
   });
 

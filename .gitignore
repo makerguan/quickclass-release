@@ -2,6 +2,8 @@
 
 # dependencies
 /node_modules
+# npm 项目内缓存（start.bat/start.sh 自动指向，随机器生成）
+.npm-cache/
 
 # next.js
 /.next/

@@ -97,6 +97,8 @@ export async function POST(
               model: chatModel,
               system: systemPrompt,
               messages: formattedMessages,
+              // 统一输出上限 64K（网关默认 4096 会截断长输出，实测硬上限 65536）
+              maxOutputTokens: 65536,
               onError: ({ error }: { error: unknown }) => {
                 const errMsg = error instanceof Error ? error.message : String(error);
                 console.error("[ai-chat] streamText onError:", errMsg);
