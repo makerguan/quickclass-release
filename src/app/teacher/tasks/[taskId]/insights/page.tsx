@@ -15,15 +15,13 @@ import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import { usePromptPreview, PromptPreviewDialog } from "@/components/prompt-preview";
 import { formatInsightTime } from "@/lib/format-time";
+import { cleanInsightContent } from "@/lib/insight-clean";
 
 // ===== 辅助函数 =====
 
-/** 剥离 markdown 代码块包裹（如 ```html ... ```） */
+/** 清理 AI 返回内容（围栏包裹、HTML 前后的开场白/结尾说明，含历史脏数据） */
 function stripMarkdownCodeBlock(content: string): string {
-  const trimmed = content.trim();
-  const match = trimmed.match(/^```(?:html|HTML)?\s*\n([\s\S]*?)\n```$/);
-  if (match) return match[1].trim();
-  return content;
+  return cleanInsightContent(content);
 }
 
 /** 判断内容是否为 HTML 格式 */

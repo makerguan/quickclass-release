@@ -11,6 +11,7 @@ import {
   buildConversationStudentPrompt,
   type ConversationTemplateVars,
 } from "@/lib/prompts";
+import { cleanInsightContent } from "@/lib/insight-clean";
 
 // GET: 获取对话活动分析结果
 export async function GET(
@@ -314,6 +315,10 @@ let content: string;
     if (!content || !content.trim()) {
       return NextResponse.json({ error: "AI 返回了空内容，请重试" }, { status: 500 });
     }
+
+    // 清理 AI 返回中的无效信息：markdown 围栏包裹、HTML 文档前后的
+    // 开场白/结尾说明；识别不了就不动，纯文本分析不受影响
+    content = cleanInsightContent(content);
 
     // 保存分析结果。版本查询 + 写入作为一个原子段走 dbWrite 串行队列：
     // 前端批量并发时多个请求同时保存，串行化可避免 SQLite 写锁冲突，
