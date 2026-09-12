@@ -13,6 +13,23 @@
 
 ## 更新日志
 
+### v2026.09.12
+
+**修复问题**
+- 学校/内网网络无法访问国外源导致安装失败：npm 依赖（registry.npmjs.org）与 Prisma 引擎（binaries.prisma.sh）默认从国外下载，现全部改走国内镜像（npmmirror），能上国内网即可正常安装
+- `start.sh` 升级块 `cp` 通配符不复制点文件，升级时 `.npmrc` 等配置丢失
+
+**功能增强**
+- 新增 `.npmrc`：`npm install` 默认走 `registry.npmmirror.com`
+- `start.sh` / `start.bat` 内置 `npm_config_registry` 与 `PRISMA_ENGINES_MIRROR` 环境变量（双保险，即使 `.npmrc` 缺失也生效）
+- 发布脚本 `pack-release.mjs` 同步镜像配置，`rootFiles` 加入 `.npmrc`
+
+**文档**
+- 安装指南补充 Node.js 国内镜像下载地址（阿里云 / npmmirror）
+- 安装指南新增纯内网环境（完全无外网）部署说明：相同操作系统电脑上完整启动一次后整体拷贝项目文件夹
+
+---
+
 ### v2026.09.09
 
 **修复问题**

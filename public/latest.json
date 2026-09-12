@@ -1,6 +1,6 @@
 {
-  "version": "v2026.09.09",
+  "version": "v2026.09.12",
   "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
-  "changelog": "重写启动器 start.sh / start.bat：修复 Windows 下 start.bat 启动失败（以 goto 线性流程替代括号嵌套块，消除解析异常源头）；将本地 node_modules/.bin 优先加入 PATH，绕开 npx 联网拉取最新预发布包的隐患；新增环境预检（未完整解压、未安装 Node.js、Node 版本低于 18 均明确提示退出）；依赖完整性改为检测 prisma 可执行文件，缺失自动重装；prisma generate 失败自动尝试 offline-packages 离线包兜底；失败原因写入 start.log 便于排查",
-  "releaseDate": "2026-09-09"
+  "changelog": "解决学校/内网网络无法访问国外源导致安装失败：新增 .npmrc 并在启动脚本内置 npm 依赖与 Prisma 引擎国内镜像（npmmirror），安装全程走国内源，能上国内网即可正常安装；修复 start.sh 升级时点文件（.npmrc 等）丢失的问题；安装指南补充 Node.js 国内镜像下载地址与纯内网环境（完全无外网）部署说明",
+  "releaseDate": "2026-09-12"
 }
