@@ -201,7 +201,7 @@ export async function POST(req: NextRequest) {
       if (matched.length === 0) {
         if (!candidates.some((c) => c.password)) {
           return NextResponse.json(
-            { error: "您还未设置密码，请使用姓名+邀请码登录" },
+            { error: "您还未设置密码，请使用姓名/学号+邀请码登录" },
             { status: 401 }
           );
         }

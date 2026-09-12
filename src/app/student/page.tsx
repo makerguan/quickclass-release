@@ -138,7 +138,7 @@ export default function StudentLoginPage() {
       >
         <div className="space-y-3">
           <p className="text-gray-700 text-sm">
-            检测到该姓名在多个班级都有账号，请选择要进入的课堂：
+            检测到该姓名或学号在多个班级都有账号，请选择要进入的课堂：
           </p>
           <div className="space-y-2">
             {pendingClasses.map((c) => (

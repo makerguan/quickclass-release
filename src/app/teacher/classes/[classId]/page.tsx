@@ -285,8 +285,8 @@ export default function ClassDetailPage() {
             <div className="bg-yellow-50 rounded-lg p-3 text-sm text-yellow-700">
               <p className="font-medium mb-1">重置后：</p>
               <ul className="list-disc list-inside space-y-0.5 text-yellow-600">
-                <li>该学生密码将清除，恢复到可用邀请码登录的状态</li>
-                <li>学生再次登录时只需输入姓名和邀请码</li>
+                <li>密码将恢复为默认密码（123456）</li>
+                <li>学生可使用姓名/学号+密码登录</li>
                 <li>学生可在个人中心重新设置密码</li>
               </ul>
             </div>
