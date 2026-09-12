@@ -59,6 +59,9 @@ const startBat = `@echo off\r
 chcp 65001 >nul\r
 cd /d "%~dp0"\r
 set "DATABASE_URL=file:./dev.db"\r
+rem 依赖与 Prisma 引擎走国内镜像（npmmirror），学校/内网无法访问国外源时仍可正常安装\r
+set "npm_config_registry=https://registry.npmmirror.com"\r
+set "PRISMA_ENGINES_MIRROR=https://registry.npmmirror.com/-/binary/prisma"\r
 \r
 echo ========================================\r
 echo   QuickClass 启动器 ${version}\r
@@ -173,6 +176,9 @@ set -e
 
 cd "$(dirname "$0")"
 export DATABASE_URL="file:./dev.db"
+# 依赖与 Prisma 引擎走国内镜像（npmmirror），学校/内网无法访问国外源时仍可正常安装
+export npm_config_registry="https://registry.npmmirror.com"
+export PRISMA_ENGINES_MIRROR="https://registry.npmmirror.com/-/binary/prisma"
 
 echo "========================================"
 echo "  QuickClass 启动器 ${version}"
@@ -185,7 +191,8 @@ if [ -f ".upgrade-pending" ]; then
     echo "  正在备份数据库..."
     [ -f "prisma/dev.db" ] && cp prisma/dev.db ../quickclass-upgrade-staging/prisma/dev.db 2>/dev/null || true
     echo "  正在覆盖文件..."
-    cp -rf ../quickclass-upgrade-staging/* . 2>/dev/null || true
+    # 用 /. 拷贝而非 * 通配：bash 的 * 不匹配点文件，会漏掉 .npmrc 等镜像配置
+    cp -rf ../quickclass-upgrade-staging/. . 2>/dev/null || true
     echo "  正在清理升级标记..."
     rm -f .upgrade-pending
     rm -rf ../quickclass-upgrade-staging
@@ -300,7 +307,7 @@ execSync(`rsync -a "${join(ROOT, 'scripts/')}" "${join(RELEASE_DIR, 'scripts/')}
 console.log('  scripts/ 同步完成');
 
 // 同步根配置文件
-const rootFiles = ['package.json', 'next.config.mjs', 'tsconfig.json', 'tailwind.config.ts', 'postcss.config.mjs', 'VERSION.md', '.env.example'];
+const rootFiles = ['package.json', 'next.config.mjs', 'tsconfig.json', 'tailwind.config.ts', 'postcss.config.mjs', 'VERSION.md', '.env.example', '.npmrc'];
 for (const f of rootFiles) {
   const src = join(ROOT, f);
   if (existsSync(src)) {

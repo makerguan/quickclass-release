@@ -50,7 +50,6 @@ npm-debug.log*
 
 # 不跟踪分发目录（各自有独立仓库自管）
 dist-test/
-跨平台安装包/
 prisma/prisma/
 
 # 用户上传文件（每个部署环境独立生成）

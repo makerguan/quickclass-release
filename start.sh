@@ -12,6 +12,10 @@ export PATH="$(pwd)/node_modules/.bin:$PATH"
 # npm 缓存指到项目内 .npm-cache，绕开全局缓存目录的权限限制，普通权限即可完成安装
 export npm_config_cache="$(pwd)/.npm-cache"
 
+# 依赖与 Prisma 引擎走国内镜像（npmmirror），学校/内网无法访问国外源时仍可正常安装
+export npm_config_registry="https://registry.npmmirror.com"
+export PRISMA_ENGINES_MIRROR="https://registry.npmmirror.com/-/binary/prisma"
+
 echo "========================================"
 echo "  QuickClass 启动器 v2026.09.09"
 echo "  指南见 安装指南.md / readme.md"
@@ -57,7 +61,8 @@ if [ -f ".upgrade-pending" ]; then
     mkdir -p ../quickclass-upgrade-staging/prisma
     cp -f "$DB_PATH" ../quickclass-upgrade-staging/prisma/dev.db
     echo "  正在覆盖文件（仅覆盖新包内容，不删除本地数据/补丁文件）..."
-    cp -rf ../quickclass-upgrade-staging/* . 2>/dev/null || true
+    # 用 /. 拷贝而非 * 通配：bash 的 * 不匹配点文件，会漏掉 .npmrc 等镜像配置
+    cp -rf ../quickclass-upgrade-staging/. . 2>/dev/null || true
     echo "  正在把数据库放回原位..."
     mkdir -p "$(dirname "$DB_PATH")"
     cp -f ../quickclass-upgrade-staging/prisma/dev.db "$DB_PATH" 2>/dev/null || true
