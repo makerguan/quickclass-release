@@ -10,6 +10,7 @@ import {
   buildTaskClassPrompt,
   buildTaskStudentPrompt,
 } from "@/lib/prompts";
+import { cleanInsightContent } from "@/lib/insight-clean";
 
 // ============================================================
 // 批量分析短期缓存：批量分析时多个学生请求会重复查询相同的
@@ -492,6 +493,10 @@ export async function POST(
         throw new Error("AI 返回了空内容，请重试");
       }
 
+      // 清理 AI 返回中的无效信息：markdown 围栏包裹、HTML 文档前后的
+      // 开场白/结尾说明；识别不了就不动，纯文本分析不受影响
+      const cleanedContent = cleanInsightContent(content);
+
       // 版本查询 + 写入作为一个原子段走 dbWrite 串行队列：
       // 前端批量并发时多个请求同时保存，串行化可避免 SQLite 写锁
       // 冲突，也保证"读版本号→写新版本"之间不被其他请求插队
@@ -513,13 +518,13 @@ export async function POST(
             classId,
             ...(type === "student" ? { userId: studentId } : { userId: null }),
             scopeId: taskId,
-            content,
+            content: cleanedContent,
             version,
           },
         });
         return { existingInsight, version, saved };
       });
-      return { content, existingInsight, version, saved };
+      return { content: cleanedContent, existingInsight, version, saved };
     });
 
     return NextResponse.json({

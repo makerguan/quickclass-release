@@ -10,6 +10,10 @@ rem npm 缓存指到项目内 .npm-cache，绕开全局缓存目录(如 E:\node_
 rem 普通用户权限即可正常安装依赖，无需以管理员身份运行
 set "npm_config_cache=%CD%\.npm-cache"
 
+rem 依赖与 Prisma 引擎走国内镜像（npmmirror），学校/内网无法访问国外源时仍可正常安装
+set "npm_config_registry=https://registry.npmmirror.com"
+set "PRISMA_ENGINES_MIRROR=https://registry.npmmirror.com/-/binary/prisma"
+
 setlocal enabledelayedexpansion
 
 echo ========================================

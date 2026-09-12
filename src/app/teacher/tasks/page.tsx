@@ -2744,7 +2744,7 @@ export default function TeacherTasksPage() {
         ) : loading ? (
           <div className="text-center text-gray-400 py-12">加载中...</div>
         ) : tasks.length === 0 ? (
-          <Card>
+          <Card className="template-compact-card">
             <div className="text-center py-12 text-gray-400">
               <p className="text-lg mb-2">📋</p>
               <p>暂无课堂</p>
@@ -2757,7 +2757,7 @@ export default function TeacherTasksPage() {
               const isExpanded = expandedTaskId === task.id;
               const isEditingSP = editingTaskId === task.id;
               return (
-                <Card key={task.id}>
+                <Card key={task.id} className="template-compact-card">
                   <div
                     className="cursor-pointer"
                     onClick={() => {
@@ -2962,7 +2962,7 @@ export default function TeacherTasksPage() {
                   </div>
 
                   {isExpanded && (
-                    <div className="mt-4 pt-4 border-t border-gray-100 pl-8 space-y-4">
+                    <div className="mt-2 pt-2 border-t border-gray-100 pl-8 space-y-3">
                       {/* 关联知识库 */}
                       {task.knowledgeBaseIds && (() => {
                         try {
@@ -3209,20 +3209,20 @@ export default function TeacherTasksPage() {
                             const allConversations = task.subProjects.flatMap(sp => sp.presetConversations);
                             if (allConversations.length === 0) {
                               return (
-                                <div className="bg-[#F7F8FA] rounded-lg p-4">
+                                <div className="bg-[#F7F8FA] rounded-lg p-3">
                                   <div className="text-sm text-gray-400 py-4 text-center">暂无对话活动，点击「新建对话」创建</div>
                                 </div>
                               );
                             }
                             return (
-                              <div className="bg-[#F7F8FA] rounded-lg p-4 space-y-3">
+                              <div className="bg-[#F7F8FA] rounded-lg p-3 space-y-2">
                                 {allConversations.map((pc, pcIdx) => {
                                   const isEnabled = pc.enabled !== false;
                                   const sp = task.subProjects.find((s: any) => s.presetConversations.some((p: any) => p.id === pc.id));
                                   const _tpl = conversationTemplates.find((t: any) => t.id === pc.conversationPromptTemplateId);
                                   const tplName = _tpl?.name || "";
                                   return (
-                                    <div key={pc.id} className="bg-white rounded-lg p-3">
+                                    <div key={pc.id} className="bg-white rounded-lg p-2">
                                       <div className="flex items-center justify-between gap-2">
                                         <div className="flex items-center gap-2 flex-wrap min-w-0">
                                           {isEnabled ? (
@@ -3278,7 +3278,7 @@ export default function TeacherTasksPage() {
                                         </div>
                                       </div>
                                       {tplName && (
-                                        <div className="mt-2 text-xs text-[#0052D9]">对话设计模板：{tplName}</div>
+                                        <div className="mt-1 text-xs text-[#0052D9]">对话设计模板：{tplName}</div>
                                       )}
                                     </div>
                                   );
@@ -3292,8 +3292,8 @@ export default function TeacherTasksPage() {
                       {/* 课堂作业管理 - 始终显示列表 */}
 
                       {/* 互动探究管理 */}
-                      <div className="border-t border-gray-100 pt-3 mt-3">
-                        <div className="flex items-center justify-between mb-2">
+                      <div className="border-t border-gray-100 pt-2 mt-2">
+                        <div className="flex items-center justify-between mb-1">
                           <h4 className="font-medium text-sm text-[#63666F]">互动探究</h4>
                           <Button
                             theme="primary" variant="outline" size="small" icon={<AddIcon />}
@@ -3308,16 +3308,16 @@ export default function TeacherTasksPage() {
                         </div>
 
                         {/* 探究列表面板 */}
-                        <div className="bg-[#F7F8FA] rounded-lg p-4">
+                        <div className="bg-[#F7F8FA] rounded-lg p-3">
                           {explorationPanelVisible && explorationPanelSpId === task.subProjects[0]?.id ? (
                             <>
                               {/* 探究列表 */}
                               {explorations.length === 0 ? (
-                                <div className="text-center py-6 text-sm text-gray-400">暂无探究，点击「新建探究」创建</div>
+                                <div className="text-center py-3 text-sm text-gray-400">暂无探究，点击「新建探究」创建</div>
                               ) : (
                                 <div className="space-y-2">
                                   {explorations.map((e, eIdx) => (
-                                    <div key={e.id} className="bg-white rounded-lg p-3">
+                                    <div key={e.id} className="bg-white rounded-lg p-2">
                                       <div className="flex items-center justify-between mb-1">
                                         <div className="flex items-center gap-2 flex-wrap">
                                           {e.enabled ? (
@@ -3405,8 +3405,8 @@ export default function TeacherTasksPage() {
                       </div>
 
                       {/* 项目提交管理区（互动探究后、课堂作业前） */}
-                      <div className="border-t border-gray-100 pt-3 mt-3">
-                        <div className="flex items-center justify-between mb-2">
+                      <div className="border-t border-gray-100 pt-2 mt-2">
+                        <div className="flex items-center justify-between mb-1">
                           <h4 className="font-medium text-sm text-[#63666F]">项目提交</h4>
                           <div className="flex gap-2">
                             <Button
@@ -3439,7 +3439,7 @@ export default function TeacherTasksPage() {
                           </div>
                         </div>
 
-                        <div className="bg-[#F7F8FA] rounded-lg p-4">
+                        <div className="bg-[#F7F8FA] rounded-lg p-3">
                           {(() => {
                             const allPs = task.subProjects.flatMap(
                               (sp: any) => (sp.projectSubmissions || []) as any[]
@@ -3456,7 +3456,7 @@ export default function TeacherTasksPage() {
                                 {allPs.map((ps: any, psIdx: number) => (
                                   <div
                                     key={ps.id}
-                                    className="bg-white rounded-lg p-3"
+                                    className="bg-white rounded-lg p-2"
                                   >
                                     <div className="flex items-center justify-between">
                                       <div className="flex items-center gap-2 flex-wrap min-w-0">
@@ -3558,9 +3558,9 @@ export default function TeacherTasksPage() {
                         </div>
                       </div>
 
-                      <div className="border-t border-gray-100 pt-3 mt-3">
+                      <div className="border-t border-gray-100 pt-2 mt-2">
                         {/* 标题行 */}
-                        <div className="flex items-center justify-between mb-2">
+                        <div className="flex items-center justify-between mb-1">
                           <h4 className="font-medium text-sm text-[#63666F]">课堂作业</h4>
                           <div className="flex gap-2">
                             {/* 导入作业功能已隐藏 */}
@@ -3569,7 +3569,7 @@ export default function TeacherTasksPage() {
                         </div>
 
                         {/* 作业列表面板 */}
-                        <div className="bg-[#F7F8FA] rounded-lg p-4">
+                        <div className="bg-[#F7F8FA] rounded-lg p-3">
                           {quizPanelVisible ? (
                               <>
                                 {/* 新建作业设计表单 - 置顶 */}
@@ -3650,11 +3650,11 @@ export default function TeacherTasksPage() {
 
                                 {/* 作业列表 */}
                                 {quizzes.length === 0 ? (
-                                  <div className="text-center py-6 text-sm text-gray-400">暂无作业，点击「新建作业」创建</div>
+                                  <div className="text-center py-3 text-sm text-gray-400">暂无作业，点击「新建作业」创建</div>
                                 ) : (
                                   <div className="space-y-2">
                                     {quizzes.map((q, qIdx) => (
-                                      <div key={q.id} className="bg-white rounded-lg p-3">
+                                      <div key={q.id} className="bg-white rounded-lg p-2">
                                         <div className="flex items-center justify-between mb-1">
                                           <div className="flex items-center gap-2 flex-wrap">
                                             {q.status === "INACTIVE" && <span className="px-2 py-0.5 rounded-full text-xs bg-orange-100 text-orange-700">失效中</span>}
