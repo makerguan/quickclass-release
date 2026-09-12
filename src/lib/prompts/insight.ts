@@ -149,6 +149,20 @@ export interface TaskTemplateVars {
 }
 
 // ─────────────────────────────────────────────
+// 0.4 报告生成时间（时间唯一真源）
+// ─────────────────────────────────────────────
+
+/**
+ * 服务器真实时间，注入模板 {reportTime} 占位符。
+ * AI 不感知当前时间，报告中出现的时间只能来自此处，防止模型编造日期。
+ */
+export function getReportTime(): string {
+  const now = new Date();
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${now.getFullYear()}年${pad(now.getMonth() + 1)}月${pad(now.getDate())}日 ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+}
+
+// ─────────────────────────────────────────────
 // 0.3 模板变量替换函数
 // ─────────────────────────────────────────────
 
@@ -188,6 +202,7 @@ export function replaceConversationVars(
     taskDescription: vars.taskDescription || vars.taskTitle ? (vars.taskDescription || "") : "",
     taskGrade: vars.taskGrade || "",
     taskSubject: vars.taskSubject || "",
+    reportTime: getReportTime(),
   };
 
   if (isStudent) {
@@ -226,6 +241,7 @@ export function replaceTaskVars(template: string, vars: TaskTemplateVars): strin
     taskGrade: vars.taskGrade || "",
     taskSubject: vars.taskSubject || "",
     knowledgeBase: vars.knowledgeBase || "",
+    reportTime: getReportTime(),
     studentName: vars.studentName || "",
     presetCompletion: vars.presetCompletion || "",
     activeStudents: activeStudentsStr,

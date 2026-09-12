@@ -2,22 +2,24 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Form, Input, MessagePlugin } from "tdesign-react";
+import { Button, Dialog, Form, Input, MessagePlugin } from "tdesign-react";
+
+interface CandidateClass {
+  classId: string;
+  className: string;
+}
 
 export default function StudentLoginPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
+  // 同名学生跨班多账号时：暂存登录凭证与候选班级，供二次选择课堂
+  const [pendingPayload, setPendingPayload] = useState<Record<string, string> | null>(null);
+  const [pendingClasses, setPendingClasses] = useState<CandidateClass[]>([]);
+  const [classSelectVisible, setClassSelectVisible] = useState(false);
 
-  const handleSubmit = async (context: { fields?: Record<string, string> }) => {
-    const values = context.fields || {};
+  const doLogin = async (payload: Record<string, string>) => {
     setLoading(true);
     try {
-      const payload: Record<string, string> = {};
-      if (values.name) payload.name = values.name;
-      if (values.studentNo) payload.studentNo = values.studentNo;
-      if (values.inviteCode) payload.inviteCode = values.inviteCode;
-      if (values.password) payload.password = values.password;
-
       const res = await fetch("/api/auth/student-login", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -26,6 +28,13 @@ export default function StudentLoginPage() {
 
       const data = await res.json();
       if (res.ok) {
+        // 姓名在多个班级都有账号且密码均匹配：先选择课堂再完成登录
+        if (data.needClassSelection) {
+          setPendingPayload(payload);
+          setPendingClasses(data.classes || []);
+          setClassSelectVisible(true);
+          return;
+        }
         localStorage.setItem("token", data.token);
         localStorage.setItem("user", JSON.stringify(data.user));
         MessagePlugin.success("登录成功");
@@ -38,6 +47,25 @@ export default function StudentLoginPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = async (context: { fields?: Record<string, string> }) => {
+    const values = context.fields || {};
+    const payload: Record<string, string> = {};
+    if (values.name) payload.name = values.name;
+    if (values.studentNo) payload.studentNo = values.studentNo;
+    if (values.inviteCode) payload.inviteCode = values.inviteCode;
+    if (values.password) payload.password = values.password;
+
+    await doLogin(payload);
+  };
+
+  const handleSelectClass = async (classId: string) => {
+    if (!pendingPayload) return;
+    setClassSelectVisible(false);
+    const payload = { ...pendingPayload, classId };
+    setPendingPayload(null);
+    await doLogin(payload);
   };
 
   return (
@@ -97,6 +125,37 @@ export default function StudentLoginPage() {
           </Button>
         </div>
       </div>
+
+      <Dialog
+        header="请选择你的班级"
+        visible={classSelectVisible}
+        onClose={() => {
+          setClassSelectVisible(false);
+          setPendingPayload(null);
+        }}
+        footer={null}
+        closeOnOverlayClick={false}
+      >
+        <div className="space-y-3">
+          <p className="text-gray-700 text-sm">
+            检测到该姓名在多个班级都有账号，请选择要进入的课堂：
+          </p>
+          <div className="space-y-2">
+            {pendingClasses.map((c) => (
+              <Button
+                key={c.classId}
+                theme="primary"
+                variant="outline"
+                block
+                loading={loading}
+                onClick={() => handleSelectClass(c.classId)}
+              >
+                {c.className}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </Dialog>
     </div>
   );
 }

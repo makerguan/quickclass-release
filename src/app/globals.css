@@ -40,6 +40,11 @@ body {
   color: white !important;
 }
 
+/* 模板设置页：紧凑卡片，压缩 TDesign Card 默认内边距（默认 16px 24px） */
+.template-compact-card .t-card__body {
+  padding: 10px 20px;
+}
+
 /* 座右铭滚动动画 */
 @keyframes marquee {
   0% {

@@ -273,6 +273,7 @@ export default function TemplateSettingsPage() {
         { name: "weakQuestions", desc: "薄弱题目" },
         { name: "lowScoreStudents", desc: "低分学生" },
         { name: "highScoreStudents", desc: "高分学生" },
+        { name: "reportTime", desc: "报告生成时间（服务器真实时间）" },
       ];
     }
     if (type === "EXPLORATION_ANALYSIS") {
@@ -287,6 +288,7 @@ export default function TemplateSettingsPage() {
         { name: "actionTypeStats", desc: "操作类型统计" },
         { name: "avgTimeSpent", desc: "平均停留时间" },
         { name: "avgInteractions", desc: "平均互动次数" },
+        { name: "reportTime", desc: "报告生成时间（服务器真实时间）" },
       ];
     }
     // 所有类型通用的用户输入变量
@@ -320,6 +322,7 @@ export default function TemplateSettingsPage() {
         ...userInputs,
         { name: "personalDialogContents", desc: "个人对话记录" },
         { name: "personalQuizStats", desc: "个人作业数据" },
+        { name: "reportTime", desc: "报告生成时间（服务器真实时间）" },
       ];
     } else {
       // class
@@ -333,6 +336,7 @@ export default function TemplateSettingsPage() {
         { name: "personalDialogAnalysisReport", desc: "个人对话分析报告" },
         { name: "classDialogAnalysisReport", desc: "班级对话分析报告" },
         { name: "classQuizStats", desc: "全班作业数据" },
+        { name: "reportTime", desc: "报告生成时间（服务器真实时间）" },
       ];
     }
   };
@@ -371,6 +375,7 @@ export default function TemplateSettingsPage() {
 班级名称：{className}
 参与人数：{totalStudents} / {classSize}
 班级平均分：{classAvgScore}
+报告生成时间：{reportTime}
 
 ## 各题正确率
 {questionStats}
@@ -390,6 +395,9 @@ export default function TemplateSettingsPage() {
 ## ⚠️ 字数限制
 整篇报告总字数不得超过300字，超出将被判定为不合格。
 
+## 时间真实性（强制）
+报告中出现的任何日期/时间只能原样引用上方"报告生成时间：{reportTime}"，禁止自行推算、改写或编造任何其他日期时间；无必要不写时间。
+
 ## 输出格式
 直接输出分析内容，末尾另起一行输出综合评分：
 评分：★★★★★★`;
@@ -404,6 +412,7 @@ export default function TemplateSettingsPage() {
 平均得分：{classAvgScore}分
 平均停留：{avgTimeSpent}秒
 平均互动：{avgInteractions}次
+报告生成时间：{reportTime}
 
 ## 分数分布
 {scoreDistribution}
@@ -423,6 +432,9 @@ export default function TemplateSettingsPage() {
 ## 字数限制
 整篇报告总字数不超过500字。
 
+## 时间真实性（强制）
+报告中出现的任何日期/时间只能原样引用上方"报告生成时间：{reportTime}"，禁止自行推算、改写或编造任何其他日期时间；无必要不写时间。
+
 ## 输出格式
 直接输出分析内容，末尾另起一行输出综合评分：
 评分：★★★★★★`;
@@ -433,6 +445,7 @@ export default function TemplateSettingsPage() {
 ## 学生信息
 - 姓名：{studentName}
 - 对话主题：{pcTitle}
+- 报告生成时间：{reportTime}
 
 ## 对话内容
 {personalDialogContents}
@@ -443,13 +456,17 @@ export default function TemplateSettingsPage() {
 3. 指出学生的常见误区或问题
 4. 给出针对性的学习建议
 
-请用简洁专业的语言进行分析，篇幅控制在300字以内。`;
+请用简洁专业的语言进行分析，篇幅控制在300字以内。
+
+## 时间真实性（强制）
+报告中出现的任何日期/时间只能原样引用上方"报告生成时间：{reportTime}"，禁止自行推算、改写或编造任何其他日期时间；无必要不写时间。`;
     } else if (type === "class") {
       return `请对全班学生的对话进行汇总分析：
 
 ## 任务信息
 - 对话活动：{pcTitle}
 - 参与学生：{activeCount}/{totalStudents}人
+- 报告生成时间：{reportTime}
 
 ## 学生对话汇总
 {personalDialogContents}
@@ -460,7 +477,10 @@ export default function TemplateSettingsPage() {
 3. 总结常见问题和误解
 4. 提出班级整体的教学改进建议
 
-请用简洁专业的语言进行分析，篇幅控制在1000字以内。`;
+请用简洁专业的语言进行分析，篇幅控制在1000字以内。
+
+## 时间真实性（强制）
+报告中出现的任何日期/时间只能原样引用上方"报告生成时间：{reportTime}"，禁止自行推算、改写或编造任何其他日期时间；无必要不写时间。`;
     } else {
       return `你是一位AI学习助手，正在辅导学生完成课堂学习。请根据以下课堂信息引导学生学习，回答他们的问题。
 
@@ -620,27 +640,27 @@ export default function TemplateSettingsPage() {
           onClick={() => setExpandedType(isExpanded ? null : type)}
         >
           <Card
-            className={isExpanded ? "rounded-b-none" : ""}
+            className={`template-compact-card ${isExpanded ? "rounded-b-none" : ""}`}
             style={{
               borderTop: isExpanded ? `3px solid ${config.color}` : undefined,
             }}
           >
-          <div className="flex items-center justify-between py-1">
-            <div className="flex items-center gap-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
               <div
-                className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
+                className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
                 style={{ backgroundColor: config.bgColor }}
               >
                 <Icon
-                  className="text-xl"
+                  className="text-lg"
                   style={{ color: config.color }}
                 />
               </div>
               <div>
-                <h3 className="text-base font-semibold text-[#1A1A1A]">
+                <h3 className="text-base font-semibold text-[#1A1A1A] leading-snug">
                   {config.title}
                 </h3>
-                <p className="text-xs text-[#63666F]">{config.description}</p>
+                <p className="text-xs text-[#63666F] leading-snug">{config.description}</p>
               </div>
             </div>
 
@@ -673,10 +693,10 @@ export default function TemplateSettingsPage() {
 
         {/* 展开后的列表 */}
         {isExpanded && (
-          <Card className="rounded-t-none border-t-0 !shadow-md">
+          <Card className="template-compact-card rounded-t-none border-t-0 !shadow-md">
             {templates.length === 0 ? (
-              <div className="text-center py-8 text-[#BBBBBB]">
-                <p className="text-sm mb-3">暂无{config.title}</p>
+              <div className="text-center py-6 text-[#BBBBBB]">
+                <p className="text-sm mb-2">暂无{config.title}</p>
                 <div className="flex items-center justify-center gap-2">
                   <Button
                     variant="outline"
@@ -745,22 +765,16 @@ export default function TemplateSettingsPage() {
                 {templates.map((tpl) => (
                   <div
                     key={tpl.id}
-                    className="flex items-start justify-between gap-4 p-3 rounded-lg hover:bg-gray-50 transition-colors border border-gray-100"
+                    className="flex items-center justify-between gap-4 px-3 py-1 rounded-lg hover:bg-gray-50 transition-colors border border-gray-100"
                   >
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-1">
-                        {tpl.isDefault && (
-                          <Tag theme="primary" variant="light" size="small">
-                            默认
-                          </Tag>
-                        )}
-                        <h4 className="font-medium text-[#1A1A1A] text-sm">{tpl.name}</h4>
-                      </div>
-                      <p className="text-xs text-[#63666F] line-clamp-1 whitespace-pre-wrap">
-                        {tpl.content.slice(0, 120)}
-                        {tpl.content.length > 120 ? "..." : ""}
-                      </p>
-                      <span className="text-xs text-[#BBBBBB] mt-0.5 block">
+                    <div className="flex-1 min-w-0 flex items-center gap-2">
+                      {tpl.isDefault && (
+                        <Tag theme="primary" variant="light" size="small">
+                          默认
+                        </Tag>
+                      )}
+                      <h4 className="font-medium text-[#1A1A1A] text-sm truncate">{tpl.name}</h4>
+                      <span className="text-xs text-[#BBBBBB] flex-shrink-0">
                         {new Date(tpl.updatedAt).toLocaleDateString("zh-CN")} 更新
                       </span>
                     </div>
@@ -770,7 +784,7 @@ export default function TemplateSettingsPage() {
                           e.stopPropagation();
                           handleExport(tpl);
                         }}
-                        className="p-1.5 text-gray-400 hover:text-[#00A870] hover:bg-[#00A870]/10 rounded transition-colors"
+                        className="p-1 text-gray-400 hover:text-[#00A870] hover:bg-[#00A870]/10 rounded transition-colors"
                         title="导出"
                       >
                         <DownloadIcon className="text-base" />
@@ -780,7 +794,7 @@ export default function TemplateSettingsPage() {
                           e.stopPropagation();
                           openEditDialog(tpl);
                         }}
-                        className="p-1.5 text-gray-400 hover:text-[#0052D9] hover:bg-[#0052D9]/10 rounded transition-colors"
+                        className="p-1 text-gray-400 hover:text-[#0052D9] hover:bg-[#0052D9]/10 rounded transition-colors"
                         title="编辑"
                       >
                         <EditIcon className="text-base" />
@@ -791,7 +805,7 @@ export default function TemplateSettingsPage() {
                           setDeletingTemplate(tpl);
                           setDeleteDialogVisible(true);
                         }}
-                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                        className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
                         title="删除"
                       >
                         <DeleteIcon className="text-base" />

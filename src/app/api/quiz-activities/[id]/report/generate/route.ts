@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { getAIConfig } from "@/lib/ai";
+import { getReportTime } from "@/lib/prompts/insight";
 
 // 课堂作业分析模板变量替换
 function replaceQuizAnalysisVars(template: string, vars: Record<string, string>): string {
@@ -157,6 +158,7 @@ export async function POST(
       "lowScoreStudents": lowScoreStudents || "无",
       "highScoreStudents": highScoreStudents || "无",
       "scoreDistribution": scoreDistribution || "无",
+      "reportTime": getReportTime(),
     };
 
     const templateSection = effectivePrompt
@@ -167,7 +169,7 @@ export async function POST(
     const wordLimit = isHtmlOutput ? undefined : (aiConfig.classWordLimit ?? 2000);
     const wordLimitText = wordLimit ? `整篇报告总字数控制在${wordLimit}字以内。` : "";
     const outputFormat = isHtmlOutput
-      ? "\n\n## 输出格式\n直接输出完整的HTML内容，可包含图表（ECharts等）、样式和交互元素。"
+      ? "\n\n## 输出格式\n直接输出完整的HTML内容，所有图表用纯 SVG 内联绘制，禁止引入任何外部 JS 图表库或 CDN 资源，保存为 .html 后离线可完整打开。"
       : "\n\n## 字数限制\n" + wordLimitText + "\n\n## 输出格式\n直接输出分析内容（Markdown格式），末尾另起一行输出综合评分：\n评分：★★★★★★";
     const prompt = `${systemFrame}\n\n${dataSection}${templateSection}${outputFormat}`;
 

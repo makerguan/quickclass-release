@@ -2,10 +2,22 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { createToken } from "@/lib/auth";
 import bcrypt from "bcryptjs";
+import type { Prisma } from "@prisma/client";
+
+type StudentCandidate = Prisma.UserGetPayload<{
+  include: { Class_User_classIdToClass: true };
+}>;
 
 export async function POST(req: NextRequest) {
   try {
-    const { name, studentNo, inviteCode, password } = await req.json();
+    const body = await req.json();
+    // 输入归一化：去除首尾空格，避免粘贴/输入空格导致匹配失败（密码不 trim，可能合法含空格）
+    const name = (body.name ?? "").toString().trim() || "";
+    const studentNo = (body.studentNo ?? "").toString().trim() || "";
+    const inviteCode = (body.inviteCode ?? "").toString().trim() || "";
+    const password = body.password;
+    // 二次登录时用于指定班级：同名/同学号学生跨班多账号时，由学生选择课堂后回传
+    const classId = (body.classId ?? "").toString().trim() || "";
 
     // 检查必填：至少需要姓名或学号
     if (!name && !studentNo) {
@@ -127,46 +139,88 @@ export async function POST(req: NextRequest) {
 
     // ===== 情况2：密码登录（必须有密码） =====
     if (password) {
-      // 用姓名或学号查找学生
-      let user = null;
+      // 定位候选学生：学号优先（唯一性强），未命中再按姓名兜底。
+      // 姓名和学号都可能跨班级重复（学号仅班内查重），因此先收集全部候选再逐步收窄，
+      // 避免 findFirst 无排序导致同名学生登录到哪个课堂不可控
+      let candidates: StudentCandidate[] = [];
 
-      if (name) {
-        user = await prisma.user.findFirst({
-          where: { name, role: "STUDENT" },
-          include: { Class_User_classIdToClass: true },
-        });
-
-        if (user && studentNo && user.studentNo !== studentNo) {
-          return NextResponse.json({ error: "学号与姓名不匹配" }, { status: 401 });
-        }
-      }
-
-      if (!user && studentNo) {
-        user = await prisma.user.findFirst({
+      if (studentNo) {
+        candidates = await prisma.user.findMany({
           where: { studentNo, role: "STUDENT" },
           include: { Class_User_classIdToClass: true },
+          orderBy: { createdAt: "asc" },
         });
 
-        if (user && name && user.name !== name) {
+        // 学号命中但姓名全部不符：学号录错或填错，明确报错
+        if (candidates.length > 0 && name && !candidates.some((c) => c.name === name)) {
           return NextResponse.json({ error: "姓名与学号不匹配" }, { status: 401 });
         }
       }
 
-      if (!user) {
-        return NextResponse.json({ error: "学生不存在" }, { status: 404 });
+      if (candidates.length === 0 && name) {
+        candidates = await prisma.user.findMany({
+          where: { name, role: "STUDENT" },
+          include: { Class_User_classIdToClass: true },
+          orderBy: { createdAt: "asc" },
+        });
+        // 姓名命中即可作为候选，不再因学号不一致（含账号未录学号）拒绝：
+        // 学号仅作辅助定位，认证因子是密码
       }
 
-      if (!user.password) {
+      if (candidates.length === 0) {
         return NextResponse.json(
-          { error: "您还未设置密码，请使用姓名+邀请码登录" },
-          { status: 401 }
+          {
+            error: studentNo && !name
+              ? "未找到该学号的学生，请确认学号或改用姓名登录"
+              : "学生不存在，请确认姓名或学号",
+          },
+          { status: 404 }
         );
       }
 
-      const valid = await bcrypt.compare(password, user.password);
-      if (!valid) {
+      // 指定了班级（同名学生二次登录选择课堂）：收窄到该班级
+      if (classId) {
+        const narrowed = candidates.filter((c) => c.classId === classId);
+        if (narrowed.length === 0) {
+          return NextResponse.json(
+            { error: "所选班级下没有匹配的学生" },
+            { status: 404 }
+          );
+        }
+        candidates = narrowed;
+      }
+
+      // 逐一验证密码，收集全部匹配的账号
+      const matched: StudentCandidate[] = [];
+      for (const c of candidates) {
+        if (c.password && (await bcrypt.compare(password, c.password))) {
+          matched.push(c);
+        }
+      }
+
+      if (matched.length === 0) {
+        if (!candidates.some((c) => c.password)) {
+          return NextResponse.json(
+            { error: "您还未设置密码，请使用姓名+邀请码登录" },
+            { status: 401 }
+          );
+        }
         return NextResponse.json({ error: "密码错误" }, { status: 401 });
       }
+
+      // 密码匹配到多个班级的账号（如同名跨班且都被重置为默认密码）：
+      // 不随机进入某个课堂，返回班级列表让学生选择
+      if (matched.length > 1) {
+        return NextResponse.json({
+          needClassSelection: true,
+          classes: matched.map((c) => ({
+            classId: c.classId,
+            className: c.Class_User_classIdToClass?.name || "未知班级",
+          })),
+        });
+      }
+
+      const user = matched[0];
 
       // 登录成功
       const token = await createToken({
