@@ -49,6 +49,7 @@ export default function TeacherSettingsPage() {
   // 系统升级状态
   const [upgradeUploading, setUpgradeUploading] = useState(false);
   const [upgradeProgress, setUpgradeProgress] = useState(0);
+  const [autoUpdating, setAutoUpdating] = useState(false);
   const [upgradeResult, setUpgradeResult] = useState<{
     success: boolean;
     message: string;
@@ -617,6 +618,53 @@ export default function TeacherSettingsPage() {
       }
     };
     input.click();
+  };
+
+  // 系统升级：一键在线更新（服务端自动下载官方仓库整包并准备升级）
+  const handleAutoUpdate = async () => {
+    setAutoUpdating(true);
+    setUpgradeProgress(0);
+    setUpgradeResult(null);
+
+    // 模拟进度（服务端下载约 1MB 整包，通常数秒内完成）
+    const progressInterval = setInterval(() => {
+      setUpgradeProgress((prev) => Math.min(prev + 8, 90));
+    }, 400);
+
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/upgrade/download", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      clearInterval(progressInterval);
+
+      const data = await res.json();
+      if (res.ok && data.success) {
+        setUpgradeProgress(100);
+        setUpgradeResult({
+          success: true,
+          message: data.detail || "更新包已就绪，请重启服务完成升级",
+          newVersion: data.newVersion,
+        });
+        // 更新完成后刷新版本检测状态
+        checkUpdate(true);
+      } else {
+        setUpgradeResult({
+          success: false,
+          message: data.error || "一键更新失败",
+        });
+      }
+    } catch {
+      clearInterval(progressInterval);
+      setUpgradeResult({
+        success: false,
+        message: "网络错误，请重试",
+      });
+    } finally {
+      setAutoUpdating(false);
+    }
   };
 
   // 导入配置
@@ -1536,13 +1584,13 @@ export default function TeacherSettingsPage() {
             ) : (
               <div>
                 <p className="text-sm text-[#63666F] mb-4">
-                  下载最新升级包后，在此处上传并安装。重启服务后自动完成升级，数据库和配置会自动保留。
+                  可一键从官方仓库获取最新版本，或手动下载升级包后在此上传安装。重启服务后自动完成升级，数据库和配置会自动保留。
                 </p>
 
-                {upgradeUploading && (
+                {(upgradeUploading || autoUpdating) && (
                   <div className="mb-4">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-[#63666F]">正在上传并处理升级包...</span>
+                      <span className="text-xs text-[#63666F]">{autoUpdating ? "正在从官方仓库下载更新包..." : "正在上传并处理升级包..."}</span>
                       <span className="text-xs font-medium text-[#0052D9]">{upgradeProgress}%</span>
                     </div>
                     <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
@@ -1554,14 +1602,25 @@ export default function TeacherSettingsPage() {
                   </div>
                 )}
 
-                <Button
-                  theme="primary"
-                  onClick={handleUpgradeUpload}
-                  loading={upgradeUploading}
-                  disabled={upgradeUploading}
-                >
-                  {upgradeUploading ? "正在处理..." : "选择升级包"}
-                </Button>
+                <div className="flex items-center gap-3">
+                  <Button
+                    theme="primary"
+                    onClick={handleAutoUpdate}
+                    loading={autoUpdating}
+                    disabled={upgradeUploading || autoUpdating}
+                  >
+                    {autoUpdating ? "正在更新..." : "一键在线更新"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    theme="default"
+                    onClick={handleUpgradeUpload}
+                    loading={upgradeUploading}
+                    disabled={upgradeUploading || autoUpdating}
+                  >
+                    {upgradeUploading ? "正在处理..." : "选择升级包"}
+                  </Button>
+                </div>
               </div>
             )}
           </div>
