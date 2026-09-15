@@ -10,6 +10,7 @@ import {
   IMAGE_NOTICE,
   MATERIAL_CONTENT_PREFIX,
 } from "@/lib/prompts";
+import { MATH_OUTPUT_RULES } from "@/lib/math-format";
 
 // 多模态消息内容类型
 type MessageContentPart =
@@ -176,6 +177,10 @@ export async function POST(req: NextRequest) {
     if (hasImageContent(lastMessage.content)) {
       systemPrompt += `\n${IMAGE_NOTICE}\n`;
     }
+
+    // 统一数学公式输出格式：要求模型使用 $...$ / $$...$$ 定界符，
+    // 否则模型可能输出 \(...\) / \[...\]，前端会当作普通文本，学生看到 LaTeX 源码
+    systemPrompt += `\n\n${MATH_OUTPUT_RULES}`;
 
     const { chatModel } = await createDashScopeClient();
 

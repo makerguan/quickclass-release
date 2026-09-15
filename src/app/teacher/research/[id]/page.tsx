@@ -11,6 +11,7 @@ import {
   Textarea,
 } from "tdesign-react";
 import { copyText } from "@/lib/clipboard";
+import Markdown from "@/components/Markdown";
 import {
   DownloadIcon,
   CopyIcon,
@@ -452,9 +453,9 @@ export default function ProjectDetailPage({ params }: { params: Promise<{ id: st
             )}
 
             <div className="bg-gray-50 rounded p-4 max-h-[600px] overflow-y-auto border border-gray-100">
-              <pre className="whitespace-pre-wrap text-sm font-sans text-gray-800 leading-relaxed">
-                {streamedText || project.contentText || "生成中..."}
-              </pre>
+              <div className="text-sm font-sans text-gray-800 leading-relaxed whitespace-pre-line prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
+                <Markdown>{streamedText || project.contentText || "生成中..."}</Markdown>
+              </div>
             </div>
 
             <div className="flex flex-wrap gap-2 mt-4 pt-4 border-t border-gray-100">

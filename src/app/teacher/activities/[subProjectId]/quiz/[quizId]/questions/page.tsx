@@ -4,6 +4,7 @@ import { useParams, useRouter } from "next/navigation";
 import { MessagePlugin } from "tdesign-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import { normalizeQuestionType } from "@/lib/question-type";
+import Markdown from "@/components/Markdown";
 
 interface Question {
   id?: string;
@@ -418,13 +419,13 @@ function QuestionPreview({ question, onClose }: { question: Question; onClose: (
           </div>
           <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
         </div>
-        <div className="text-base text-gray-800 mb-6 whitespace-pre-line">{question.content}</div>
+        <div className="text-base text-gray-800 mb-6"><Markdown>{question.content}</Markdown></div>
         {!isJudge && (
           <div className="space-y-3">
             {["A","B","C","D"].map((k) => opts[k] ? (
               <div key={k} className="flex items-center gap-3 p-3 border rounded-lg">
                 <span className="w-6 h-6 rounded-full border flex items-center justify-center text-xs font-medium">{k}</span>
-                <span className="text-sm text-gray-700">{opts[k]}</span>
+                <span className="text-sm text-gray-700"><Markdown inline>{String(opts[k])}</Markdown></span>
               </div>
             ) : null)}
           </div>

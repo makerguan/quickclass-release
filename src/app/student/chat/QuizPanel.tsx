@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { Button, MessagePlugin } from "tdesign-react";
 import { CheckCircleIcon, ErrorCircleIcon } from "tdesign-icons-react";
 import { normalizeQuestionType } from "@/lib/question-type";
+import Markdown from "@/components/Markdown";
 
 interface Question {
   id: string;
@@ -238,9 +239,9 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
                     <span className="text-xs text-[#8B8F99]">{backend.score ?? 0} / {backend.maxScore} 分</span>
                   ) : null}
                 </div>
-                <div className="text-base font-medium text-[#1A1A1A]">{q.content}</div>
+                <div className="text-base font-medium text-[#1A1A1A]"><Markdown>{q.content}</Markdown></div>
                 {backend?.comment && !ungraded && (
-                  <div className="text-xs text-[#8B8F99] mt-1">评语：{backend.comment}</div>
+                  <div className="text-xs text-[#8B8F99] mt-1">评语：<Markdown inline>{backend.comment}</Markdown></div>
                 )}
               </div>
             </div>
@@ -264,7 +265,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
                     }`}>{k}.</span>
                     <span className={`text-sm ${
                       isCorrect ? "text-green-700" : isSelected ? "text-red-700" : "text-gray-600"
-                    }`}>{v}</span>
+                    }`}><Markdown inline>{String(v)}</Markdown></span>
                     {isSelected && !isCorrect && <span className="ml-auto text-xs text-red-400">你的答案</span>}
                     {isCorrect && <span className="ml-auto text-xs text-green-500">正确答案</span>}
                   </div>
@@ -298,7 +299,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
               <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium mt-1.5">[多选]</span>
             )}
             <div className="flex-1">
-              <div className="text-base font-medium text-[#1A1A1A]">{currentQ.content}</div>
+              <div className="text-base font-medium text-[#1A1A1A]"><Markdown>{currentQ.content}</Markdown></div>
             </div>
           </div>
 
@@ -331,7 +332,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
                   }`}>
                     {isSelected ? (isMulti ? "✓" : "●") : ""}
                   </span>
-                  <span className={`text-sm flex-1 ${isSelected ? "text-[#0052D9]" : "text-gray-700"}`}>{v}</span>
+                  <span className={`text-sm flex-1 ${isSelected ? "text-[#0052D9]" : "text-gray-700"}`}><Markdown inline>{String(v)}</Markdown></span>
                 </div>
               );
             })}

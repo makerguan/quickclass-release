@@ -442,7 +442,7 @@ export default function QuizReportPage() {
                       {reportData.questionDiscrimination.map((d: any, idx: number) => (
                         <div key={d.questionId} className="flex items-center gap-3 text-sm">
                           <span className="w-8 text-gray-400 text-right shrink-0">题{idx + 1}</span>
-                          <div className="w-24 text-gray-600 truncate shrink-0">{d.content}...</div>
+                          <div className="w-24 text-gray-600 truncate shrink-0"><Markdown inline>{d.content}</Markdown>...</div>
                           <div className="flex-1 bg-gray-100 rounded-full h-2 relative overflow-hidden">
                             <div
                               className={`h-2 rounded-full transition-all duration-500 ${
@@ -475,7 +475,7 @@ export default function QuizReportPage() {
                           <span className="w-8 text-gray-400 text-right shrink-0">题{idx + 1}</span>
                           <span className="w-20 text-center font-bold text-red-500 bg-red-50 rounded px-1.5 py-0.5">{o.topWrongOption}</span>
                           <span className="text-xs text-gray-400">{o.topWrongCount}人错选</span>
-                          <span className="text-gray-500 truncate flex-1">{o.content}...</span>
+                          <span className="text-gray-500 truncate flex-1"><Markdown inline>{o.content}</Markdown>...</span>
                         </div>
                       ))}
                     </div>

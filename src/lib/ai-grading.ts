@@ -11,6 +11,7 @@ import {
   OBJECTIVE_TYPES,
   SUBJECTIVE_TYPES,
 } from "./question-type";
+import { MATH_OUTPUT_RULES, fixInvalidJsonEscapes } from "./math-format";
 
 export interface GradingQuestion {
   id: string;
@@ -154,6 +155,9 @@ async function gradeByAI(
     prompt += `请对每位学生的答题情况给出简洁的个性化学习建议（50字以内），格式：学习建议：xxx\n`;
   }
 
+  // 统一数学公式输出格式：评语/学习建议里的数学内容需在前端正常显示
+  prompt += `\n\n${MATH_OUTPUT_RULES}\n注意：结果以 JSON 输出，公式里的反斜杠在 JSON 字符串中必须写成双反斜杠，例如 $\\pi$ 在 JSON 中应写作 $\\\\pi$。`;
+
   prompt += `\n请严格按以下JSON格式输出评分结果（不要输出任何其他内容）：\n{\n  "results": [\n    {\n      "questionId": "题目ID",\n      "score": 得分,\n      "comment": "评语"\n    }\n  ]{{if generateAdvice}},"learningAdvice": "学习建议"{{/if}}\n}`;
 
   const response = await fetch(`${aiConfig.baseURL}/chat/completions`, {
@@ -181,7 +185,13 @@ async function gradeByAI(
   const jsonMatch = content.match(/\{[\s\S]*\}/);
   if (!jsonMatch) throw new Error("AI 批阅返回格式错误");
 
-  const parsed = JSON.parse(jsonMatch[0]);
+  let parsed: any;
+  try {
+    parsed = JSON.parse(jsonMatch[0]);
+  } catch {
+    // AI 常在评语里直接写 LaTeX（如 $\pi$），\p 不是合法 JSON 转义，补成 \\ 再解析一次
+    parsed = JSON.parse(fixInvalidJsonEscapes(jsonMatch[0]));
+  }
 
   const parsedList: any[] = Array.isArray(parsed.results) ? parsed.results : [];
   const results: GradingResult[] = [];

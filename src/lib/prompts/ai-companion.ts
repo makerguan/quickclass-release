@@ -8,6 +8,7 @@
 
 import * as fs from "fs";
 import * as path from "path";
+import { MATH_OUTPUT_RULES } from "@/lib/math-format";
 
 /**
  * 读取 katex UMD bundle 与 CSS（SSR 端，从 node_modules 读取）
@@ -37,7 +38,7 @@ function loadKatexAssets(): { js: string; css: string; available: boolean } {
 // 模块加载时执行一次（Next.js 路由在 Node.js 环境中运行）
 const katexAssets = loadKatexAssets();
 
-export const AI_COMPANION_VERSION = "math-renderer-v4";
+export const AI_COMPANION_VERSION = "math-renderer-v5";
 
 /**
 * AI伴学浮动对话框CSS样式
@@ -328,6 +329,35 @@ export const aiCompanionScript = String.raw`
     flushText();
   }
 
+  // 统一 LaTeX 定界符：模型可能输出 \(...\) / \[...\]，统一转换为 $...$ / $$...$$
+  // 跳过围栏代码块与行内代码，避免破坏字面代码
+  function normalizeMathDelimiters(text) {
+    var s = String(text == null ? '' : text);
+    if (s.indexOf('\\(') === -1 && s.indexOf('\\)') === -1 && s.indexOf('\\[') === -1 && s.indexOf('\\]') === -1) {
+      return s;
+    }
+    var lines = s.split('\n');
+    var inFence = false;
+    var out = [];
+    for (var li = 0; li < lines.length; li++) {
+      var line = lines[li];
+      if (/^\s*(\`\`\`|~~~)/.test(line)) { inFence = !inFence; out.push(line); continue; }
+      if (inFence) { out.push(line); continue; }
+      var parts = line.split(/(\`[^\`]*\`)/g);
+      for (var pi = 0; pi < parts.length; pi++) {
+        if (pi % 2 === 1) continue;
+        // 函数式替换：replace 字符串参数里的 $$ 会被解释为一个字面 $
+        parts[pi] = parts[pi]
+          .replace(/\\\[/g, function() { return '$$'; })
+          .replace(/\\\]/g, function() { return '$$'; })
+          .replace(/\\\(/g, function() { return '$'; })
+          .replace(/\\\)/g, function() { return '$'; });
+      }
+      out.push(parts.join(''));
+    }
+    return out.join('\n');
+  }
+
   // 完整渲染：把 Markdown 文本渲染到 root 元素（覆盖原内容）
   // 支持：段落（双换行）、单换行（<br>）、行内 token
   function renderMarkdownToElement(root, text) {
@@ -335,7 +365,7 @@ export const aiCompanionScript = String.raw`
     while (root.firstChild) root.removeChild(root.firstChild);
     if (!text) return;
 
-    var lines = String(text).split('\n');
+    var lines = normalizeMathDelimiters(text).split('\n');
     var paraBuf = [];
     var listMode = null; // 'ul' | 'ol' | null
     var listEl = null;
@@ -1005,6 +1035,10 @@ export function buildAiCompanionSystemPrompt(args: {
     }
     prompt += "\n\n请结合学生的当前状态给出有针对性的指导。";
   }
+
+  // 统一数学公式输出格式：本渲染器只识别 $...$ / $$...$$，
+  // 避免模型输出 \(...\) / \[...\] 时把公式源码直接显示给学生
+  prompt += `\n\n${MATH_OUTPUT_RULES}`;
 
   return prompt;
 }

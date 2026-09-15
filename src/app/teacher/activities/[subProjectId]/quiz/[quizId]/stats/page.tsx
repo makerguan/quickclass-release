@@ -9,6 +9,7 @@ import {
 import { Card, Button, Select, Tag, Loading, MessagePlugin } from "tdesign-react";
 import { ChevronLeftIcon, ChartBarIcon, RefreshIcon } from "tdesign-icons-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
+import Markdown from "@/components/Markdown";
 
 interface QuestionStat {
   questionId: string;
@@ -404,7 +405,7 @@ export default function QuizStatsPage() {
                 <div className="space-y-2 text-sm">
                   {reportData.weakQuestions.split("\n").filter(Boolean).map((wq: string, idx: number) => (
                     <div key={idx} className="px-3 py-2 bg-[#FFF8F0] rounded-lg text-[#ED7B2F]">
-                      {wq}
+                      <Markdown inline>{wq}</Markdown>
                     </div>
                   ))}
                   {!reportData.weakQuestions && (
@@ -490,8 +491,8 @@ export default function QuizStatsPage() {
                 </Button>
               </div>
               {reportData?.aiContent ? (
-                <div className="bg-purple-50 rounded-lg p-4 text-sm text-gray-700 whitespace-pre-line">
-                  {reportData.aiContent}
+                <div className="bg-purple-50 rounded-lg p-4 text-sm text-gray-700 whitespace-pre-line prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all">
+                  <Markdown>{reportData.aiContent}</Markdown>
                 </div>
               ) : (
                 <div className="text-center py-8 text-gray-400">

@@ -20,6 +20,7 @@ import {
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
+import Markdown from "@/components/Markdown";
 import {
   AddIcon,
   DeleteIcon,
@@ -4301,13 +4302,13 @@ export default function TeacherTasksPage() {
               {quizAnalysisData.weakQuestions && quizAnalysisData.weakQuestions !== "" && (
                 <div className="bg-red-50 rounded-lg p-3">
                   <div className="text-sm font-medium text-red-600 mb-1">薄弱题目（正确率&lt;60%）</div>
-                  <div className="text-xs text-red-700 whitespace-pre-line">{quizAnalysisData.weakQuestions}</div>
+                  <div className="text-xs text-red-700 whitespace-pre-line"><Markdown>{quizAnalysisData.weakQuestions}</Markdown></div>
                 </div>
               )}
               {quizAnalysisData.lowScoreStudents && quizAnalysisData.lowScoreStudents !== "" && (
                 <div className="bg-orange-50 rounded-lg p-3">
                   <div className="text-sm font-medium text-orange-600 mb-1">低分学生（&lt;60分）</div>
-                  <div className="text-xs text-orange-700 whitespace-pre-line">{quizAnalysisData.lowScoreStudents}</div>
+                  <div className="text-xs text-orange-700 whitespace-pre-line"><Markdown>{quizAnalysisData.lowScoreStudents}</Markdown></div>
                 </div>
               )}
 
@@ -4331,7 +4332,7 @@ export default function TeacherTasksPage() {
                 {quizAnalysisData.aiContent ? (
                   <div className="bg-gray-50 rounded-lg p-3">
                     <div className="text-sm font-medium text-gray-600 mb-1">AI 分析报告</div>
-                    <div className="text-sm text-gray-700 whitespace-pre-line">{quizAnalysisData.aiContent}</div>
+                    <div className="text-sm text-gray-700 whitespace-pre-line prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all"><Markdown>{quizAnalysisData.aiContent}</Markdown></div>
                   </div>
                 ) : (
                   <div className="text-center py-4 text-xs text-gray-400">AI 分析生成中...</div>
@@ -4983,7 +4984,7 @@ export default function TeacherTasksPage() {
                           {quizPreviewIndex + 1}
                         </div>
                         <div className="flex-1">
-                          <div className="text-base font-medium text-[#1A1A1A]">{q.content}</div>
+                          <div className="text-base font-medium text-[#1A1A1A]"><Markdown>{q.content}</Markdown></div>
                         </div>
                       </div>
                       <div className="space-y-3 ml-11">
@@ -5033,7 +5034,7 @@ export default function TeacherTasksPage() {
                                 }`}>{k}.</span>
                                 <span className={`text-sm flex-1 ${
                                   isCorrect ? "text-green-700" : isSelected ? "text-red-700" : "text-gray-600"
-                                }`}>{v as React.ReactNode}</span>
+                                }`}><Markdown inline>{String(v)}</Markdown></span>
                                 {isSelected && !isCorrect && <span className="ml-auto text-xs text-red-400">你的答案</span>}
                                 {isCorrect && <span className="ml-auto text-xs text-green-500">正确答案</span>}
                               </div>

@@ -3,6 +3,7 @@
  */
 
 import { normalizeQuestionType } from "../question-type";
+import { MATH_OUTPUT_RULES, fixInvalidJsonEscapes } from "../math-format";
 
 export interface QuizTemplateVars {
   task: {
@@ -88,6 +89,10 @@ export function buildQuizGeneratePrompt(
   // 自动追加统一的输出格式要求
   if (base.indexOf("输出格式") < 0) {
     base += QUIZ_FORMAT_INSTRUCTIONS;
+  }
+  // 统一数学公式输出格式：题目正文/选项/解析里的数学内容需能被前端渲染
+  if (base.indexOf("数学公式输出规范") < 0) {
+    base += `\n\n${MATH_OUTPUT_RULES}\n${QUIZ_MATH_JSON_NOTE}`;
   }
   return base;
 }
@@ -215,9 +220,15 @@ export function parseQuestionsFromAIResponse(
   try {
     parsed = JSON.parse(cleaned);
   } catch {
-    // 如果还是失败，尝试更激进地清理不可见字符
-    cleaned = jsonMatch[0].replace(/[^\x20-\x7E]/g, " ");
-    parsed = JSON.parse(cleaned);
+    try {
+      // AI 常在 JSON 里直接写 LaTeX（如 $\pi$），\p 不是合法 JSON 转义会导致解析失败，
+      // 先把非法反斜杠补成双反斜杠再试，避免退化到"剥离非 ASCII"的兜底（中文会被清掉）
+      parsed = JSON.parse(fixInvalidJsonEscapes(cleaned));
+    } catch {
+      // 如果还是失败，尝试更激进地清理不可见字符
+      cleaned = jsonMatch[0].replace(/[^\x20-\x7E]/g, " ");
+      parsed = JSON.parse(cleaned);
+    }
   }
   // 标准化题目格式
   return parsed.map((q: any) => {
@@ -272,6 +283,12 @@ export function parseQuestionsFromAIResponse(
     };
   });
 }
+
+/**
+ * 出题场景的数学输出补充要求
+ * 题目以 JSON 文本输出，反斜杠必须双写，否则 $\pi$ 里的 \p 会让 JSON.parse 直接失败
+ */
+export const QUIZ_MATH_JSON_NOTE = `注意：本题目最终以 JSON 文本输出，公式里的反斜杠在 JSON 字符串中必须写成双反斜杠，例如 $\\pi$ 在 JSON 中应写作 $\\\\pi$。`;
 
 /**
  * 统一输出格式要求 - 由程序控制，教师模板不包含此内容

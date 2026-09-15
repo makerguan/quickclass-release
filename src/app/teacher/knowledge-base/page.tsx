@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from "react";
 import { Button, Card, Dialog, Input, MessagePlugin, Tag, Progress, Pagination, InputNumber } from "tdesign-react";
 import { AddIcon, DeleteIcon, FileIcon, BrowseIcon, CheckCircleIcon, StopCircleIcon } from "tdesign-icons-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
+import Markdown from "@/components/Markdown";
 
 // 知识库字符数上限
 const MAX_CONTENT_LENGTH = 50000;
@@ -490,9 +491,9 @@ export default function KnowledgeBasePage() {
                 <span>{previewKb.content.length.toLocaleString()} 字符</span>
               </div>
               <div className="max-h-[60vh] overflow-y-auto">
-                <pre className="whitespace-pre-wrap break-words text-sm text-[#1A1A1A] leading-relaxed font-sans">
-                  {previewKb.content}
-                </pre>
+                <div className="break-words text-sm text-[#1A1A1A] leading-relaxed font-sans whitespace-pre-line prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all">
+                  <Markdown>{previewKb.content}</Markdown>
+                </div>
               </div>
             </div>
           )}

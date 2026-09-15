@@ -359,9 +359,9 @@ export default function TeacherDashboardPage() {
               </div>
               <div
                 ref={insightRef}
-                className="bg-[#F7F8FA] p-5 rounded-lg text-sm leading-relaxed whitespace-pre-wrap min-h-[120px] max-h-[600px] overflow-y-auto break-words"
+                className="bg-[#F7F8FA] p-5 rounded-lg text-sm leading-relaxed whitespace-pre-wrap min-h-[120px] max-h-[600px] overflow-y-auto break-words prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all"
               >
-                {classInsight ? classInsight.content : (
+                {classInsight ? <Markdown>{classInsight.content}</Markdown> : (
                   <span className="text-gray-400">点击「生成洞察」按钮，AI 将读取班级学生的对话记录和学习数据，生成详细的学情分析报告...</span>
                 )}
               </div>
@@ -510,8 +510,8 @@ export default function TeacherDashboardPage() {
                                     </Button>
                                   </div>
                                 </div>
-                                <div className="bg-[#F7F8FA] p-4 rounded-lg text-sm leading-relaxed whitespace-pre-wrap max-h-[500px] overflow-y-auto break-words">
-                                  {insight.content}
+                                <div className="bg-[#F7F8FA] p-4 rounded-lg text-sm leading-relaxed whitespace-pre-line max-h-[500px] overflow-y-auto prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
+                                  <Markdown>{insight.content}</Markdown>
                                 </div>
                                 {showComparison[student.id] && previousInsights[student.id] && (
                                   <div className="mt-3">
