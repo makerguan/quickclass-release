@@ -106,6 +106,37 @@ interface Conversation {
   messages: { id: string; role: string; content: string; createdAt: string }[];
 }
 
+/** 将服务端返回的 messages 列表规范化为前端 Message 结构（页面内多处使用，统一收敛） */
+function normalizeMessages(
+  list: { id: string; role: string; content: string; createdAt: string }[] | undefined
+): Message[] {
+  return (list || []).map((m) => ({
+    id: m.id,
+    role: m.role as "user" | "assistant",
+    content: m.content,
+    createdAt: m.createdAt,
+  }));
+}
+
+/** 将本地消息列表转换为对话接口要求的 API 格式（文本 / 图片多段内容） */
+function toApiMessages(messages: Message[]) {
+  return messages.map((m) => {
+    if (m.images && m.images.length > 0) {
+      return {
+        role: m.role,
+        content: [
+          { type: "text", text: m.content },
+          ...m.images.map((img) => ({
+            type: "image_url",
+            image_url: { url: img.url },
+          })),
+        ],
+      };
+    }
+    return { role: m.role, content: m.content };
+  });
+}
+
 export default function StudentChatPage() {
   const [tasks, setTasks] = useState<LearningTask[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -134,6 +165,7 @@ export default function StudentChatPage() {
   const abortControllerRef = useRef<AbortController | null>(null);
   const activePresetRef = useRef<string | null>(null);
   const isSwitchingRef = useRef(false); // 防止 switch 函数重入
+  const latestDetailConvRef = useRef<string | null>(null); // 最新一次详情请求的对话 ID（竞态保护：快速切换后丢弃旧响应）
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -202,6 +234,9 @@ export default function StudentChatPage() {
     activePresetRef.current = presetId;
 
     // 加载该预设下最新的对话记录
+    // 修复：本地快照仅用于"立刻出图"，可能是过期数据（本次会话新发的消息只更新
+    // messages state，不回写快照），因此无论快照是否有内容，都无条件并发一次
+    // 服务端请求用真数据覆盖——只要服务端有，就一定显示出来。
     const loadConv = (id?: string) => {
       const convs = findConversations(presetId);
       if (convs.length === 0) {
@@ -210,17 +245,12 @@ export default function StudentChatPage() {
         return;
       }
       const targetConv = id ? convs.find((c) => c.id === id) : convs[0];
-      if (targetConv && targetConv.messages && targetConv.messages.length > 0) {
+      if (targetConv) {
         setActiveConvId(targetConv.id);
-        setMessages(targetConv.messages.map((m) => ({
-          id: m.id,
-          role: m.role as "user" | "assistant",
-          content: m.content,
-          createdAt: m.createdAt,
-        })));
-      } else if (targetConv) {
-        // messages 为空时从服务端刷新
-        setActiveConvId(targetConv.id);
+        if (targetConv.messages && targetConv.messages.length > 0) {
+          // 先用本地快照立即渲染（避免白屏/闪烁），随后由服务端响应覆盖
+          setMessages(normalizeMessages(targetConv.messages));
+        }
         fetchConversationDetail(targetConv.id);
       } else {
         setActiveConvId(null);
@@ -236,27 +266,30 @@ export default function StudentChatPage() {
     }
   };
 
-  // 从服务端加载单个对话详情
+  // 从服务端加载单个对话详情（作为唯一事实来源覆盖本地快照）
   const fetchConversationDetail = async (convId: string) => {
+    latestDetailConvRef.current = convId;
     try {
       const token = localStorage.getItem("token");
       const res = await fetch(`/api/conversations/${convId}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      if (res.ok) {
-        const conv = await res.json();
-        setMessages(conv.messages.map((m: any) => ({
-          id: m.id,
-          role: m.role as "user" | "assistant",
-          content: m.content,
-          createdAt: m.createdAt,
-        })));
-        // 更新 conversations 列表中的消息
-        setConversations((prev) => prev.map((c) =>
-          c.id === convId ? { ...c, messages: conv.messages } : c
-        ));
+      if (!res.ok) {
+        // 失败必须有日志：这类静默失败最难排查（界面停留在空/旧数据且无任何提示）
+        console.error(`[对话详情] 加载失败: HTTP ${res.status}, convId=${convId}`);
+        return;
       }
-    } catch { /* ignore */ }
+      const conv = await res.json();
+      // 竞态保护：响应到达时若已切换到其他对话，丢弃本次结果，防止旧数据覆盖新对话
+      if (latestDetailConvRef.current !== convId) return;
+      setMessages(normalizeMessages(conv.messages));
+      // 回写 conversations 快照，保持列表数据与服务端同步
+      setConversations((prev) => prev.map((c) =>
+        c.id === convId ? { ...c, messages: conv.messages } : c
+      ));
+    } catch (e) {
+      console.error(`[对话详情] 请求异常: convId=${convId}`, e);
+    }
   };
 
   const switchToQuiz = (quizId: string) => {
@@ -412,21 +445,7 @@ export default function StudentChatPage() {
 
     try {
       const token = localStorage.getItem("token");
-      const apiMessages = newMessages.map((m) => {
-        if (m.images && m.images.length > 0) {
-          return {
-            role: m.role,
-            content: [
-              { type: "text", text: m.content },
-              ...m.images.map((img) => ({
-                type: "image_url",
-                image_url: { url: img.url },
-              })),
-            ],
-          };
-        }
-        return { role: m.role, content: m.content };
-      });
+      const apiMessages = toApiMessages(newMessages);
 
       const res = await fetch("/api/chat", {
         method: "POST",
