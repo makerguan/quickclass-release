@@ -53,9 +53,11 @@ export async function POST(request: Request) {
     // 服务端下载升级包（Node fetch 默认跟随 302 跳转）
     let res: Response;
     try {
+      // 注意：不要携带 User-Agent。Gitee 对仓库归档直链的反爬规则会拦截
+      // 浏览器式/自定义应用 UA（返回 46KB 的 HTML 验证页，HTTP 仍为 200），
+      // 仅放行无 UA / curl 类请求。实测无 UA 可正常取得 zip（约 1MB）。
       res = await fetch(archiveUrl, {
         signal: AbortSignal.timeout(120_000),
-        headers: { "User-Agent": "QuickClass-Updater" },
       });
     } catch (e) {
       console.error("[一键更新] 下载失败:", e);
