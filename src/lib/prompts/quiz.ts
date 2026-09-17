@@ -110,6 +110,8 @@ export interface ConversationTemplateVars {
     requirements?: string;
   };
   teacherName?: string;
+  /** 对话活动目标（供模板变量 {pcDescription} 使用） */
+  pcDescription?: string;
   /** 对话数量，由 AI 根据内容自主决定（2-4个） */
   conversationCount?: number;
 }
@@ -130,6 +132,7 @@ export function replaceConversationTemplateVars(
   result = result.replace(/\{taskSubject\}/g, vars.task.subject || "");
   result = result.replace(/\{taskObjectives\}/g, vars.task.objectives || "");
   result = result.replace(/\{taskRequirements\}/g, vars.task.requirements || "");
+  result = result.replace(/\{pcDescription\}/g, vars.pcDescription || "");
   result = result.replace(/\{teacherName\}/g, vars.teacherName || "");
   result = result.replace(
     /\{conversationCount\}/g,

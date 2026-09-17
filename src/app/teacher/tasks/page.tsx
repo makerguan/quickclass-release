@@ -3148,7 +3148,10 @@ export default function TeacherTasksPage() {
                                             value=""
                                             onChange={(e) => {
                                               const content = getConversationTemplateContent(e.target.value);
-                                              if (content) updatePresetConversation(spIdx, pcIdx, "systemPrompt", content);
+                                              if (!content) return;
+                                              // 原样填入模板（保留 {pcDescription}、{taskTitle} 等变量占位符），
+                                              // 由学生对话运行时统一替换，与学生对话时保持一致
+                                              updatePresetConversation(spIdx, pcIdx, "systemPrompt", content);
                                             }}
                                           >
                                             <option value="">选择对话设计模板</option>
@@ -4386,7 +4389,10 @@ export default function TeacherTasksPage() {
                     const tplId = v as string;
                     if (!tplId) return;
                     const tpl = conversationTemplates.find((t) => t.id === tplId);
-                    if (tpl) setConvForm({ ...convForm, systemPrompt: tpl.content });
+                    if (!tpl) return;
+                    // 原样填入模板（保留 {pcDescription}、{taskTitle} 等变量占位符），
+                    // 由学生对话运行时统一替换，与学生对话时保持一致
+                    setConvForm({ ...convForm, systemPrompt: tpl.content });
                   }}
                   options={[
                     { label: "选择对话设计模板填充...", value: "" },

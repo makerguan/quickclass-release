@@ -18,6 +18,8 @@ export interface BuildConversationClassParams {
   activeCount: number;
   totalStudents: number;
   dialogContents: string;
+  /** 学生个人对话分析报告汇总（间接数据） */
+  personalDialogAnalysisReport?: string;
   customSection?: string;
   taskInfo?: { taskTitle: string; taskObjectives?: string; grade?: string; subject?: string };
   config: InsightConfig;
@@ -44,6 +46,8 @@ export interface BuildTaskClassParams {
   pcStudentInsights: { studentName: string; pcTitle: string; content: string }[];
   customSection?: string;
   useSubInsights: boolean;
+  /** 班级总人数（供模板变量 {totalStudents} 使用） */
+  totalStudents?: number;
   dialogContents?: string;
   /** 作业统计数据 */
   quizStats?: string;
