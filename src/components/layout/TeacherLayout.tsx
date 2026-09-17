@@ -95,7 +95,7 @@ export default function TeacherLayout({
   };
 
   return (
-    <div className="min-h-screen flex flex-row">
+    <div className="h-screen overflow-hidden flex flex-row">
       <div className={`bg-white border-r border-gray-200 relative overflow-hidden transition-all duration-200 flex flex-col ${sidebarCollapsed ? 'w-10 min-w-10' : 'w-52 min-w-52'}`}>
         <div className="p-4 border-b border-gray-200 flex flex-col gap-1">
           {!sidebarCollapsed && (
@@ -165,7 +165,7 @@ export default function TeacherLayout({
             </div>
           )}
         </div>
-        <div className="p-6 bg-[#F3F6F9] flex-1">
+        <div className="p-6 bg-[#F3F6F9] flex-1 min-h-0 overflow-y-auto">
           {showExternal ? (
             <iframe
               src={externalUrl}
