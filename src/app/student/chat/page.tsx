@@ -1,15 +1,18 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Button, Input, MessagePlugin, Tag } from "tdesign-react";
+import { Button, Input, MessagePlugin, Slider, Tag } from "tdesign-react";
 import {
   SendIcon,
   ImageIcon,
   AddIcon,
   FolderIcon,
   ChatIcon,
+  SoundIcon,
+  SoundMuteIcon,
 } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
+import { speak, stopSpeaking, DEFAULT_VOICE_RATE } from "@/lib/speech";
 import StudentLayout from "@/components/layout/StudentLayout";
 import QuizPanel from "./QuizPanel";
 import ExplorationPanel from "./ExplorationPanel";
@@ -157,6 +160,14 @@ export default function StudentChatPage() {
   // 侧边栏折叠状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // 语音朗读：学生端对话界面内的开关 + 语速，按对话活动独立记忆（localStorage）
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const voiceEnabledRef = useRef(false);
+  const [voiceRate, setVoiceRate] = useState(DEFAULT_VOICE_RATE);
+  const voiceRateRef = useRef(DEFAULT_VOICE_RATE);
+  const [showRate, setShowRate] = useState(false); // 拖动语速滑杆时显示数值，停止后隐藏
+  const hideRateTimerRef = useRef<number | null>(null);
+
   // 图片
   const [pendingImages, setPendingImages] = useState<MessageImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -183,6 +194,62 @@ export default function StudentChatPage() {
   useEffect(() => {
     isSwitchingRef.current = false;
   }, [activePresetId, activeType]);
+
+  // 进入对话活动时，读取该活动自己的语音设置（开关 + 语速，每个对话独立记忆）
+  useEffect(() => {
+    if (!activePresetId) {
+      setVoiceEnabled(false);
+      voiceEnabledRef.current = false;
+      setVoiceRate(DEFAULT_VOICE_RATE);
+      voiceRateRef.current = DEFAULT_VOICE_RATE;
+      return;
+    }
+    try {
+      const map = JSON.parse(localStorage.getItem("qc-voice-settings") || "{}");
+      const raw = map[activePresetId];
+      const enabled = typeof raw === "object" && raw ? !!raw.enabled : !!raw;
+      const rate = typeof raw === "object" && raw && typeof raw.rate === "number" ? raw.rate : DEFAULT_VOICE_RATE;
+      setVoiceEnabled(enabled);
+      voiceEnabledRef.current = enabled;
+      setVoiceRate(rate);
+      voiceRateRef.current = rate;
+    } catch {
+      setVoiceEnabled(false);
+      voiceEnabledRef.current = false;
+      setVoiceRate(DEFAULT_VOICE_RATE);
+      voiceRateRef.current = DEFAULT_VOICE_RATE;
+    }
+  }, [activePresetId]);
+
+  const saveVoiceSetting = (partial: { enabled?: boolean; rate?: number }) => {
+    if (!activePresetId) return;
+    try {
+      const map = JSON.parse(localStorage.getItem("qc-voice-settings") || "{}");
+      const raw = map[activePresetId];
+      const prev = typeof raw === "object" && raw ? raw : { enabled: !!raw, rate: DEFAULT_VOICE_RATE };
+      map[activePresetId] = { enabled: prev.enabled, rate: prev.rate, ...partial };
+      localStorage.setItem("qc-voice-settings", JSON.stringify(map));
+    } catch {
+      /* localStorage 不可用时忽略 */
+    }
+  };
+
+  const handleVoiceToggle = (val: boolean) => {
+    setVoiceEnabled(val);
+    voiceEnabledRef.current = val;
+    saveVoiceSetting({ enabled: val });
+    if (!val) stopSpeaking();
+  };
+
+  const handleRateChange = (val: number) => {
+    setVoiceRate(val);
+    voiceRateRef.current = val;
+    saveVoiceSetting({ rate: val });
+    // 拖动中显示速度值；停止滑动约 600ms 后自动隐藏
+    setShowRate(true);
+    if (hideRateTimerRef.current !== null) window.clearTimeout(hideRateTimerRef.current);
+    hideRateTimerRef.current = window.setTimeout(() => setShowRate(false), 600);
+  };
 
   const fetchData = async () => {
     const token = localStorage.getItem("token");
@@ -220,6 +287,7 @@ export default function StudentChatPage() {
       abortControllerRef.current = null;
     }
     setLoading(false);
+    stopSpeaking(); // 切换对话，停止上一条朗读
 
     // 判断是否点击了同一个预设
     const isSamePreset = activePresetId === presetId && activeType === "chat";
@@ -306,6 +374,7 @@ export default function StudentChatPage() {
       abortControllerRef.current = null;
     }
     setLoading(false);
+    stopSpeaking();
   };
 
   const switchToExploration = (expId: string) => {
@@ -321,6 +390,7 @@ export default function StudentChatPage() {
       abortControllerRef.current = null;
     }
     setLoading(false);
+    stopSpeaking();
   };
 
   const switchToProject = (projectId: string) => {
@@ -337,6 +407,7 @@ export default function StudentChatPage() {
       abortControllerRef.current = null;
     }
     setLoading(false);
+    stopSpeaking();
   };
 
   // 渲染探索面板（避免在 JSX 中直接用 IIFE）
@@ -410,6 +481,7 @@ export default function StudentChatPage() {
   // 发送消息（供自动发送和手动发送共用）
   const sendMessage = async (text: string, images?: MessageImage[]) => {
     if (!text.trim() || loading) return;
+    stopSpeaking(); // 发送新消息，停止上一条朗读
     // 使用 ref 而非 state 检查当前活动，因为 state 在 setTimeout 中可能还是旧值
     const currentPresetId = activePresetRef.current;
     if (!currentPresetId) return;
@@ -517,6 +589,11 @@ export default function StudentChatPage() {
             });
           }
         }
+      }
+
+      // 流式回答生成完毕后，若语音开启则朗读完整回答（讲完再读）
+      if (voiceEnabledRef.current && assistantContent.trim()) {
+        speak(assistantContent, voiceRateRef.current);
       }
 
     } catch (error) {
@@ -824,13 +901,42 @@ onClick={() => {
             <div className="px-4 py-3 border-b border-gray-200 bg-[#FAFBFC]">
               <div className="flex items-center gap-2">
                 <ChatIcon className="text-[#0052D9]" size="18px" />
-                <div>
+                <div className="flex-1 min-w-0">
                   <h3 className="text-sm font-medium text-[#1A1A1A]">
                     {currentInfo.preset.title}
                   </h3>
                   <p className="text-xs text-[#63666F]">
                     {currentInfo.task.title} / {currentInfo.subProject.title === "默认活动" ? "对话思考" : currentInfo.subProject.title}
                   </p>
+                </div>
+                <div className="flex items-center gap-3 shrink-0">
+                  <button
+                    type="button"
+                    onClick={() => handleVoiceToggle(!voiceEnabled)}
+                    className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${
+                      voiceEnabled ? "text-[#0052D9] bg-[#E8F1FF]" : "text-[#63666F] hover:bg-gray-100"
+                    }`}
+                    title={voiceEnabled ? "关闭语音朗读" : "开启语音朗读"}
+                  >
+                    {voiceEnabled ? <SoundIcon size="18px" /> : <SoundMuteIcon size="18px" />}
+                  </button>
+                  <Slider
+                    value={voiceRate}
+                    onChange={(value) => handleRateChange(Array.isArray(value) ? value[0] : value)}
+                    min={0.5}
+                    max={2}
+                    step={0.1}
+                    label={false}
+                    style={{ width: 96 }}
+                  />
+                  <span
+                    className={`text-xs font-medium text-[#0052D9] tabular-nums transition-opacity duration-150 ${
+                      showRate ? "opacity-100" : "opacity-0"
+                    }`}
+                    style={{ width: 34 }}
+                  >
+                    {voiceRate.toFixed(1)}x
+                  </span>
                 </div>
               </div>
 

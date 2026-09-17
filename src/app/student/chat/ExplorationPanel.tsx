@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Button } from "tdesign-react";
+import { Button, Slider } from "tdesign-react";
+import { SoundIcon, SoundMuteIcon } from "tdesign-icons-react";
+import { speak, stopSpeaking, DEFAULT_VOICE_RATE } from "@/lib/speech";
 
 interface ExplorationPanelProps {
   explorationId: string;
@@ -45,6 +47,15 @@ export default function ExplorationPanel({
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
+  // 语音朗读：AI 伴学回答的开关 + 语速，按探究活动独立记忆（localStorage）
+  const [voiceEnabled, setVoiceEnabled] = useState(false);
+  const voiceEnabledRef = useRef(false);
+  const [voiceRate, setVoiceRate] = useState(DEFAULT_VOICE_RATE);
+  const voiceRateRef = useRef(DEFAULT_VOICE_RATE);
+  const [showRate, setShowRate] = useState(false); // 拖动语速滑杆时显示数值，停止后隐藏
+  const hideRateTimerRef = useRef<number | null>(null);
+  const aiRequestSeqRef = useRef(0); // 竞态保护：只朗读最新一次提问的回答
+
   // 监听 iframe 提交消息
   useEffect(() => {
     if (!isEnabled) {
@@ -86,6 +97,55 @@ export default function ExplorationPanel({
       window.removeEventListener("message", handleMessage);
     };
   }, [explorationId, isEnabled]);
+
+  // 进入探究活动时，读取该活动自己的语音设置（开关 + 语速，每个活动独立记忆）
+  useEffect(() => {
+    stopSpeaking();
+    try {
+      const map = JSON.parse(localStorage.getItem("qc-exploration-voice-settings") || "{}");
+      const raw = map[explorationId];
+      const enabled = typeof raw === "object" && raw ? !!raw.enabled : !!raw;
+      const rate = typeof raw === "object" && raw && typeof raw.rate === "number" ? raw.rate : DEFAULT_VOICE_RATE;
+      setVoiceEnabled(enabled);
+      voiceEnabledRef.current = enabled;
+      setVoiceRate(rate);
+      voiceRateRef.current = rate;
+    } catch {
+      setVoiceEnabled(false);
+      voiceEnabledRef.current = false;
+      setVoiceRate(DEFAULT_VOICE_RATE);
+      voiceRateRef.current = DEFAULT_VOICE_RATE;
+    }
+  }, [explorationId]);
+
+  const saveVoiceSetting = (partial: { enabled?: boolean; rate?: number }) => {
+    try {
+      const map = JSON.parse(localStorage.getItem("qc-exploration-voice-settings") || "{}");
+      const raw = map[explorationId];
+      const prev = typeof raw === "object" && raw ? raw : { enabled: !!raw, rate: DEFAULT_VOICE_RATE };
+      map[explorationId] = { enabled: prev.enabled, rate: prev.rate, ...partial };
+      localStorage.setItem("qc-exploration-voice-settings", JSON.stringify(map));
+    } catch {
+      /* localStorage 不可用时忽略 */
+    }
+  };
+
+  const handleVoiceToggle = (val: boolean) => {
+    setVoiceEnabled(val);
+    voiceEnabledRef.current = val;
+    saveVoiceSetting({ enabled: val });
+    if (!val) stopSpeaking();
+  };
+
+  const handleRateChange = (val: number) => {
+    setVoiceRate(val);
+    voiceRateRef.current = val;
+    saveVoiceSetting({ rate: val });
+    // 拖动中显示速度值；停止滑动约 600ms 后自动隐藏
+    setShowRate(true);
+    if (hideRateTimerRef.current !== null) window.clearTimeout(hideRateTimerRef.current);
+    hideRateTimerRef.current = window.setTimeout(() => setShowRate(false), 600);
+  };
 
   // 监听 AI 伴学消息
   useEffect(() => {
@@ -144,6 +204,9 @@ export default function ExplorationPanel({
       // iframe通知：学生提问
       if (e.data.type !== "AI_COMPANION_ASK") return;
 
+      // 竞态保护：每次新提问递增序号，只有最新一次回答才会被朗读
+      const seq = ++aiRequestSeqRef.current;
+
       try {
         const res = await fetch(`/api/exploration-activities/${explorationId}/ai-chat`, {
           method: "POST",
@@ -165,17 +228,24 @@ export default function ExplorationPanel({
 
         const reader = res.body?.getReader();
         const decoder = new TextDecoder();
+        let assistantContent = "";
 
         if (reader) {
           while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             const chunk = decoder.decode(value, { stream: true });
+            assistantContent += chunk;
             postToIframe({ type: "AI_COMPANION_CHUNK", chunk });
           }
         }
 
         postToIframe({ type: "AI_COMPANION_DONE" });
+
+        // 朗读 AI 回答（仅最新一次提问；speak 内部会先停掉上一段）
+        if (voiceEnabledRef.current && assistantContent.trim() && seq === aiRequestSeqRef.current) {
+          speak(assistantContent, voiceRateRef.current);
+        }
       } catch (error) {
         postToIframe({
           type: "AI_COMPANION_ERROR",
@@ -209,6 +279,38 @@ export default function ExplorationPanel({
             <span className="text-xs text-purple-600 bg-purple-50 px-2 py-0.5 rounded">
               🤖 AI伴学已开启
             </span>
+          )}
+          <div className="flex-1" />
+          {aiCompanionOn && (
+            <div className="flex items-center gap-3 shrink-0">
+              <button
+                type="button"
+                onClick={() => handleVoiceToggle(!voiceEnabled)}
+                className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${
+                  voiceEnabled ? "text-[#0052D9] bg-[#E8F1FF]" : "text-[#63666F] hover:bg-gray-100"
+                }`}
+                title={voiceEnabled ? "关闭语音朗读" : "开启语音朗读"}
+              >
+                {voiceEnabled ? <SoundIcon size="18px" /> : <SoundMuteIcon size="18px" />}
+              </button>
+              <Slider
+                value={voiceRate}
+                onChange={(value) => handleRateChange(Array.isArray(value) ? value[0] : value)}
+                min={0.5}
+                max={2}
+                step={0.1}
+                label={false}
+                style={{ width: 96 }}
+              />
+              <span
+                className={`text-xs font-medium text-[#0052D9] tabular-nums transition-opacity duration-150 ${
+                  showRate ? "opacity-100" : "opacity-0"
+                }`}
+                style={{ width: 34 }}
+              >
+                {voiceRate.toFixed(1)}x
+              </span>
+            </div>
           )}
         </div>
       </div>
