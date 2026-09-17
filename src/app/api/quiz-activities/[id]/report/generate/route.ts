@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { getAIConfig } from "@/lib/ai";
 import { getReportTime } from "@/lib/prompts/insight";
+import { processChartBlocks } from "@/lib/report-charts";
 
 // 课堂作业分析模板变量替换
 function replaceQuizAnalysisVars(template: string, vars: Record<string, string>): string {
@@ -102,6 +103,8 @@ export async function POST(
 
     // 检测提示词是否为 HTML 格式（含 HTML 标签或图表指令）
     const isHtmlOutput = effectivePrompt ? (
+      // 显式信号：新 chart 协议数据型模板（确定性判定，优先于关键词嗅探）
+      effectivePrompt.includes('图表协议') ||
       effectivePrompt.includes('<!DOCTYPE') ||
       effectivePrompt.includes('<html') ||
       effectivePrompt.includes('<div') ||
@@ -192,7 +195,8 @@ export async function POST(
     }
 
     const aiData = await aiResponse.json();
-    const content = aiData.choices?.[0]?.message?.content || "";
+    // 渲染 chart 数据块为确定性 SVG（无块时原样返回；失败降级表格，最坏 = 现状）
+    const content = processChartBlocks(aiData.choices?.[0]?.message?.content || "");
 
     // 保存到 AIInsight（使用班级ID，不是task ID）
     // 优先使用前端传递的 classId，否则使用第一个班级
@@ -204,6 +208,7 @@ export async function POST(
       });
       
       // 清理 content 中的 markdown 代码块标记（```html / ```HTML / ```）
+      // 注意：chart 块已在上方被替换为 SVG，此处只剥外层包裹 fence
       let cleanContent = content;
       const mdBlockMatch = cleanContent.match(/^\s*```(?:html|HTML)?\s*\n?([\s\S]*?)\n?\s*```\s*$/);
       if (mdBlockMatch) {

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { getAIConfig } from "@/lib/ai";
 import { getReportTime } from "@/lib/prompts/insight";
+import { processChartBlocks } from "@/lib/report-charts";
 
 // GET: 获取探究 AI 分析报告的所有版本
 export async function GET(
@@ -184,6 +185,8 @@ export async function POST(
 
     // 检测是否为 HTML 输出
     const isHtmlOutput = effectivePrompt ? (
+      // 显式信号：新 chart 协议数据型模板（确定性判定，优先于关键词嗅探）
+      effectivePrompt.includes('图表协议') ||
       effectivePrompt.includes('<!DOCTYPE') ||
       effectivePrompt.includes('<html') ||
       effectivePrompt.includes('<div') ||
@@ -274,7 +277,8 @@ export async function POST(
     }
 
     const aiData = await aiResponse.json();
-    let content = aiData.choices?.[0]?.message?.content || "";
+    // 先渲染 chart 数据块为确定性 SVG（须在剥 ```html 围栏之前；无块时原样返回，失败降级表格）
+    let content = processChartBlocks(aiData.choices?.[0]?.message?.content || "");
 
     // 清理 content 中的 ```html 和 ``` 标记
     if (content.startsWith("```html")) content = content.slice(7);

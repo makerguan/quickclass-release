@@ -1,17 +1,22 @@
 /**
  * AI 洞察内容清理：在生成端（写库前）剥离模型偶发输出的无效信息。
  *
- * 处理两类问题：
+ * 处理三类问题：
+ * 0. chart 数据块渲染（```chart {...} ``` → 确定性 SVG，见 report-charts.ts）
  * 1. markdown 代码块围栏包裹（```html ... ```）
  * 2. HTML 文档前后的多余文本（如"这是xxx的HTML学情报告……"等开场白/结尾说明）
  *
  * 铁律：识别不了就不动——未检测到围栏或 HTML 文档标记时原样返回，
  * 纯文本分析（含星星评分、markdown 段落）完全不受影响。
  */
+import { processChartBlocks } from "./report-charts";
+
 export function cleanInsightContent(raw: string): string {
   if (!raw) return raw;
 
-  let text = raw;
+  // 0. 先渲染 chart 数据块（须在剥围栏之前：chart 块自身的 ``` 围栏会被下方逻辑误判）
+  //    无 chart 块时原样返回；渲染失败降级表格，最坏 = 现状
+  let text = processChartBlocks(raw);
 
   // 1. 剥离 markdown 围栏：优先整块匹配（首尾恰好是围栏）
   const mdBlock = text.match(/^\s*```(?:html|HTML)?\s*\n?([\s\S]*?)\n?\s*```\s*$/);

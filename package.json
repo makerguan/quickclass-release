@@ -13,6 +13,7 @@
     "db:push": "prisma db push --skip-generate",
     "db:migrate": "prisma migrate dev",
     "db:seed": "npx tsx prisma/seed-full.ts",
+    "test:charts": "tsx scripts/test-report-charts.ts",
     "db:reset": "prisma migrate reset --force"
   },
   "prisma": {

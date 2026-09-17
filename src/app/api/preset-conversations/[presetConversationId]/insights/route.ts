@@ -175,6 +175,8 @@ export async function POST(
 
     // 检测提示词是否为 HTML 格式（含 HTML 标签或图表指令）
     const isHtmlOutput = effectivePrompt ? (
+      // 显式信号：新 chart 协议数据型模板（确定性判定，优先于关键词嗅探）
+      effectivePrompt.includes('图表协议') ||
       effectivePrompt.includes('<!DOCTYPE') ||
       effectivePrompt.includes('<html') ||
       effectivePrompt.includes('<div') ||
