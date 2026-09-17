@@ -442,6 +442,7 @@ function generateLessonGoal(
 
 /** 推断学段：义务教育 / 普通高中 */
 function inferStage(grade: string, subject: string): string {
+  if (/小班|中班|大班|学前|幼儿园/.test(grade || "")) return "学前教育";
   if (BASIC_ONLY_SUBJECTS.has(subject)) return "义务教育";
   if (HIGH_ONLY_SUBJECTS.has(subject)) return "普通高中";
   if (grade) {
@@ -457,8 +458,9 @@ function inferStage(grade: string, subject: string): string {
   return "义务教育";
 }
 
-/** 按学段返回标准课时：小学 40 分钟，中学（初中/高中）45 分钟 */
+/** 按学段返回标准课时：学前 30 分钟，小学 40 分钟，中学（初中/高中）45 分钟 */
 function lessonMinutes(grade: string): number {
+  if (/小班|中班|大班|学前|幼儿园/.test(grade || "")) return 30;
   if (/小学|一年级|二年级|三年级|四年级|五年级|六年级/.test(grade || "")) {
     return 40;
   }

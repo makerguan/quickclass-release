@@ -12,7 +12,7 @@
  * 注意：课标修订后需手动更新此表。
  */
 
-export type Stage = "义务教育" | "高中";
+export type Stage = "义务教育" | "高中" | "学前教育";
 
 export interface Competency {
   /** 素养名称 */
@@ -583,6 +583,47 @@ const senior: Record<string, StageEntry> = {
   },
 };
 
+/* ==================== 学前教育学段（《3-6岁儿童学习与发展指南》） ==================== */
+
+const preschool: Record<string, StageEntry> = {
+  健康: {
+    standard: "《3-6岁儿童学习与发展指南》（健康领域）",
+    competencies: [
+      { name: "身心状况", meaning: "幼儿身心处于良好发展状态，具有健康的体态，情绪安定愉快，具有一定的适应能力。" },
+      { name: "动作发展", meaning: "幼儿大肌肉动作和精细动作协调发展，具有一定的平衡能力、动作协调与灵敏、力量和耐力，手的动作灵活协调。" },
+      { name: "生活习惯与生活能力", meaning: "幼儿养成良好的生活与卫生习惯，具有基本的生活自理能力，具备基本的安全知识和自我保护能力。" },
+    ],
+  },
+  语言: {
+    standard: "《3-6岁儿童学习与发展指南》（语言领域）",
+    competencies: [
+      { name: "倾听与表达", meaning: "幼儿能认真倾听，愿意讲话并能清楚表达，具有文明的语言习惯。" },
+      { name: "阅读与书写准备", meaning: "幼儿喜欢听故事、看图书，具有初步的阅读理解能力，具有书面表达的愿望和初步技能。" },
+    ],
+  },
+  社会: {
+    standard: "《3-6岁儿童学习与发展指南》（社会领域）",
+    competencies: [
+      { name: "人际交往", meaning: "幼儿愿意与人交往，能与同伴友好相处，具有自尊、自信、自主的表现，关心尊重他人。" },
+      { name: "社会适应", meaning: "幼儿喜欢并适应群体生活，遵守基本的行为规范，具有初步的归属感。" },
+    ],
+  },
+  科学: {
+    standard: "《3-6岁儿童学习与发展指南》（科学领域）",
+    competencies: [
+      { name: "科学探究", meaning: "幼儿亲近自然、喜欢探究，具有初步的探究能力，在探究中认识周围的事物和现象。" },
+      { name: "数学认知", meaning: "幼儿初步感知生活中数学的有用和有趣，感知和理解数、量及数量关系，感知形状与空间关系。" },
+    ],
+  },
+  艺术: {
+    standard: "《3-6岁儿童学习与发展指南》（艺术领域）",
+    competencies: [
+      { name: "感受与欣赏", meaning: "幼儿喜欢自然界与生活中美的事物，喜欢欣赏多种多样的艺术形式和作品。" },
+      { name: "表现与创造", meaning: "幼儿喜欢进行艺术活动并大胆表现，具有初步的艺术表现与创造能力。" },
+    ],
+  },
+};
+
 /* ==================== 学科别名归并（同段内） ==================== */
 
 const stageAliases: Record<Stage, Record<string, { subject: string; note?: string }>> = {
@@ -601,6 +642,7 @@ const stageAliases: Record<Stage, Record<string, { subject: string; note?: strin
     书法: { subject: "语文", note: "参照高中语文学科核心素养，侧重汉字书写规范与书法审美" },
     班团队活动: { subject: "思想政治", note: "参照思想政治学科核心素养，侧重班集体建设与公共参与" },
   },
+  学前教育: {},
 };
 
 /* ==================== 跨学段兜底 ==================== */
@@ -610,20 +652,26 @@ const crossFallback: Record<Stage, Record<string, { subject: string; note: strin
     科学: { subject: "科学", note: "高中阶段无综合科学课程，参照义务教育科学课程核心素养" },
   },
   义务教育: {},
+  学前教育: {},
 };
 
 /** 根据年级判断学段 */
 export function getStage(grade: string): Stage {
+  if (/小班|中班|大班|学前|幼儿园/.test(grade)) return "学前教育";
   return grade.includes("高中") ? "高中" : "义务教育";
 }
 
 /**
- * 获取某年级+学科的核心素养。
+ * 获取某年级+学科的核心素养（学前教育为《指南》领域发展目标）。
  * 查找顺序：本学段课标 → 本学段别名 → 跨学段兜底 → 相邻学段同科。
  * 找不到返回 null。
  */
 export function getSubjectCompetencies(grade: string, subject: string): SubjectCompetencies | null {
   const stage = getStage(grade);
+  if (stage === "学前教育") {
+    if (preschool[subject]) return { stage, subject, ...preschool[subject] };
+    return null;
+  }
   const table = stage === "高中" ? senior : compulsory;
   const otherTable = stage === "高中" ? compulsory : senior;
 
