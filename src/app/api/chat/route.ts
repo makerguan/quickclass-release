@@ -9,6 +9,8 @@ import {
   getClassPromptByStrategy,
   IMAGE_NOTICE,
   MATERIAL_CONTENT_PREFIX,
+  replaceConversationVars,
+  type ConversationTemplateVars,
 } from "@/lib/prompts";
 import { MATH_OUTPUT_RULES } from "@/lib/math-format";
 
@@ -60,11 +62,17 @@ export async function POST(req: NextRequest) {
     let convId = conversationId;
     const needCreate = !convId;
 
-    // 两个读查询并行（无数据依赖）
+    // 读查询并行（无数据依赖）
     const classDataPromise = prisma.class.findUnique({
       where: { id: classId },
     });
-    
+
+    // 当前对话学生（用于 {studentName} 变量替换，让 AI 能叫出学生姓名）
+    const currentUserPromise = prisma.user.findUnique({
+      where: { id: userId },
+      select: { name: true },
+    });
+
     const materialsPromise = prisma.material.findMany({
       where: { classId, type: "LEARNING" },
       include: { DocumentChunk: true },
@@ -80,10 +88,11 @@ export async function POST(req: NextRequest) {
       : Promise.resolve(null);
 
     // 等待读查询完成，再决定写操作
-    const [classData, materials, presetConv] = await Promise.all([
+    const [classData, materials, presetConv, currentUser] = await Promise.all([
       classDataPromise,
       materialsPromise,
       presetConvPromise,
+      currentUserPromise,
     ]);
 
     if (!classData) {
@@ -125,12 +134,37 @@ export async function POST(req: NextRequest) {
     if (presetConv) {
       const task = presetConv.SubProject.task;
 
-      // 构建对话活动的系统提示：硬编码标题 + 用户提示词 + 知识库
-      systemPrompt = `## 当前课堂：${task.title}\n`;
-      systemPrompt += `年级：${task.grade || ''}  学科：${task.subject || ''}\n`;
-      systemPrompt += `课堂目标：${task.objectives}\n`;
+      // 构建对话活动的系统提示：教师模板变量替换 + 知识库自动追加（与学情分析一致）
+      const vars: ConversationTemplateVars = {
+        pcTitle: presetConv.title,
+        pcDescription: presetConv.description || "",
+        activeCount: 0,
+        totalStudents: 0,
+        studentName: currentUser?.name || "",
+        taskTitle: task.title,
+        taskDescription: task.objectives || "",
+        taskGrade: task.grade || "",
+        taskSubject: task.subject || "",
+      };
 
-      // 知识库（课堂级）
+      const teacherTemplate = presetConv.systemPrompt || "";
+
+      // 1. 教师对话提示词运行时变量替换（isStudent=true 注入学生姓名）
+      systemPrompt = replaceConversationVars(teacherTemplate, vars, true);
+
+      // 2. 兜底：教师模板未引用任何课堂信息变量时，自动追加基础课堂信息
+      const hasTaskInfo = /\{taskTitle\}|\{taskGrade\}|\{taskSubject\}|\{taskDescription\}|\{taskObjectives\}/.test(
+        teacherTemplate
+      );
+      if (!hasTaskInfo) {
+        systemPrompt =
+          `## 当前课堂：${task.title}\n` +
+          `年级：${task.grade || ''}  学科：${task.subject || ''}\n` +
+          `课堂目标：${task.objectives || ''}\n\n` +
+          systemPrompt;
+      }
+
+      // 3. 知识库（课堂级，数据内容由软件自动追加）
       if (task.knowledgeBase) {
         systemPrompt += `\n## 课堂知识库：\n${task.knowledgeBase}\n`;
       }
@@ -150,10 +184,9 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      // 对话目标 + 用户自定义提示词
-      systemPrompt += `\n对话目标：${presetConv.description || ''}\n`;
-      if (presetConv.systemPrompt) {
-        systemPrompt += `${presetConv.systemPrompt}\n`;
+      // 4. 兜底：教师模板未引用 {pcDescription} 时，自动追加对话目标
+      if (presetConv.description && !/\{pcDescription\}/.test(teacherTemplate)) {
+        systemPrompt += `\n对话目标：${presetConv.description}\n`;
       }
     } else {
       // 无对话活动，使用原有班级策略

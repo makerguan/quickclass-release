@@ -380,6 +380,8 @@ export async function POST(
 
     // 检测提示词是否为 HTML 格式
     const isHtmlOutput = effectivePrompt ? (
+      // 显式信号：新 chart 协议数据型模板（确定性判定，优先于关键词嗅探）
+      effectivePrompt.includes('图表协议') ||
       effectivePrompt.includes('<!DOCTYPE') ||
       effectivePrompt.includes('<html') ||
       effectivePrompt.includes('<div') ||
@@ -618,6 +620,7 @@ async function generateTaskClassInsight(
       knowledgeBase: task.knowledgeBase ?? undefined,
       pcClassInsights,
       pcStudentInsights,
+      totalStudents: students.length,
       customSection,
       useSubInsights: true,
       quizStats: await buildClassQuizStats(task.id, classId),
@@ -703,6 +706,7 @@ async function generateTaskClassInsight(
     knowledgeBase: task.knowledgeBase ?? undefined,
     pcClassInsights: [],
     pcStudentInsights: [],
+    totalStudents: students.length,
     customSection,
     useSubInsights: false,
     dialogContents: combinedDialogContents,
@@ -1012,6 +1016,7 @@ async function generateTaskClassInsightWithTemplate(
     knowledgeBase: task.knowledgeBase ?? undefined,
     pcClassInsights: useSubInsights ? pcClassInsights : [],
     pcStudentInsights: useSubInsights ? pcStudentInsights : [],
+    totalStudents: students.length,
     customSection,
     useSubInsights,
     dialogContents: useSubInsights ? undefined : combinedDialogContents,

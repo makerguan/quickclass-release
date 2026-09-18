@@ -3148,7 +3148,10 @@ export default function TeacherTasksPage() {
                                             value=""
                                             onChange={(e) => {
                                               const content = getConversationTemplateContent(e.target.value);
-                                              if (content) updatePresetConversation(spIdx, pcIdx, "systemPrompt", content);
+                                              if (!content) return;
+                                              // 原样填入模板（保留 {pcDescription}、{taskTitle} 等变量占位符），
+                                              // 由学生对话运行时统一替换，与学生对话时保持一致
+                                              updatePresetConversation(spIdx, pcIdx, "systemPrompt", content);
                                             }}
                                           >
                                             <option value="">选择对话设计模板</option>
@@ -3900,6 +3903,12 @@ export default function TeacherTasksPage() {
                         { label: "高中二年级下学期", value: "高中二年级下学期" },
                         { label: "高中三年级上学期", value: "高中三年级上学期" },
                         { label: "高中三年级下学期", value: "高中三年级下学期" },
+                        { label: "小班上学期", value: "小班上学期" },
+                        { label: "小班下学期", value: "小班下学期" },
+                        { label: "中班上学期", value: "中班上学期" },
+                        { label: "中班下学期", value: "中班下学期" },
+                        { label: "大班上学期", value: "大班上学期" },
+                        { label: "大班下学期", value: "大班下学期" },
                       ]}
                     />
                   </div>
@@ -3933,6 +3942,9 @@ export default function TeacherTasksPage() {
                         { label: "综合实践活动", value: "综合实践活动" },
                         { label: "书法", value: "书法" },
                         { label: "班团队活动", value: "班团队活动" },
+                        { label: "健康", value: "健康" },
+                        { label: "语言", value: "语言" },
+                        { label: "社会", value: "社会" },
                       ]}
                     />
                   </div>
@@ -4386,7 +4398,10 @@ export default function TeacherTasksPage() {
                     const tplId = v as string;
                     if (!tplId) return;
                     const tpl = conversationTemplates.find((t) => t.id === tplId);
-                    if (tpl) setConvForm({ ...convForm, systemPrompt: tpl.content });
+                    if (!tpl) return;
+                    // 原样填入模板（保留 {pcDescription}、{taskTitle} 等变量占位符），
+                    // 由学生对话运行时统一替换，与学生对话时保持一致
+                    setConvForm({ ...convForm, systemPrompt: tpl.content });
                   }}
                   options={[
                     { label: "选择对话设计模板填充...", value: "" },

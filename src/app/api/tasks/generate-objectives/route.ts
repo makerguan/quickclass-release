@@ -49,6 +49,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const isPreschool = comp.stage === "学前教育";
+    const dimWord = isPreschool ? "领域发展目标" : "核心素养";
+    const learnerWord = isPreschool ? "幼儿" : "学生";
+    const expertLine = isPreschool
+      ? "你是一位资深的学前教育教研专家，精通《3-6岁儿童学习与发展指南》，擅长撰写符合幼儿年龄特点与发展规律的领域活动目标。"
+      : "你是一位资深的中小学学科教研专家，精通《义务教育课程标准（2022年版）》和《普通高中课程标准（2017年版2020年修订）》，擅长撰写对齐学科核心素养的课堂目标。";
+
     const isOptimize = typeof currentContent === "string" && currentContent.trim().length > 0;
 
     const competencyList = comp.competencies
@@ -58,14 +65,14 @@ export async function POST(req: NextRequest) {
     const dimensionCount = comp.competencies.length;
     const dimensionNames = comp.competencies.map((c) => c.name).join("、");
 
-    const prompt = `你是一位资深的中小学学科教研专家，精通《义务教育课程标准（2022年版）》和《普通高中课程标准（2017年版2020年修订）》，擅长撰写对齐学科核心素养的课堂目标。
+    const prompt = `${expertLine}
 
 请为以下课堂${isOptimize ? "优化" : "生成"}课堂目标。
 
 课题：${title.trim()}
 年级：${grade}（${comp.stage}）
 学科：${subject}
-${comp.note ? `特别说明：${comp.note}\n` : ""}该学科${comp.stage}阶段的核心素养（依据${comp.standard}）：
+${comp.note ? `特别说明：${comp.note}\n` : ""}该学科${comp.stage}阶段的${dimWord}（依据${comp.standard}）：
 ${competencyList}
 
 ${
@@ -79,10 +86,10 @@ ${currentContent.trim()}
 }
 
 要求（必须严格遵守）：
-1. 【结构铁律】该学科共有 ${dimensionCount} 个核心素养维度（${dimensionNames}），必须输出恰好 ${dimensionCount} 条课堂目标，与上述维度一一对应：每个维度恰好一条、只出现一次
-2. 严禁：同一维度出现两条或更多目标；输出清单之外的素养名称；目标条数多于或少于 ${dimensionCount} 条
-3. 每条目标以【素养名称】开头，素养名称必须与清单中的名称逐字一致
-4. 使用可观测、可评价的行为动词（如：说出、辨认、比较、归纳、概括、运用、设计、评价、迁移等），符合${grade}学生的认知发展水平
+1. 【结构铁律】该学科共有 ${dimensionCount} 个${dimWord}维度（${dimensionNames}），必须输出恰好 ${dimensionCount} 条课堂目标，与上述维度一一对应：每个维度恰好一条、只出现一次
+2. 严禁：同一维度出现两条或更多目标；输出清单之外的${isPreschool ? "子领域名称" : "素养名称"}；目标条数多于或少于 ${dimensionCount} 条
+3. 每条目标以【${isPreschool ? "子领域名称" : "素养名称"}】开头，${isPreschool ? "子领域名称" : "素养名称"}必须与清单中的名称逐字一致
+4. 使用可观测、可评价的行为动词（如：说出、辨认、比较、归纳、概括、运用、设计、评价、迁移等），符合${grade}${learnerWord}的认知发展水平
 5. 内容紧扣课题「${title.trim()}」，具体可操作，避免空泛套话
 6. 直接输出目标内容：每条一行、行首以序号编号（1. 2. 3. …），不要输出任何额外解释`;
 
@@ -92,7 +99,9 @@ ${currentContent.trim()}
       aiQueue.enqueue(async () =>
         generateText({
           model: chatModel,
-          system: "你是一位专业的中小学学科教研专家。输出必须与给定的素养维度严格一一对应。",
+          system: isPreschool
+            ? "你是一位专业的学前教育教研专家。输出必须与给定的领域子领域维度严格一一对应。"
+            : "你是一位专业的中小学学科教研专家。输出必须与给定的素养维度严格一一对应。",
           messages: [{ role: "user", content: p }],
           // 统一输出上限 64K（网关默认 4096 会截断长输出，实测硬上限 65536）
           maxOutputTokens: 65536,

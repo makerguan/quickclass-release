@@ -13,6 +13,30 @@ import {
 } from "@/lib/prompts";
 import { cleanInsightContent } from "@/lib/insight-clean";
 
+// 查询本对话活动下各学生的个人分析报告（取每人最新版），拼接为间接数据文本。
+// 用于 PC 层「全班分析」时，将下级学生个人分析作为间接数据注入提示词。
+async function buildPersonalDialogAnalysisReport(
+  classId: string,
+  presetConversationId: string
+): Promise<string> {
+  const studentInsights = await prisma.aIInsight.findMany({
+    where: { classId, type: "pc_student", scopeId: presetConversationId },
+    orderBy: { version: "desc" },
+    include: { User: { select: { name: true } } },
+  });
+  if (studentInsights.length === 0) return "";
+  // version 已按 desc 排序，按 userId 取首个即每人最新版
+  const latestByUser = new Map<string, (typeof studentInsights)[number]>();
+  for (const ins of studentInsights) {
+    if (ins.userId && !latestByUser.has(ins.userId)) {
+      latestByUser.set(ins.userId, ins);
+    }
+  }
+  return Array.from(latestByUser.values())
+    .map((ins) => `## ${ins.User?.name || "未知学生"}\n${ins.content}`)
+    .join("\n\n");
+}
+
 // GET: 获取对话活动分析结果
 export async function GET(
   req: NextRequest,
@@ -175,6 +199,8 @@ export async function POST(
 
     // 检测提示词是否为 HTML 格式（含 HTML 标签或图表指令）
     const isHtmlOutput = effectivePrompt ? (
+      // 显式信号：新 chart 协议数据型模板（确定性判定，优先于关键词嗅探）
+      effectivePrompt.includes('图表协议') ||
       effectivePrompt.includes('<!DOCTYPE') ||
       effectivePrompt.includes('<html') ||
       effectivePrompt.includes('<div') ||
@@ -372,13 +398,14 @@ async function generatePCClassInsight(
   isPreview?: boolean
 ): Promise<string> {
   const taskInfo = { taskTitle: pc.subProject.task.title, taskObjectives: pc.subProject.task.objectives, grade: pc.subProject.task.grade ?? undefined, subject: pc.subProject.task.subject ?? undefined };
-  const [students, conversations] = await Promise.all([
+  const [students, conversations, personalDialogAnalysisReport] = await Promise.all([
     prisma.user.findMany({ where: { classId, role: "STUDENT" }, select: { id: true, name: true } }),
     prisma.conversation.findMany({
       where: { classId, presetConversationId: pc.id },
       include: { User: { select: { name: true } }, Message: { orderBy: { createdAt: "asc" }, select: { role: true, content: true } } },
       orderBy: { updatedAt: "desc" },
     }),
+    buildPersonalDialogAnalysisReport(classId, pc.id),
   ]);
 
   const activeStudents = conversations.map((c) => c.userId);
@@ -407,6 +434,7 @@ ${convTexts || "（无对话记录）"}`;
     activeCount: uniqueActiveStudents.size,
     totalStudents: students.length,
     dialogContents,
+    personalDialogAnalysisReport,
     customSection,
     taskInfo,
     config,
@@ -441,13 +469,14 @@ async function generatePCClassInsightWithTemplate(
   isPreview?: boolean
 ): Promise<string> {
   const taskInfo = pc.subProject.task ? { taskTitle: pc.subProject.task.title, taskObjectives: pc.subProject.task.objectives, grade: pc.subProject.task.grade ?? undefined, subject: pc.subProject.task.subject ?? undefined } : undefined;
-  const [students, conversations] = await Promise.all([
+  const [students, conversations, personalDialogAnalysisReport] = await Promise.all([
     prisma.user.findMany({ where: { classId, role: "STUDENT" }, select: { id: true, name: true } }),
     prisma.conversation.findMany({
       where: { classId, presetConversationId: pc.id },
       include: { User: { select: { name: true } }, Message: { orderBy: { createdAt: "asc" }, select: { role: true, content: true } } },
       orderBy: { updatedAt: "desc" },
     }),
+    buildPersonalDialogAnalysisReport(classId, pc.id),
   ]);
 
   const uniqueActiveStudents = new Set(conversations.map((c) => c.userId));
@@ -474,6 +503,7 @@ async function generatePCClassInsightWithTemplate(
     activeCount: uniqueActiveStudents.size,
     totalStudents: students.length,
     dialogContents,
+    personalDialogAnalysisReport,
     customSection,
     taskInfo,
     config,

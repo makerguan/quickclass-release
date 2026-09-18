@@ -96,6 +96,8 @@ export interface ConversationTemplateVars {
   studentName?: string;
   /** 个人对话记录 */
   personalDialogContents?: string;
+  /** 学生个人对话分析报告汇总（间接数据：PC 层全班分析时注入本活动下各学生最新个人分析） */
+  personalDialogAnalysisReport?: string;
   /** 课堂名称（来自 task.title） */
   taskTitle?: string;
   /** 课堂目标（= taskObjectives 的别名） */
@@ -197,9 +199,11 @@ export function replaceConversationVars(
     totalStudents: vars.totalStudents,
     // 数据变量（模板引用）
     personalDialogContents: vars.personalDialogContents || "",
+    personalDialogAnalysisReport: vars.personalDialogAnalysisReport || "",
     // 课堂信息变量
     taskTitle: vars.taskTitle || "",
     taskDescription: vars.taskDescription || vars.taskTitle ? (vars.taskDescription || "") : "",
+    taskObjectives: vars.taskDescription || "",
     taskGrade: vars.taskGrade || "",
     taskSubject: vars.taskSubject || "",
     reportTime: getReportTime(),
@@ -388,6 +392,8 @@ export function buildConversationClassPrompt(params: BuildConversationClassParam
       totalStudents: params.totalStudents,
       // 旧参数映射到新变量（模板引用 {班级对话活动分析报告}）
       personalDialogContents: params.dialogContents || "",
+      // 间接数据：学生个人对话分析报告汇总
+      personalDialogAnalysisReport: params.personalDialogAnalysisReport || "",
       // 课堂信息变量
       taskTitle: params.taskInfo?.taskTitle,
       taskDescription: params.taskInfo?.taskObjectives,
@@ -444,6 +450,7 @@ export function buildTaskClassPrompt(params: BuildTaskClassParams): string {
       pcClassInsights: params.pcClassInsights,
       pcStudentInsights: params.pcStudentInsights,
       useSubInsights: params.useSubInsights,
+      totalStudents: params.totalStudents ?? 0,
       rawData: params.rawData,
       // 旧参数映射到新变量
       personalDialogContents: params.dialogContents || "",
