@@ -1,18 +1,19 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Button, Input, MessagePlugin, Slider, Tag } from "tdesign-react";
+import { Button, Input, MessagePlugin, Tag } from "tdesign-react";
 import {
   SendIcon,
   ImageIcon,
   AddIcon,
   FolderIcon,
   ChatIcon,
-  SoundIcon,
-  SoundMuteIcon,
 } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
-import { speak, stopSpeaking, DEFAULT_VOICE_RATE } from "@/lib/speech";
+import SpeechControls from "@/components/speech/SpeechControls";
+import SpeakButton from "@/components/speech/SpeakButton";
+import { speakSmart, stopSpeaking } from "@/lib/speech";
+import { getSpeechSettings } from "@/lib/speech-settings";
 import StudentLayout from "@/components/layout/StudentLayout";
 import QuizPanel from "./QuizPanel";
 import ExplorationPanel from "./ExplorationPanel";
@@ -160,13 +161,9 @@ export default function StudentChatPage() {
   // 侧边栏折叠状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // 语音朗读：学生端对话界面内的开关 + 语速，按对话活动独立记忆（localStorage）
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
-  const voiceEnabledRef = useRef(false);
-  const [voiceRate, setVoiceRate] = useState(DEFAULT_VOICE_RATE);
-  const voiceRateRef = useRef(DEFAULT_VOICE_RATE);
-  const [showRate, setShowRate] = useState(false); // 拖动语速滑杆时显示数值，停止后隐藏
-  const hideRateTimerRef = useRef<number | null>(null);
+  // 朗读的开关 / 音色 / 语速统一由 lib/speech-settings 管理（见 SpeechControls 组件）；
+  // 这里只记录最新一条 AI 回答的下标，供自动朗读时高亮对应的朗读按钮。
+  const assistantIndexRef = useRef(-1);
 
   // 图片
   const [pendingImages, setPendingImages] = useState<MessageImage[]>([]);
@@ -194,62 +191,6 @@ export default function StudentChatPage() {
   useEffect(() => {
     isSwitchingRef.current = false;
   }, [activePresetId, activeType]);
-
-  // 进入对话活动时，读取该活动自己的语音设置（开关 + 语速，每个对话独立记忆）
-  useEffect(() => {
-    if (!activePresetId) {
-      setVoiceEnabled(false);
-      voiceEnabledRef.current = false;
-      setVoiceRate(DEFAULT_VOICE_RATE);
-      voiceRateRef.current = DEFAULT_VOICE_RATE;
-      return;
-    }
-    try {
-      const map = JSON.parse(localStorage.getItem("qc-voice-settings") || "{}");
-      const raw = map[activePresetId];
-      const enabled = typeof raw === "object" && raw ? !!raw.enabled : !!raw;
-      const rate = typeof raw === "object" && raw && typeof raw.rate === "number" ? raw.rate : DEFAULT_VOICE_RATE;
-      setVoiceEnabled(enabled);
-      voiceEnabledRef.current = enabled;
-      setVoiceRate(rate);
-      voiceRateRef.current = rate;
-    } catch {
-      setVoiceEnabled(false);
-      voiceEnabledRef.current = false;
-      setVoiceRate(DEFAULT_VOICE_RATE);
-      voiceRateRef.current = DEFAULT_VOICE_RATE;
-    }
-  }, [activePresetId]);
-
-  const saveVoiceSetting = (partial: { enabled?: boolean; rate?: number }) => {
-    if (!activePresetId) return;
-    try {
-      const map = JSON.parse(localStorage.getItem("qc-voice-settings") || "{}");
-      const raw = map[activePresetId];
-      const prev = typeof raw === "object" && raw ? raw : { enabled: !!raw, rate: DEFAULT_VOICE_RATE };
-      map[activePresetId] = { enabled: prev.enabled, rate: prev.rate, ...partial };
-      localStorage.setItem("qc-voice-settings", JSON.stringify(map));
-    } catch {
-      /* localStorage 不可用时忽略 */
-    }
-  };
-
-  const handleVoiceToggle = (val: boolean) => {
-    setVoiceEnabled(val);
-    voiceEnabledRef.current = val;
-    saveVoiceSetting({ enabled: val });
-    if (!val) stopSpeaking();
-  };
-
-  const handleRateChange = (val: number) => {
-    setVoiceRate(val);
-    voiceRateRef.current = val;
-    saveVoiceSetting({ rate: val });
-    // 拖动中显示速度值；停止滑动约 600ms 后自动隐藏
-    setShowRate(true);
-    if (hideRateTimerRef.current !== null) window.clearTimeout(hideRateTimerRef.current);
-    hideRateTimerRef.current = window.setTimeout(() => setShowRate(false), 600);
-  };
 
   const fetchData = async () => {
     const token = localStorage.getItem("token");
@@ -591,9 +532,9 @@ export default function StudentChatPage() {
         }
       }
 
-      // 流式回答生成完毕后，若语音开启则朗读完整回答（讲完再读）
-      if (voiceEnabledRef.current && assistantContent.trim()) {
-        speak(assistantContent, voiceRateRef.current);
+      // 流式回答生成完毕后，若朗读开关为开则自动朗读整段回答（讲完再读）
+      if (getSpeechSettings().enabled && assistantContent.trim()) {
+        speakSmart(assistantContent, { owner: `msg-${assistantIndexRef.current}` });
       }
 
     } catch (error) {
@@ -909,35 +850,7 @@ onClick={() => {
                     {currentInfo.task.title} / {currentInfo.subProject.title === "默认活动" ? "对话思考" : currentInfo.subProject.title}
                   </p>
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => handleVoiceToggle(!voiceEnabled)}
-                    className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${
-                      voiceEnabled ? "text-[#0052D9] bg-[#E8F1FF]" : "text-[#63666F] hover:bg-gray-100"
-                    }`}
-                    title={voiceEnabled ? "关闭语音朗读" : "开启语音朗读"}
-                  >
-                    {voiceEnabled ? <SoundIcon size="18px" /> : <SoundMuteIcon size="18px" />}
-                  </button>
-                  <Slider
-                    value={voiceRate}
-                    onChange={(value) => handleRateChange(Array.isArray(value) ? value[0] : value)}
-                    min={0.5}
-                    max={2}
-                    step={0.1}
-                    label={false}
-                    style={{ width: 96 }}
-                  />
-                  <span
-                    className={`text-xs font-medium text-[#0052D9] tabular-nums transition-opacity duration-150 ${
-                      showRate ? "opacity-100" : "opacity-0"
-                    }`}
-                    style={{ width: 34 }}
-                  >
-                    {voiceRate.toFixed(1)}x
-                  </span>
-                </div>
+                <SpeechControls />
               </div>
 
             </div>
@@ -977,6 +890,11 @@ onClick={() => {
                     {msg.role === "assistant" ? (
                       <div className="prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_pre]:bg-gray-800 [&_pre]:text-gray-100 [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_pre_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-gray-400 [&_blockquote]:pl-3 [&_blockquote]:italic [&_table]:text-xs [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1">
                         <Markdown>{msg.content}</Markdown>
+                        {msg.content.trim() && (
+                          <div className="mt-2 flex items-center justify-end">
+                            <SpeakButton owner={`msg-${index}`} text={msg.content} />
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="whitespace-pre-wrap">{msg.content}</div>
