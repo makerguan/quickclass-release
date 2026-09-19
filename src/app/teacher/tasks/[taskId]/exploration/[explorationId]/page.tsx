@@ -6,6 +6,7 @@ import { Button, Tag, Select, MessagePlugin, Dialog } from "tdesign-react";
 import { ArrowLeftIcon, ChartBarIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
+import QuickFormDashboard, { type QfRecordItem } from "@/components/exploration/QuickFormDashboard";
 
 interface StudentRecord {
   studentId: string;
@@ -118,6 +119,12 @@ export default function ExplorationAnalysisPage() {
   const [selectedClassId, setSelectedClassId] = useState("");
   const [allClasses, setAllClasses] = useState<{ id: string; name: string }[]>([]);
 
+  // QuickForm 数据大屏状态
+  const [qfTaskId, setQfTaskId] = useState<string | null>(null);
+  const [qfRecords, setQfRecords] = useState<QfRecordItem[]>([]);
+  const [qfTotal, setQfTotal] = useState(0);
+  const [qfLoading, setQfLoading] = useState(false);
+
   // AI 分析报告状态
   const [templates, setTemplates] = useState<AnalysisTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
@@ -203,6 +210,37 @@ export default function ExplorationAnalysisPage() {
       if (subRes.ok) {
         const subData = await subRes.json();
         setSubmissions(Array.isArray(subData) ? subData : subData.submissions || []);
+      }
+
+      // 拉取 QuickForm 收集数据（数据大屏）
+      const detailRes = await fetch(`/api/exploration-activities/${explorationId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      let qfTaskId: string | null = null;
+      if (detailRes.ok) {
+        const detail = await detailRes.json();
+        qfTaskId = detail.qfTaskId || null;
+        setQfTaskId(qfTaskId);
+      }
+      if (qfTaskId) {
+        setQfLoading(true);
+        try {
+          const qfRes = await fetch(`/api/qf/records/${qfTaskId}?page=1&pageSize=500`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (qfRes.ok) {
+            const qfData = await qfRes.json();
+            setQfRecords(Array.isArray(qfData.items) ? qfData.items : []);
+            setQfTotal(typeof qfData.total === "number" ? qfData.total : 0);
+          }
+        } catch {
+          // QF 数据拉取失败不影响其它标签展示
+        } finally {
+          setQfLoading(false);
+        }
+      } else {
+        setQfRecords([]);
+        setQfTotal(0);
       }
 
       // 加载已保存的 AI 报告版本
@@ -300,6 +338,14 @@ export default function ExplorationAnalysisPage() {
   );
 
   const renderStatistics = () => {
+    // 优先渲染 QuickForm 数据大屏（有绑定任务时）
+    if (qfTaskId) {
+      if (qfLoading) {
+        return <div className="text-center py-8 text-sm text-gray-400">数据大屏加载中...</div>;
+      }
+      return <QuickFormDashboard records={qfRecords} total={qfTotal} />;
+    }
+
     if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交数据</div>;
 
     const allAnswers: Record<string, any>[] = submissions.map((sub) => {

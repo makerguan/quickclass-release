@@ -2914,6 +2914,18 @@ export default function TeacherTasksPage() {
                             {getStatusTag(task.status)}
                             {task.grade && <Tag theme="default" variant="light" size="small">{task.grade}</Tag>}
                             {task.subject && <Tag theme="primary" variant="light" size="small">{task.subject}</Tag>}
+                            {!isExpanded && (() => {
+                              const expCount = task.subProjects?.reduce(
+                                (n, sp) => n + ((sp as any).explorationActivities?.length ?? 0),
+                                0
+                              ) ?? 0;
+                              if (expCount <= 0) return null;
+                              return (
+                                <Tag theme="warning" variant="light" size="small">
+                                  探究 {expCount}
+                                </Tag>
+                              );
+                            })()}
                           </div>
                           <div className="text-xs text-[#63666F]">
                             {task.grade && `${task.grade} · `}{task.subject && `${task.subject} · `}更新于 {new Date(task.createdAt).toLocaleDateString()}
