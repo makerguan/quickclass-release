@@ -3,7 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { Button, Tag, Select, MessagePlugin, Dialog } from "tdesign-react";
-import { ArrowLeftIcon, ChartBarIcon } from "tdesign-icons-react";
+import { ArrowLeftIcon, ChartBarIcon, RefreshIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import QuickFormDashboard, { type QfRecordItem } from "@/components/exploration/QuickFormDashboard";
@@ -125,6 +125,10 @@ export default function ExplorationAnalysisPage() {
   const [qfRecords, setQfRecords] = useState<QfRecordItem[]>([]);
   const [qfTotal, setQfTotal] = useState(0);
   const [qfLoading, setQfLoading] = useState(false);
+
+  // 实时刷新（页签切换 / 手动刷新）
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState("");
 
   // AI 分析报告状态
   const [templates, setTemplates] = useState<AnalysisTemplate[]>([]);
@@ -253,6 +257,55 @@ export default function ExplorationAnalysisPage() {
       setError(e.message || "获取数据失败");
     } finally {
       setLoading(false);
+      setLastUpdated(new Date().toLocaleTimeString());
+    }
+  };
+
+  /**
+   * 轻量刷新：只重拉会变动的数据（提交列表 + QuickForm 收集记录），
+   * 不触发整页 loading，用于「切换页签」与「手动刷新」。
+   */
+  const refreshLiveData = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const token = localStorage.getItem("token");
+
+      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (subRes.ok) {
+        const subData = await subRes.json();
+        setSubmissions(Array.isArray(subData) ? subData : subData.submissions || []);
+      }
+
+      let tid = qfTaskId;
+      if (!tid) {
+        const detailRes = await fetch(`/api/exploration-activities/${explorationId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (detailRes.ok) {
+          const detail = await detailRes.json();
+          tid = detail.qfTaskId || null;
+          setQfTaskId(tid);
+        }
+      }
+      if (tid) {
+        const qfRes = await fetch(`/api/qf/records/${tid}?page=1&pageSize=500`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (qfRes.ok) {
+          const qfData = await qfRes.json();
+          setQfRecords(Array.isArray(qfData.items) ? qfData.items : []);
+          setQfTotal(typeof qfData.total === "number" ? qfData.total : 0);
+        }
+      }
+
+      setLastUpdated(new Date().toLocaleTimeString());
+    } catch {
+      /* 静默失败：刷新出错不影响已有展示 */
+    } finally {
+      setRefreshing(false);
     }
   };
 
@@ -332,7 +385,7 @@ export default function ExplorationAnalysisPage() {
         ? "border-blue-500 text-blue-600"
         : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
         }`}
-      onClick={() => setActiveTab(tabKey)}
+      onClick={() => { setActiveTab(tabKey); refreshLiveData(); }}
     >
       {label}
     </button>
@@ -730,32 +783,47 @@ export default function ExplorationAnalysisPage() {
             <h2 className="text-xl font-semibold">探究分析报告</h2>
             <p className="text-sm text-gray-500 mt-0.5">{analysisData?.explorationTitle}</p>
           </div>
-          {analysisData?.classIds && analysisData.classIds.length > 0 && (
-            <div className="flex items-center gap-2 ml-auto">
-              <span className="text-sm text-gray-500">班级：</span>
-              <select
-                value={selectedClassId}
-                onChange={(e) => {
-                  const cid = e.target.value;
-                  setSelectedClassId(cid);
-                  setAiReport(null);
-                  setAiReportVersions([]);
-                  setAiVersionIndex(0);
-                  fetchAiVersions(cid);
-                }}
-                className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
-              >
-                {analysisData.classIds.map((cid: string) => {
-                  const cls = allClasses.find((c) => c.id === cid);
-                  return (
-                    <option key={cid} value={cid}>
-                      {cls ? cls.name : cid.substring(0, 8)}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-          )}
+          <div className="flex items-center gap-3 ml-auto">
+            {lastUpdated && (
+              <span className="text-xs text-gray-400">最后更新 {lastUpdated}</span>
+            )}
+            <Button
+              theme="default"
+              variant="outline"
+              size="small"
+              icon={<RefreshIcon />}
+              loading={refreshing}
+              onClick={refreshLiveData}
+            >
+              刷新
+            </Button>
+            {analysisData?.classIds && analysisData.classIds.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">班级：</span>
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => {
+                    const cid = e.target.value;
+                    setSelectedClassId(cid);
+                    setAiReport(null);
+                    setAiReportVersions([]);
+                    setAiVersionIndex(0);
+                    fetchAiVersions(cid);
+                  }}
+                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
+                >
+                  {analysisData.classIds.map((cid: string) => {
+                    const cls = allClasses.find((c) => c.id === cid);
+                    return (
+                      <option key={cid} value={cid}>
+                        {cls ? cls.name : cid.substring(0, 8)}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Tab 切换 */}

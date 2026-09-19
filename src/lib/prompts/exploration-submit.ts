@@ -752,10 +752,12 @@ export function aiPreviewPrompt(html: string): string {
   prompt += '  - name: 名称(如 关卡1 第一步等)。\n';
   prompt += "  - type: 环节类型 practice|quiz|game。\n";
   prompt += "2. questions: 题目列表。\n";
-  prompt += "3. interactiveElements: 可交互元素。\n";
+  prompt += "3. interactiveElements: 可交互元素数组，每个元素必须是对象，且必须含以下两个字段：\n";
+  prompt += '  - element: 元素名称或文本(如 「开始」按钮、姓名输入框)。\n';
+  prompt += "  - description: 该元素的作用(如 点击开始游戏)。\n";
   prompt += "4. totalScore: 总分。\n";
   prompt += "5. summary: 总结。\n\nHTML内容:\n" + html.substring(0, 6000) + "\n\n";
-  prompt += '输出格式: {"sections":[{"name":"关卡1","type":"practice"}],"questions":[],"totalScore":0,"summary":"共X个环节"}';
+  prompt += '输出格式: {"sections":[{"name":"关卡1","type":"practice"}],"questions":[],"interactiveElements":[{"element":"开始按钮","description":"点击开始"}],"totalScore":0,"summary":"共X个环节"}';
   return prompt;
 }
 
