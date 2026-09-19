@@ -153,7 +153,10 @@ echo [3/5] 正在初始化数据库：!DB_PATH!
 call prisma db push --skip-generate --accept-data-loss
 goto :after_db
 :db_ready
-echo [3/5] 数据库已就绪
+echo [3/5] 正在同步数据库结构（无损升级，不影响现有数据）...
+call prisma db push --skip-generate
+if errorlevel 1 echo   [警告] 数据库结构同步未完成，请将上方错误信息截图反馈给开发者
+echo   数据库结构已就绪
 :after_db
 
 if exist ".next\BUILD_ID" goto :build_ok

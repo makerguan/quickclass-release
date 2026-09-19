@@ -103,12 +103,14 @@ fi
 echo "[2/5] 正在生成 Prisma 客户端..."
 prisma generate
 
-# 3. 初始化数据库（仅在真实数据库不存在时创建，位置以 .env 为准）
+# 3. 初始化数据库（空库建表；已有库做无损结构同步，升级自动补新表新列）
 if [ ! -f "$DB_PATH" ]; then
     echo "[3/5] 正在初始化数据库 ($DB_PATH) ..."
     prisma db push --skip-generate --accept-data-loss
 else
-    echo "[3/5] 数据库已就绪"
+    echo "[3/5] 正在同步数据库结构（无损升级，不影响现有数据）..."
+    prisma db push --skip-generate || echo "[警告] 数据库结构同步未完成，请检查上方错误"
+    echo "  数据库结构已就绪"
 fi
 
 # 4. 构建生产版本（需要重建时先做一次数据库结构增量同步，新版本表结构自动应用）
