@@ -155,4 +155,15 @@ export class PrismaAdapter implements StorageAdapter {
   async clearRecords(taskId: string): Promise<void> {
     await this.prisma.qfRecord.deleteMany({ where: { taskId } });
   }
+
+  /**
+   * 删除单条记录（**超出 StorageAdapter 契约的扩展方法**）。
+   *
+   * 用途：学生重提交时把上一次的记录换掉，保证「一人一条」。
+   * SDK 核心只提供 clearRecords（清全部），没有 updateRecord，
+   * 所以这一层由 QuickClass 侧自己补，不修改 vendor SDK。
+   */
+  async deleteRecord(taskId: string, recordId: string): Promise<void> {
+    await this.prisma.qfRecord.deleteMany({ where: { id: recordId, taskId } });
+  }
 }

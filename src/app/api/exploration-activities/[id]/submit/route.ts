@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { writeCollectedAnswers } from "@/lib/exploration/qf-binding";
 
 // POST: 学生提交探究成绩
 export async function POST(
@@ -31,6 +32,8 @@ export async function POST(
       score, maxScore, completedSections, gameLevel,
       actionLog,
       taskTitle, studentName, className,
+      // QuickForm 采集块带上来的学生答案（没有采集块时为空）
+      answers,
     } = body;
 
     const finalScore = typeof score === "number" ? score : 0;
@@ -60,7 +63,7 @@ export async function POST(
       : [];
 
     // 事务：创建/更新提交记录 + 写入操作日志
-    const submission = await prisma.$transaction(async (tx) => {
+    const { submission, previousQfRecordId } = await prisma.$transaction(async (tx) => {
       // 查找已有提交
       const existing = await tx.explorationSubmission.findUnique({
         where: { explorationId_studentId: { explorationId: id, studentId } },
@@ -109,8 +112,46 @@ export async function POST(
         });
       }
 
-      return sub;
+      return { submission: sub, previousQfRecordId: existing?.qfRecordId ?? null };
     });
+
+    // ===== QuickForm 答案落库（行为数据已落库，这一步失败不回滚、不影响学生提交）=====
+    let answersStored = false;
+    let qfError: string | undefined;
+    if (
+      exploration.qfTaskId &&
+      answers &&
+      typeof answers === "object" &&
+      !Array.isArray(answers) &&
+      Object.keys(answers).length > 0
+    ) {
+      const student = await prisma.user.findUnique({
+        where: { id: studentId },
+        select: { name: true, studentNo: true },
+      });
+      const result = await writeCollectedAnswers(
+        exploration.qfTaskId,
+        answers as Record<string, unknown>,
+        {
+          // 学生重新提交：先删旧记录再写新的，保持一人一条
+          replaceRecordId: previousQfRecordId,
+          identity: {
+            studentName: student?.name ?? undefined,
+            studentNo: student?.studentNo ?? undefined,
+          },
+        }
+      );
+      if ("recordId" in result) {
+        answersStored = true;
+        await prisma.explorationSubmission.update({
+          where: { id: submission.id },
+          data: { qfRecordId: result.recordId },
+        });
+      } else {
+        qfError = result.error;
+        console.error("[QF] 答案写入失败（行为数据已正常落库）:", result.error);
+      }
+    }
 
     return NextResponse.json({
       submissionId: submission.id,
@@ -118,6 +159,8 @@ export async function POST(
       maxScore: finalMaxScore,
       status: "graded",
       submittedAt: submission.submittedAt,
+      answersStored,
+      ...(qfError ? { answersError: qfError } : {}),
     });
   } catch (error: any) {
     console.error("提交探究成绩失败:", error);
