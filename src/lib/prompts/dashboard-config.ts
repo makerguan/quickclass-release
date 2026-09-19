@@ -33,17 +33,27 @@ export interface AiDashboardKpi {
 
 export type AiChartType = "bar" | "line" | "hbar" | "pie" | "roster" | "list";
 
+/** 预制主题（AI 只能从中选择，渲染器据此整屏换肤；不允许 AI 自造颜色/样式） */
+export type AiDashboardTheme = "aurora" | "ocean" | "sunset" | "forest" | "violet" | "slate";
+
+export const ALLOWED_THEMES: AiDashboardTheme[] = ["aurora", "ocean", "sunset", "forest", "violet", "slate"];
+/** 旧配置（无 theme 字段）的兜底主题：深色科技大屏 */
+export const DEFAULT_THEME: AiDashboardTheme = "aurora";
+
 export interface AiDashboardChart {
   title: string;
   field: string;
   type: AiChartType;
   limit?: number;
+  /** 主视觉：2 = 占双栏（每屏最多 1 个） */
+  span?: 1 | 2;
   note?: string;
 }
 
 export interface AiDashboardConfig {
   title?: string;
   subtitle?: string;
+  theme?: AiDashboardTheme;
   kpis?: AiDashboardKpi[];
   charts?: AiDashboardChart[];
 }
@@ -141,8 +151,17 @@ export function buildFieldSummaries(records: { data?: Record<string, unknown> }[
 }
 
 /** 系统提示词（预置，老师的额外要求作为 user 消息追加） */
-export const DASHBOARD_SYSTEM_PROMPT = `你是「课堂数据大屏」的配置生成器。你会收到一份学生提交数据的【字段摘要】——只有字段名与聚合统计，没有任何原始学生数据。
-你的任务：为老师端「统计信息」页设计一块数据大屏，并输出一份 JSON 配置。
+export const DASHBOARD_SYSTEM_PROMPT = `你是「课堂数据大屏」的视觉设计师兼配置生成器。你会收到一份学生提交数据的【字段摘要】——只有字段名与聚合统计，没有任何原始学生数据。
+你的任务：为老师端「统计信息」页设计一块**好看的数据大屏**，输出一份 JSON 配置（渲染引擎会按你的配置整屏换肤并灌入全部真实数据）。
+
+【主题选择】从以下预制主题中选一个填入 theme（这是大屏的底色与配色基调）：
+- aurora   深蓝科技风：深色底 + 发光玻璃卡片 + 霓虹图表，经典"数据大屏"气质（默认首选）
+- violet   紫色霓虹：深紫底 + 粉紫青霓虹，炫酷个性
+- ocean    海洋蓝：浅蓝渐变底 + 白色卡片，清爽明亮
+- sunset   暖橙活力：暖橙渐变底 + 白色卡片，热情活泼
+- forest   翠绿自然：绿色系，清新护眼
+- slate    简约商务：浅灰白，克制专业
+若老师额外要求里提到风格（如"科技感""深色""清新"），主题必须呼应；没提则默认 aurora。
 
 【可用图表类型】
 - kpi    顶部指标卡（需填 agg：count 提交数 / unique 去重数 / avg 平均 / sum 合计 / max 最大 / min 最小）
@@ -157,9 +176,15 @@ export const DASHBOARD_SYSTEM_PROMPT = `你是「课堂数据大屏」的配置�
 {
   "title": "大屏标题（不超过 12 字）",
   "subtitle": "一句话副标题（不超过 30 字）",
+  "theme": "aurora",
   "kpis": [ { "label": "指标名（不超过 6 字）", "field": "字段名或 null", "agg": "count" } ],
-  "charts": [ { "title": "卡片标题（不超过 10 字）", "field": "字段名", "type": "bar", "limit": 8, "note": "一句话解读（不超过 20 字）" } ]
+  "charts": [ { "title": "卡片标题（不超过 10 字）", "field": "字段名", "type": "bar", "limit": 8, "span": 2, "note": "一句话解读（不超过 20 字）" } ]
 }
+
+【设计原则】
+1. span=2 表示该卡片占整行双栏，应留给最重要、最抓眼球的图表（主视觉），最多 1 个；其余不填 span 或填 1。
+2. 图表组合要有节奏：一张大主视觉 + 两三张不同图型的小卡（bar/pie/hbar/list 混搭，避免全是同一种图）。
+3. 标题和解读要像大屏文案：短、有洞察（如"姓名分布"不如"他们是谁"），但不许夸张编造结论。
 
 【硬性规则】
 1. field 必须是字段摘要中出现过的字段名，禁止编造；field 为 null 表示统计全部提交。
@@ -221,6 +246,7 @@ export function sanitizeDashboardConfig(raw: unknown, validFields: string[]): Ai
   }
 
   const charts: AiDashboardChart[] = [];
+  let heroUsed = false;
   if (Array.isArray(o.charts)) {
     for (const item of o.charts) {
       if (!item || typeof item !== "object") continue;
@@ -230,11 +256,15 @@ export function sanitizeDashboardConfig(raw: unknown, validFields: string[]): Ai
       const type = ALLOWED_TYPES.includes(it.type as AiChartType) ? (it.type as AiChartType) : "bar";
       const limitRaw = Number(it.limit);
       const limit = Number.isFinite(limitRaw) ? Math.min(20, Math.max(3, Math.round(limitRaw))) : 8;
+      // 主视觉：AI 请求 span=2 且还没人占用时才给；否则降为普通卡
+      const span: 1 | 2 = it.span === 2 && !heroUsed ? 2 : 1;
+      if (span === 2) heroUsed = true;
       charts.push({
         title: clampStr(it.title, 14) || field,
         field,
         type,
         limit,
+        span,
         note: clampStr(it.note, 30),
       });
       if (charts.length >= 6) break;
@@ -244,6 +274,9 @@ export function sanitizeDashboardConfig(raw: unknown, validFields: string[]): Ai
   return {
     title: clampStr(o.title, 16),
     subtitle: clampStr(o.subtitle, 40),
+    theme: ALLOWED_THEMES.includes(o.theme as AiDashboardTheme)
+      ? (o.theme as AiDashboardTheme)
+      : DEFAULT_THEME,
     kpis,
     charts,
   };

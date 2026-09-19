@@ -494,7 +494,7 @@ export default function ExplorationAnalysisPage() {
           <input
             value={aiDashInstruction}
             onChange={(e) => setAiDashInstruction(e.target.value)}
-            placeholder="可选：想让大屏突出什么？（如「突出年龄分布」）"
+            placeholder="可选：描述风格或重点（如「深色科技风，突出年龄分布」「清新绿色」）"
             className="flex-1 min-w-[220px] h-8 px-3 text-xs border border-gray-200 rounded-md focus:outline-none focus:border-blue-400"
           />
           {aiDashConfig && (
