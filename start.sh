@@ -114,15 +114,21 @@ else
 fi
 
 # 4. 构建生产版本（需要重建时先做一次数据库结构增量同步，新版本表结构自动应用）
-if [ ! -f ".next/BUILD_ID" ]; then
+# 构建可用性：BUILD_ID 存在且 .next/qc-version 与 public/latest.json 版本一致
+# （源码 ZIP 覆盖解压到旧目录时 .next 会残留旧产物，按版本比对强制重建）
+build_ready() {
+    [ -f ".next/BUILD_ID" ] || return 1
+    node -e "const fs=require('fs');const want=(()=>{try{return String(JSON.parse(fs.readFileSync('public/latest.json','utf8')).version||'')}catch(e){return ''}})();let have='';try{have=fs.readFileSync('.next/qc-version','utf8').trim()}catch(e){};process.exit(want&&have===want?0:1)"
+}
+if build_ready; then
+    echo "[4/5] 生产版本已就绪"
+else
     echo "[4/5] 正在构建生产版本..."
     if [ -f "$DB_PATH" ] && [ -s "$DB_PATH" ]; then
         echo "  正在同步数据库结构（幂等，不清数据）..."
         prisma db push --skip-generate || echo "[警告] 数据库结构同步未完成，请检查上方错误"
     fi
-    npm run build
-else
-    echo "[4/5] 生产版本已就绪"
+    npm run build && node -e "const fs=require('fs');try{fs.writeFileSync('.next/qc-version',String(JSON.parse(fs.readFileSync('public/latest.json','utf8')).version||''))}catch(e){}"
 fi
 
 # 5. 启动
