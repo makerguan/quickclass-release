@@ -8,6 +8,8 @@ import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import QuickFormDashboard, { type QfRecordItem } from "@/components/exploration/QuickFormDashboard";
 import QuickFormRecordList from "@/components/exploration/QuickFormRecordList";
+import QuickFormAiDashboard from "@/components/exploration/QuickFormAiDashboard";
+import type { AiDashboardConfig } from "@/lib/prompts/dashboard-config";
 
 interface StudentRecord {
   studentId: string;
@@ -106,6 +108,17 @@ function InsightContent({ content, className = "" }: { content: string; classNam
 
 type TabKey = "statistics" | "submissions" | "ai";
 
+/** 解析落库的 AI 大屏配置；非法或为空 → null（回退默认大屏，不白屏） */
+function parseDashboardConfig(raw: unknown): AiDashboardConfig | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === "object" ? (o as AiDashboardConfig) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ExplorationAnalysisPage() {
   const router = useRouter();
   const params = useParams();
@@ -125,6 +138,12 @@ export default function ExplorationAnalysisPage() {
   const [qfRecords, setQfRecords] = useState<QfRecordItem[]>([]);
   const [qfTotal, setQfTotal] = useState(0);
   const [qfLoading, setQfLoading] = useState(false);
+
+  // 「AI 重排」数据大屏状态（配置落库在 exploration.dashboardConfig）
+  const [aiDashConfig, setAiDashConfig] = useState<AiDashboardConfig | null>(null);
+  const [aiDashLoading, setAiDashLoading] = useState(false);
+  const [aiDashError, setAiDashError] = useState("");
+  const [aiDashInstruction, setAiDashInstruction] = useState("");
 
   // 实时刷新（页签切换 / 手动刷新）
   const [refreshing, setRefreshing] = useState(false);
@@ -226,6 +245,7 @@ export default function ExplorationAnalysisPage() {
         const detail = await detailRes.json();
         qfTaskId = detail.qfTaskId || null;
         setQfTaskId(qfTaskId);
+        setAiDashConfig(parseDashboardConfig(detail.dashboardConfig));
       }
       if (qfTaskId) {
         setQfLoading(true);
@@ -306,6 +326,57 @@ export default function ExplorationAnalysisPage() {
       /* 静默失败：刷新出错不影响已有展示 */
     } finally {
       setRefreshing(false);
+    }
+  };
+
+  /**
+   * 「AI 重排大屏」：把字段摘要交给 AI，产出**图表配置 JSON** 并落库缓存；
+   * 前端只按配置渲染图表（AI 不产出 HTML，避免 XSS）。老师手动触发、低频。
+   */
+  const handleGenerateAiDashboard = async () => {
+    if (aiDashLoading) return;
+    setAiDashLoading(true);
+    setAiDashError("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/exploration-activities/${explorationId}/dashboard-config`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ instruction: aiDashInstruction }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.config) {
+        setAiDashError(data?.message || "生成失败，请重试。");
+        return;
+      }
+      setAiDashConfig(data.config as AiDashboardConfig);
+      MessagePlugin.success("已按 AI 配置重排大屏");
+    } catch {
+      setAiDashError("网络异常，生成失败。");
+    } finally {
+      setAiDashLoading(false);
+    }
+  };
+
+  /** 恢复默认大屏：清空落库配置 */
+  const handleResetAiDashboard = async () => {
+    if (aiDashLoading) return;
+    setAiDashLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      await fetch(`/api/exploration-activities/${explorationId}/dashboard-config`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      /* 静默：失败也先回退本地显示 */
+    } finally {
+      setAiDashConfig(null);
+      setAiDashError("");
+      setAiDashLoading(false);
     }
   };
 
@@ -397,7 +468,52 @@ export default function ExplorationAnalysisPage() {
       if (qfLoading) {
         return <div className="text-center py-8 text-sm text-gray-400">数据大屏加载中...</div>;
       }
-      return <QuickFormDashboard records={qfRecords} total={qfTotal} />;
+
+      // 工具栏：AI 重排 / 自定义要求 / 恢复默认
+      const toolbar = (
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <Button
+            size="small"
+            theme="primary"
+            loading={aiDashLoading}
+            onClick={handleGenerateAiDashboard}
+          >
+            {aiDashConfig ? "AI 重新排布" : "AI 重排大屏"}
+          </Button>
+          <input
+            value={aiDashInstruction}
+            onChange={(e) => setAiDashInstruction(e.target.value)}
+            placeholder="可选：想让大屏突出什么？（如「突出年龄分布」）"
+            className="flex-1 min-w-[220px] h-8 px-3 text-xs border border-gray-200 rounded-md focus:outline-none focus:border-blue-400"
+          />
+          {aiDashConfig && (
+            <Button
+              size="small"
+              variant="outline"
+              disabled={aiDashLoading}
+              onClick={handleResetAiDashboard}
+            >
+              恢复默认
+            </Button>
+          )}
+        </div>
+      );
+
+      return (
+        <div>
+          {toolbar}
+          {aiDashError && (
+            <div className="mb-3 text-xs text-red-500 bg-red-50 border border-red-100 rounded-md px-3 py-2">
+              {aiDashError}
+            </div>
+          )}
+          {aiDashConfig ? (
+            <QuickFormAiDashboard records={qfRecords} total={qfTotal} config={aiDashConfig} />
+          ) : (
+            <QuickFormDashboard records={qfRecords} total={qfTotal} />
+          )}
+        </div>
+      );
     }
 
     if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交数据</div>;
