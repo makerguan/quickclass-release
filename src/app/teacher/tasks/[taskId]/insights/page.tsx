@@ -963,8 +963,6 @@ export default function TaskInsightsPage() {
                                     <span className="text-[#0052D9] text-xs font-medium">{student.name.charAt(0)}</span>
                                   </div>
                                   <span className="text-sm font-medium">{student.name}</span>
-                                  {ins && <Tag theme="success" variant="light" size="small">V{ins.version}</Tag>}
-                                  {ins && <span className="text-xs text-[#63666F]">{formatInsightTime(ins.createdAt)}</span>}
                                   {versions.length > 1 && (
                                     <div className="flex items-center gap-1 ml-1 pl-2 border-l border-gray-200">
                                       <span className="text-xs text-gray-400">版本：</span>

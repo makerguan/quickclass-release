@@ -135,6 +135,29 @@ const NEXT_STATUS_LABEL = {
   ENDED: "暂存",
 };
 
+// 从 AI 流式输出中提取纯 HTML（剥离 markdown 代码块包裹与前后说明文字）
+function extractHtml(text: string): string {
+  if (!text) return "";
+  const t = text.trim();
+  // 1) 优先提取 markdown 代码块（取含 <html / <!doctype 的块，否则取第一个块）
+  const fenceRegex = /```(?:html)?\s*\n?([\s\S]*?)\n?```/g;
+  let best = "";
+  let m: RegExpExecArray | null;
+  while ((m = fenceRegex.exec(t)) !== null) {
+    const block = m[1].trim();
+    if (/<html|<!doctype/i.test(block)) return block;
+    if (!best) best = block;
+  }
+  if (best) return best;
+  // 2) 无代码块：截取 <!DOCTYPE html>…</html>（兼容前后夹杂说明文字）
+  const doctypeMatch = t.match(/<!doctype[^>]*>[\s\S]*?<\/html>/i);
+  if (doctypeMatch) return doctypeMatch[0];
+  const htmlTagMatch = t.match(/<html[\s\S]*<\/html>/i);
+  if (htmlTagMatch) return htmlTagMatch[0];
+  // 3) 兜底：原样返回（可能是无 DOCTYPE 的纯 HTML 片段）
+  return t;
+}
+
 export default function TeacherTasksPage() {
   const router = useRouter();
   const [tasks, setTasks] = useState<LearningTask[]>([]);
@@ -698,12 +721,17 @@ export default function TeacherTasksPage() {
   const [explorationModalVisible, setExplorationModalVisible] = useState(false);
   const [explorationEditId, setExplorationEditId] = useState<string | null>(null); // null=新建
   const [explorationTitle, setExplorationTitle] = useState("");
-  const [explorationPrompt, setExplorationPrompt] = useState("");
-  const [explorationDesignPrompt, setExplorationDesignPrompt] = useState(""); // 互动设计提示词（临时，不保存）
+  const [explorationPrompt, setExplorationPrompt] = useState(""); // 分析提示词（analysisPrompt）
+  const [initialPrompt, setInitialPrompt] = useState(""); // 首轮设计意图（保存为 designPrompt）
+  const [draftInput, setDraftInput] = useState(""); // 对话输入框当前值
+  const [chatMessages, setChatMessages] = useState<{ role: "user" | "ai"; content: string }[]>([]); // 对话流
+  const [htmlVersions, setHtmlVersions] = useState<string[]>([]); // 版本栈
+  const [versionIndex, setVersionIndex] = useState(-1); // 当前版本指针
+  const [activeTab, setActiveTab] = useState<"preview" | "code">("preview"); // 右栏 tab
   const [explorationHtml, setExplorationHtml] = useState("");
   const [explorationPreview, setExplorationPreview] = useState("");
-  const [generatingPrompt, setGeneratingPrompt] = useState(false);
-  const [generatingHtml, setGeneratingHtml] = useState(false);
+  const [generatingPrompt, setGeneratingPrompt] = useState(false); // AI 帮我写
+  const [generating, setGenerating] = useState(false); // 多轮生成中
   const [savingExploration, setSavingExploration] = useState(false);
 
   // 分析弹窗
@@ -769,7 +797,12 @@ export default function TeacherTasksPage() {
     setExplorationEditId(null);
     setExplorationTitle("");
     setExplorationPrompt("");
-    setExplorationDesignPrompt("");
+    setInitialPrompt("");
+    setDraftInput("");
+    setChatMessages([]);
+    setHtmlVersions([]);
+    setVersionIndex(-1);
+    setActiveTab("preview");
     setExplorationHtml("");
     setExplorationPreview("");
     setExplorationEnableSubmission(false);
@@ -863,7 +896,7 @@ export default function TeacherTasksPage() {
     }
   };
 
-  // 上传 HTML 文件
+  // 上传 HTML 文件（纳入版本栈，可撤销/继续多轮）
   const handleUploadHtml = () => {
     const input = document.createElement("input");
     input.type = "file";
@@ -876,16 +909,23 @@ export default function TeacherTasksPage() {
         MessagePlugin.warning("文件内容为空");
         return;
       }
+      // 导入后作为新版本（若撤销回旧版本，则截断后续版本）
+      const baseVersions = htmlVersions.slice(0, versionIndex + 1);
+      const newIndex = baseVersions.length;
+      setHtmlVersions([...baseVersions, text]);
+      setVersionIndex(newIndex);
       setExplorationHtml(text);
       setExplorationPreview(text);
-      MessagePlugin.success("HTML 文件已加载，请预览");
+      setChatMessages((prev) => [...prev, { role: "ai", content: "📄 已导入外部 HTML，可继续用对话修改" }]);
+      MessagePlugin.success("HTML 文件已加载，可继续用对话修改");
     };
     input.click();
   };
 
-  // 自动生成提示词（流式：教师输入的想法作为最高优先级主题）
+  // 自动生成提示词（流式：提示词编辑区已有输入时优化已有提示词，否则从零设计）
   const autoGeneratePrompt = async () => {
     if (!explorationPanelSpId) return;
+    const hadIdea = !!draftInput.trim();
     setGeneratingPrompt(true);
     const startAt = Date.now();
     let received = 0;
@@ -903,8 +943,8 @@ export default function TeacherTasksPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           subProjectId: explorationPanelSpId,
-          // 教师当前输入的想法（最高优先级主题），可为空（为空时后端按课堂信息生成）
-          teacherIdea: explorationDesignPrompt,
+          // 提示词编辑区已有的用户输入：非空时后端按「优化已有提示词」处理，为空时按课堂信息从零设计
+          teacherIdea: draftInput,
           title: explorationTitle,
         }),
       });
@@ -927,9 +967,9 @@ export default function TeacherTasksPage() {
       const promptMatch = text.match(/提示词[：:]\s*([\s\S]+)/);
       const title = titleMatch ? titleMatch[1].trim().slice(0, 50) : "探究活动";
       const prompt = promptMatch ? promptMatch[1].trim() : text.trim();
-      setExplorationTitle(title);
-      setExplorationDesignPrompt(prompt);
-      MessagePlugin.success("互动设计提示词已生成");
+      if (!explorationTitle.trim()) setExplorationTitle(title);
+      setDraftInput(prompt);
+      MessagePlugin.success(hadIdea ? "已优化提示词，请确认后发送" : "已生成设计意图，请确认后发送");
     } catch {
       MessagePlugin.error("生成提示词失败");
     } finally {
@@ -939,14 +979,25 @@ export default function TeacherTasksPage() {
     }
   };
 
-  // 生成 HTML（流式）
-  const handleGenerateHtml = async () => {
-    if (!explorationDesignPrompt.trim()) {
-      MessagePlugin.warning("请先输入互动设计提示词");
+  // 多轮对话生成 HTML（首轮/后续轮统一入口）
+  const handleSend = async () => {
+    const instruction = draftInput.trim();
+    if (!instruction) {
+      MessagePlugin.warning("请输入内容");
       return;
     }
-    setGeneratingHtml(true);
-    // 实时进度提示：首字节前显示思考计时，之后显示已生成字符数
+    const isFirstRound = htmlVersions.length === 0;
+    if (!isFirstRound && !explorationHtml.trim()) {
+      MessagePlugin.warning("缺少当前 HTML，请先生成或导入");
+      return;
+    }
+    if (isFirstRound) setInitialPrompt(instruction);
+
+    // 追加用户消息 + 清空输入
+    setChatMessages((prev) => [...prev, { role: "user", content: instruction }]);
+    setDraftInput("");
+    setGenerating(true);
+
     const startAt = Date.now();
     let msg = await MessagePlugin.loading("AI 思考中... 0s", 0);
     let receivedBytes = 0;
@@ -957,14 +1008,17 @@ export default function TeacherTasksPage() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          prompt: explorationDesignPrompt,
+          subProjectId: explorationPanelSpId,
+          initialPrompt: isFirstRound ? instruction : initialPrompt,
+          currentHtml: isFirstRound ? "" : explorationHtml,
+          instruction,
         }),
       });
       if (!response.ok) {
         msg.close();
         const err = await response.json().catch(() => ({ error: "生成失败" }));
         MessagePlugin.error(err.error || "生成失败");
-        setGeneratingHtml(false);
+        setGenerating(false);
         return;
       }
       // 读取流式响应，实时更新进度
@@ -984,16 +1038,77 @@ export default function TeacherTasksPage() {
       }
       clearInterval(timer);
       msg.close();
-      setExplorationHtml(htmlContent);
-      setExplorationPreview(htmlContent);
-      MessagePlugin.success("网页生成成功，请预览效果");
+
+      // 剥离 markdown 代码块包裹与前后说明文字，只保留纯 HTML
+      const clean = extractHtml(htmlContent);
+      if (!clean) {
+        MessagePlugin.error("生成内容为空，请重试");
+        setGenerating(false);
+        return;
+      }
+
+      // 纳入版本栈（若撤销回旧版本，则截断后续版本再追加）
+      const baseVersions = htmlVersions.slice(0, versionIndex + 1);
+      const newIndex = baseVersions.length;
+      setHtmlVersions([...baseVersions, clean]);
+      setVersionIndex(newIndex);
+      setExplorationHtml(clean);
+      setExplorationPreview(clean);
+      setChatMessages((prev) => [...prev, { role: "ai", content: `✓ 已生成第 ${newIndex + 1} 版` }]);
+      MessagePlugin.success("网页已更新");
     } catch {
       clearInterval(timer);
       msg.close();
       MessagePlugin.error("生成失败");
     } finally {
-      setGeneratingHtml(false);
+      setGenerating(false);
     }
+  };
+
+  // 撤销到上一版本
+  const handleUndo = () => {
+    if (versionIndex <= 0) return;
+    const idx = versionIndex - 1;
+    setVersionIndex(idx);
+    setExplorationHtml(htmlVersions[idx]);
+    setExplorationPreview(htmlVersions[idx]);
+  };
+
+  // 重做到下一版本
+  const handleRedo = () => {
+    if (versionIndex >= htmlVersions.length - 1) return;
+    const idx = versionIndex + 1;
+    setVersionIndex(idx);
+    setExplorationHtml(htmlVersions[idx]);
+    setExplorationPreview(htmlVersions[idx]);
+  };
+
+  // 导出 HTML 文件
+  const handleExportHtml = () => {
+    if (!explorationHtml.trim()) {
+      MessagePlugin.warning("请先生成或上传 HTML 内容");
+      return;
+    }
+    let taskGrade = "未知年级";
+    let taskSubject = "未知学科";
+    let taskTitle = "未知课题";
+    try {
+      const spTask = tasks.find(t => t.subProjects.some(sp => sp.id === explorationPanelSpId));
+      if (spTask) {
+        taskGrade = spTask.grade || "未知年级";
+        taskSubject = spTask.subject || "未知学科";
+        taskTitle = spTask.title;
+      }
+    } catch {}
+    const safeName = (s: string) => s.replace(/[\\/:*?"<>|，。、？！：；【】（）""''\s]/g, "_");
+    const filename = [safeName(taskTitle), safeName(taskGrade), safeName(taskSubject), safeName(explorationTitle)].join("_") + ".html";
+    const blob = new Blob([explorationHtml], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // 保存探究
@@ -1013,7 +1128,7 @@ export default function TeacherTasksPage() {
             enableSubmission: explorationEnableSubmission,
             enableAiCompanion: explorationEnableAiCompanion,
             aiCompanionPrompt: aiCompanionPromptText || undefined,
-            designPrompt: explorationDesignPrompt,
+            designPrompt: initialPrompt,
             analysisPrompt: explorationPrompt,
           }),
         });
@@ -1027,7 +1142,7 @@ export default function TeacherTasksPage() {
             htmlContent: explorationHtml,
             enableSubmission: explorationEnableSubmission,
             enableAiCompanion: explorationEnableAiCompanion,
-            designPrompt: explorationDesignPrompt,
+            designPrompt: initialPrompt,
             analysisPrompt: explorationPrompt,
           }),
         });
@@ -1124,7 +1239,7 @@ export default function TeacherTasksPage() {
               htmlContent: explorationHtml,
               enableSubmission: explorationEnableSubmission,
               enableAiCompanion: true,
-              designPrompt: explorationDesignPrompt,
+              designPrompt: initialPrompt,
               analysisPrompt: explorationPrompt,
             }),
           });
@@ -1437,17 +1552,25 @@ export default function TeacherTasksPage() {
   const openEditExploration = (e: any) => {
     setExplorationEditId(e.id);
     setExplorationTitle(e.title);
-    setExplorationDesignPrompt(e.designPrompt || ""); // 互动设计提示词（如果有保存的话）
+    setInitialPrompt(e.designPrompt || ""); // 首轮设计意图（保存的 designPrompt）
+    setDraftInput("");
+    setChatMessages([]);
+    setActiveTab("preview");
     setExplorationPrompt(e.analysisPrompt || "");
     // 源码编辑区保持纯净稿（去除 AI 伴学注入代码），预览区使用含注入版本
     // 列表接口已瘦身不再返回 htmlContent，统一从详情接口按需拉取（避免列表页传输大段HTML）
     const rawHtml = e.htmlContent || "";
-    if (e.enableAiCompanion) {
-      setExplorationHtml(stripAiCompanionCode(rawHtml));
-    } else {
-      setExplorationHtml(rawHtml);
-    }
+    const cleanRaw = e.enableAiCompanion ? stripAiCompanionCode(rawHtml) : rawHtml;
+    setExplorationHtml(cleanRaw);
     setExplorationPreview(rawHtml);
+    // 版本栈：编辑已有探究，初始为当前 HTML 作为 v0
+    if (rawHtml) {
+      setHtmlVersions([cleanRaw]);
+      setVersionIndex(0);
+    } else {
+      setHtmlVersions([]);
+      setVersionIndex(-1);
+    }
     // 答题提交相关
     setExplorationEnableSubmission(e.enableSubmission || false);
     setExplorationHasSubmissions((e._count?.ExplorationSubmission ?? 0) > 0);
@@ -1476,6 +1599,9 @@ export default function TeacherTasksPage() {
             setExplorationHtml(clean);          // 源码编辑区：纯净稿
             setExplorationPreview(detail.htmlContent); // 预览区：注入版
             setOriginalHtmlForInjection(clean);
+            // 详情是权威完整版，重建版本栈 v0
+            setHtmlVersions([clean]);
+            setVersionIndex(0);
           }
           if (detail.aiCompanionPrompt && detail.aiCompanionPrompt.length > 50) {
             setAiCompanionPromptText(detail.aiCompanionPrompt);
@@ -4504,12 +4630,13 @@ export default function TeacherTasksPage() {
 
         {/* 互动探究 - 新建/编辑弹窗 */}
         <Dialog
-          header={explorationEditId ? "编辑互动设计提示词" : "新建互动探究"}
+          header={explorationEditId ? "编辑互动探究" : "新建互动探究"}
           visible={explorationModalVisible}
           onClose={() => setExplorationModalVisible(false)}
           footer={null}
-          width={720}
+          width={1040}
           destroyOnClose
+          closeOnOverlayClick={false}
         >
           <div className="space-y-4">
             {/* 标题 */}
@@ -4519,118 +4646,142 @@ export default function TeacherTasksPage() {
               placeholder="探究标题"
             />
 
-            {/* 互动设计提示词 */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-gray-600">编辑互动设计提示词</span>
-                <Button
-                  theme="primary" variant="outline" size="small"
-                  loading={generatingPrompt}
-                  onClick={autoGeneratePrompt}
-                >
-                  生成提示词
-                </Button>
-              </div>
-              <Textarea
-                value={explorationDesignPrompt}
-                onChange={(v) => setExplorationDesignPrompt(v)}
-                placeholder="描述你想要的互动网页：主题、互动机制、视觉风格等。点「生成提示词」时将以此为核心主题（留空则按课堂信息生成）"
-                rows={5}
-              />
-            </div>
-
-            {/* 生成网页 / 上传HTML */}
-            <div className="flex gap-2">
-              <Button
-                theme="primary"
-                size="small"
-                icon={<PlayIcon />}
-                loading={generatingHtml}
-                onClick={handleGenerateHtml}
-                disabled={!explorationDesignPrompt.trim()}
-              >
-                生成网页
-              </Button>
-              <Button
-                theme="default"
-                variant="outline"
-                size="small"
-                icon={<FileIcon />}
-                onClick={handleUploadHtml}
-              >
-                上传HTML
-              </Button>
-              <Button
-                theme="default"
-                variant="outline"
-                size="small"
-                icon={<FileIcon />}
-                onClick={() => {
-                  if (!explorationHtml.trim()) {
-                    MessagePlugin.warning("请先生成或上传 HTML 内容");
-                    return;
-                  }
-                  // 通过 spId 查找课堂信息
-                  let taskGrade = "未知年级";
-                  let taskSubject = "未知学科";
-                  let taskTitle = "未知课题";
-                  try {
-                    const spTask = tasks.find(t => t.subProjects.some(sp => sp.id === explorationPanelSpId));
-                    if (spTask) {
-                      taskGrade = spTask.grade || "未知年级";
-                      taskSubject = spTask.subject || "未知学科";
-                      taskTitle = spTask.title;
-                    }
-                  } catch {}
-                  const safeName = (s: string) => s.replace(/[\\/:*?"<>|，。、？！：；【】（）""''\s]/g, "_");
-                  const filename = [safeName(taskTitle), safeName(taskGrade), safeName(taskSubject), safeName(explorationTitle)].join("_") + ".html";
-                  const blob = new Blob([explorationHtml], { type: "text/html;charset=utf-8" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = filename;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-              >
-                导出 HTML
-              </Button>
-            </div>
-
-            {/* 效果预览 + 源代码左右并排 */}
-            {explorationPreview && (
-              <div className="flex gap-3">
-                {/* 左侧：效果预览 */}
-                <div className="flex-1 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-600">效果预览</span>
-                    <Button theme="default" variant="text" size="small" onClick={() => openPreview(explorationPreview)}>
-                      全屏预览
+            {/* 主区域：左对话流 + 右预览/源码 */}
+            <div className="flex gap-3" style={{ minHeight: 340 }}>
+              {/* 左栏：对话流 + 输入条 */}
+              <div className="w-[380px] shrink-0 flex flex-col border border-gray-200 rounded-lg overflow-hidden">
+                {/* 对话流 */}
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-gray-50" style={{ maxHeight: 300 }}>
+                  {chatMessages.length === 0 ? (
+                    <div className="text-sm text-gray-400 text-center px-4 py-16 leading-relaxed">
+                      描述你想要的互动网页（主题、互动机制、视觉风格等），发送后 AI 生成第一版。
+                      <br />也可点「AI 帮我写」自动生成设计意图，或「上传」HTML 后继续对话修改。
+                    </div>
+                  ) : (
+                    chatMessages.map((m, i) => (
+                      <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+                        <div
+                          className={
+                            m.role === "user"
+                              ? "max-w-[85%] bg-blue-500 text-white text-sm rounded-lg rounded-br-sm px-3 py-2 whitespace-pre-wrap"
+                              : "max-w-[85%] bg-white text-gray-700 text-sm rounded-lg rounded-bl-sm px-3 py-2 border border-gray-200 whitespace-pre-wrap"
+                          }
+                        >
+                          {m.content}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                {/* 输入条 */}
+                <div className="border-t border-gray-200 p-2 space-y-2 bg-white">
+                  <Textarea
+                    value={draftInput}
+                    onChange={(v) => setDraftInput(v)}
+                    placeholder={htmlVersions.length === 0 ? "描述你想要的互动网页…" : "输入修改要求，如：把背景改成蓝色"}
+                    rows={3}
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      theme="default" variant="outline" size="small"
+                      loading={generatingPrompt}
+                      onClick={autoGeneratePrompt}
+                    >
+                      AI 帮我写
+                    </Button>
+                    <Button
+                      theme="primary" size="small"
+                      loading={generating}
+                      onClick={handleSend}
+                      disabled={!draftInput.trim()}
+                      className="flex-1"
+                    >
+                      发送
                     </Button>
                   </div>
-                  <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ height: 360 }}>
-                    <iframe srcDoc={explorationPreview} className="w-full h-full" sandbox="allow-scripts allow-same-origin" title="预览" />
+                </div>
+              </div>
+
+              {/* 右栏：预览/源码 */}
+              <div className="flex-1 min-w-0 flex flex-col">
+                {/* 工具条 */}
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-600">
+                    {htmlVersions.length > 0 ? `第 ${versionIndex + 1} 版` : "预览"}
+                  </span>
+                  <div className="flex items-center gap-0.5">
+                    <Button theme="default" variant="text" size="small" onClick={handleUndo} disabled={versionIndex <= 0}>
+                      撤销
+                    </Button>
+                    <Button theme="default" variant="text" size="small" onClick={handleRedo} disabled={versionIndex >= htmlVersions.length - 1}>
+                      重做
+                    </Button>
+                    <Button theme="default" variant="text" size="small" icon={<FileIcon />} onClick={handleUploadHtml}>
+                      上传
+                    </Button>
+                    <Button theme="default" variant="text" size="small" icon={<FileIcon />} onClick={handleExportHtml}>
+                      导出
+                    </Button>
+                    {explorationPreview && (
+                      <Button theme="default" variant="text" size="small" onClick={() => openPreview(explorationPreview)}>
+                        全屏
+                      </Button>
+                    )}
                   </div>
                 </div>
 
-                {/* 右侧：源代码编辑（仅在有内容时显示） */}
-                {explorationHtml && (
-                  <div className="flex-1 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-gray-600">源代码</span>
-                      <span className="text-xs text-gray-400">修改即时同步到预览</span>
-                    </div>
+                {/* 预览/源码 tab */}
+                <div className="flex-1 flex flex-col border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="flex border-b border-gray-200 bg-gray-50">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("preview")}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === "preview" ? "border-blue-500 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+                    >
+                      预览
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("code")}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === "code" ? "border-blue-500 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+                    >
+                      源码
+                    </button>
+                  </div>
+                  {activeTab === "preview" ? (
+                    <iframe
+                      srcDoc={explorationPreview || '<html><body style="display:flex;align-items:center;justify-content:center;height:100vh;color:#999;font-family:sans-serif">暂无内容</body></html>'}
+                      className="flex-1 w-full"
+                      sandbox="allow-scripts allow-same-origin"
+                      title="预览"
+                      style={{ minHeight: 300 }}
+                    />
+                  ) : (
                     <Textarea
                       value={explorationHtml}
                       onChange={(v) => { setExplorationHtml(v); setExplorationPreview(v); }}
-                      placeholder="HTML 源代码，可在此直接修改"
-                      rows={16}
+                      onBlur={() => {
+                        // 手动编辑失焦时纳入版本栈，使手动改也能被撤销/重做
+                        const trimmed = explorationHtml.trim();
+                        if (!trimmed) return;
+                        const current = versionIndex >= 0 ? htmlVersions[versionIndex] : "";
+                        if (trimmed !== current) {
+                          const baseVersions = versionIndex >= 0 ? htmlVersions.slice(0, versionIndex + 1) : [];
+                          const newIndex = baseVersions.length;
+                          setHtmlVersions([...baseVersions, trimmed]);
+                          setVersionIndex(newIndex);
+                          setChatMessages((prev) => [...prev, { role: "ai", content: `✎ 已记录源码编辑（第 ${newIndex + 1} 版）` }]);
+                        }
+                      }}
+                      placeholder="HTML 源代码，可在此直接修改（修改即时同步到预览）"
+                      rows={12}
                       className="font-mono text-xs"
+                      style={{ minHeight: 300 }}
                     />
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            )}
+            </div>
 
             {/* 启用提交功能 */}
             <div className="border-t border-gray-100 pt-3 space-y-2">
