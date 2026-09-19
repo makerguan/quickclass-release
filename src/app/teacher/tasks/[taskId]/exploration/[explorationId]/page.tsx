@@ -468,7 +468,16 @@ export default function ExplorationAnalysisPage() {
     // 优先渲染 QuickForm 数据大屏（有绑定任务时）
     if (qfTaskId) {
       if (qfLoading) {
-        return <div className="text-center py-8 text-sm text-gray-400">数据大屏加载中...</div>;
+        return (
+          <div className="space-y-4 animate-pulse" aria-label="数据大屏加载中">
+            <div className="h-20 rounded-2xl bg-blue-100/60" />
+            <div className="h-32 rounded-2xl bg-gray-100" />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div className="h-48 rounded-2xl bg-gray-100" />
+              <div className="h-48 rounded-2xl bg-gray-100" />
+            </div>
+          </div>
+        );
       }
 
       // 工具栏：AI 重排 / 自定义要求 / 恢复默认
@@ -911,7 +920,7 @@ export default function ExplorationAnalysisPage() {
               size="small"
               icon={<RefreshIcon />}
               loading={refreshing}
-              onClick={refreshLiveData}
+              onClick={() => refreshLiveData()}
             >
               刷新
             </Button>

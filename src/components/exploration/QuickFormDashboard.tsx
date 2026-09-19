@@ -1,7 +1,7 @@
 "use client";
 
 /**
- * 互动探究「统计信息」数据大屏（Part 2.2 视觉重做版）
+ * 互动探究「统计信息」数据大屏（视觉 v3 · 大屏风）
  *
  * 设计依据：QuickForm接入互动探究_设计_v1.md §6.1
  * 核心机制：通用大屏组件 + 字段形状自动映射，默认零 AI、秒开、零成本。
@@ -10,12 +10,14 @@
  * 每条记录 data 是自由 JSON（键为中文，如 "学生姓名"、"年龄"）。
  * 本组件不依赖 schema，直接从 data 自动推断字段类型并渲染图表：
  *   - 标识字段（姓名/学号等）→ 名单墙（不统计，直接列人）
- *   - 数值字段       → KPI 卡 + 柱状分布
+ *   - 数值字段       → 柱状分布（含 平均/最小/最大）
  *   - 低基数文本/选项 → 横向条形（带占比）
  *   - 数组（多选）   → 横向条形
  *   - 高基数文本     → 标签列表（Top N）
  *   - 保留字段       → 提交数 + 提交时间线（柱状）
- *   - 无数据         → 空态骨架
+ *   - 无数据         → 空态引导
+ *
+ * 视觉：渐变 KPI 横幅（大屏感）+ 白卡片彩色顶线 + 每字段一色循环。
  */
 
 import { useMemo, type ReactNode } from "react";
@@ -44,6 +46,13 @@ interface FieldAnalysis {
 /** 「标识类」字段名提示：命中即按名单展示，不做统计。
  *  只认字段名、不做数值启发 —— 用「唯一值比例」兜底会把「爱好」这类自由填写误判成名单。 */
 const IDENTIFIER_KEY_HINTS = ["姓名", "名字", "学号", "学籍", "昵称", "name", "学生", "成员", "参与人", "报名人"];
+
+/** 每个字段卡片的主色（按展示顺序循环取色） */
+const PALETTE = ["#0052D9", "#7C5CFF", "#0891B2", "#00A870", "#F59E0B", "#F43F5E", "#6366F1", "#0D9488"];
+
+function pickColor(i: number): string {
+  return PALETTE[i % PALETTE.length];
+}
 
 function isNumeric(v: unknown): boolean {
   if (typeof v === "number") return Number.isFinite(v);
@@ -171,22 +180,33 @@ function fmtTime(s: string): string {
 
 /* ============================ 通用外壳 ============================ */
 
+/** 卡片：白底 + 顶部彩色细条 + 悬浮阴影；color 为该字段主色 */
 function Card({
   title,
   meta,
+  color,
   className,
   children,
 }: {
   title: string;
   meta?: string;
+  color: string;
   className?: string;
   children: ReactNode;
 }) {
   return (
-    <div className={`rounded-xl border border-gray-100 bg-white shadow-sm p-4 ${className || ""}`}>
-      <div className="flex items-center justify-between gap-2 mb-3">
-        <span className="text-sm font-medium text-gray-700 truncate" title={title}>
-          {title}
+    <div
+      className={`relative overflow-hidden rounded-2xl border border-gray-100 bg-white shadow-sm hover:shadow-md transition-shadow p-5 pt-6 ${
+        className || ""
+      }`}
+    >
+      <span className="absolute left-0 top-0 h-1 w-full" style={{ background: `linear-gradient(90deg, ${color}, ${color}44)` }} />
+      <div className="flex items-center justify-between gap-2 mb-4">
+        <span className="flex items-center gap-2 min-w-0">
+          <span className="w-2 h-2 rounded-full shrink-0" style={{ background: color }} />
+          <span className="text-sm font-semibold text-gray-800 truncate" title={title}>
+            {title}
+          </span>
         </span>
         {meta && <span className="text-[11px] text-gray-400 shrink-0">{meta}</span>}
       </div>
@@ -195,50 +215,61 @@ function Card({
   );
 }
 
-function MetricTile({ label, value, accent }: { label: string; value: string; accent?: string }) {
+/** KPI 横幅里的单格 */
+function HeroStat({ label, value, divider }: { label: string; value: string; divider?: boolean }) {
   return (
-    <div className="rounded-xl border border-gray-100 bg-white shadow-sm px-4 py-3">
-      <div className="text-[11px] text-gray-400">{label}</div>
-      <div className={`text-2xl font-bold mt-0.5 truncate ${accent || "text-gray-800"}`}>{value}</div>
+    <div className={`flex-1 px-4 py-4 text-center ${divider ? "border-l border-white/15" : ""}`}>
+      <div className="text-[11px] text-white/60 tracking-wider">{label}</div>
+      <div className="text-2xl lg:text-3xl font-bold text-white mt-1 truncate" title={value}>
+        {value}
+      </div>
     </div>
   );
 }
 
 /* ============================ 各字段形态 ============================ */
 
-/** 名单墙：标识类字段（姓名/学号）直接列人 */
-function NameRoster({ field }: { field: FieldAnalysis }) {
+/** 名单墙：标识类字段（姓名/学号）直接列人，头像圈取姓名末字 */
+function NameRoster({ field, color }: { field: FieldAnalysis; color: string }) {
   const names = field.values.map((v) => String(v));
   const LIMIT = 60;
   const shown = names.slice(0, LIMIT);
+  const avatarColors = ["#0052D9", "#7C5CFF", "#0891B2", "#00A870", "#F59E0B", "#F43F5E"];
 
   return (
-    <Card title={field.key} meta={`名单 · 共 ${names.length} 人`}>
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-x-3 gap-y-2">
-        {shown.map((n, i) => (
-          <div key={`${n}-${i}`} className="flex items-center gap-2 min-w-0">
-            <span className="w-5 h-5 shrink-0 rounded-full bg-blue-50 text-blue-600 text-[11px] flex items-center justify-center">
-              {i + 1}
-            </span>
-            <span className="text-[13px] text-gray-700 truncate" title={n}>
-              {n}
-            </span>
-          </div>
-        ))}
+    <Card title={field.key} meta={`名单 · 共 ${names.length} 人`} color={color}>
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-x-3 gap-y-2.5">
+        {shown.map((n, i) => {
+          const av = avatarColors[i % avatarColors.length];
+          return (
+            <div key={`${n}-${i}`} className="flex items-center gap-2 min-w-0">
+              <span
+                className="w-6 h-6 shrink-0 rounded-full text-white text-[11px] font-medium flex items-center justify-center"
+                style={{ background: `linear-gradient(135deg, ${av}, ${av}bb)` }}
+                title={n}
+              >
+                {(n.trim().slice(-1) || "?")}
+              </span>
+              <span className="text-[13px] text-gray-700 truncate" title={n}>
+                {n}
+              </span>
+            </div>
+          );
+        })}
       </div>
       {names.length > LIMIT && (
-        <div className="text-[11px] text-gray-400 mt-2">还有 {names.length - LIMIT} 人未显示</div>
+        <div className="text-[11px] text-gray-400 mt-3">还有 {names.length - LIMIT} 人未显示</div>
       )}
     </Card>
   );
 }
 
-/** 垂直柱状图（数值分布 / 时间线共用） */
+/** 垂直柱状图（数值分布 / 时间线共用），渐变柱 + 悬浮高亮 */
 function ColumnChart({ entries, color }: { entries: [string, number][]; color: string }) {
   const max = entries.reduce((m, [, c]) => Math.max(m, c), 1);
   return (
     <div>
-      <div className="flex items-end gap-1.5 h-28 border-b border-gray-100">
+      <div className="flex items-end gap-1.5 h-32 border-b border-gray-100">
         {entries.map(([label, count], i) => (
           <div
             key={`${label}-${i}`}
@@ -247,17 +278,17 @@ function ColumnChart({ entries, color }: { entries: [string, number][]; color: s
           >
             <span className="text-[10px] text-gray-500 mb-0.5">{count}</span>
             <div
-              className="w-full rounded-t transition-all"
+              className="w-full rounded-t-md transition-all group-hover:brightness-110"
               style={{
                 height: `${Math.max((count / max) * 100, count > 0 ? 4 : 1)}%`,
-                background: color,
-                opacity: 0.55 + 0.45 * (count / max),
+                background: `linear-gradient(180deg, ${color}cc, ${color})`,
+                boxShadow: count === max ? `0 0 8px ${color}55` : "none",
               }}
             />
           </div>
         ))}
       </div>
-      <div className="flex gap-1.5 mt-1">
+      <div className="flex gap-1.5 mt-1.5">
         {entries.map(([label], i) => (
           <span
             key={`${label}-lab-${i}`}
@@ -272,8 +303,8 @@ function ColumnChart({ entries, color }: { entries: [string, number][]; color: s
   );
 }
 
-/** 数值字段：KPI + 柱状分布 */
-function NumericPanel({ field }: { field: FieldAnalysis }) {
+/** 数值字段：迷你指标 + 柱状分布 */
+function NumericPanel({ field, color }: { field: FieldAnalysis; color: string }) {
   const nums = field.values.map((v) => Number(v));
   const sum = nums.reduce((a, b) => a + b, 0);
   const avg = sum / nums.length;
@@ -282,27 +313,30 @@ function NumericPanel({ field }: { field: FieldAnalysis }) {
   const buckets = numericBuckets(nums, field.uniqueCount);
 
   return (
-    <Card title={field.key} meta={`${nums.length} 个数值`}>
-      <div className="grid grid-cols-3 gap-2 mb-4">
-        <div className="rounded-lg bg-blue-50 px-3 py-2 text-center">
-          <div className="text-lg font-bold text-blue-700">{fmtNum(avg)}</div>
-          <div className="text-[11px] text-blue-500">平均</div>
+    <Card title={field.key} meta={`${nums.length} 个数值`} color={color}>
+      <div className="flex items-center gap-2 mb-4">
+        <div
+          className="rounded-xl px-4 py-1.5 text-center"
+          style={{ background: `${color}14`, color }}
+        >
+          <span className="text-lg font-bold">{fmtNum(avg)}</span>
+          <span className="text-[11px] ml-1 opacity-70">平均</span>
         </div>
-        <div className="rounded-lg bg-gray-50 px-3 py-2 text-center">
-          <div className="text-lg font-bold text-gray-600">{fmtNum(min)}</div>
-          <div className="text-[11px] text-gray-400">最小</div>
+        <div className="rounded-xl bg-gray-50 px-3 py-1.5 text-center">
+          <span className="text-sm font-semibold text-gray-500">{fmtNum(min)}</span>
+          <span className="text-[11px] text-gray-400 ml-1">最小</span>
         </div>
-        <div className="rounded-lg bg-gray-50 px-3 py-2 text-center">
-          <div className="text-lg font-bold text-gray-600">{fmtNum(max)}</div>
-          <div className="text-[11px] text-gray-400">最大</div>
+        <div className="rounded-xl bg-gray-50 px-3 py-1.5 text-center">
+          <span className="text-sm font-semibold text-gray-500">{fmtNum(max)}</span>
+          <span className="text-[11px] text-gray-400 ml-1">最大</span>
         </div>
       </div>
-      <ColumnChart entries={buckets} color="#378ADD" />
+      <ColumnChart entries={buckets} color={color} />
     </Card>
   );
 }
 
-/** 横向条形（低基数分布 / 数组多选共用） */
+/** 横向条形（低基数分布 / 数组多选共用），渐变条 + 加粗计数 */
 function BarList({ field, color }: { field: FieldAnalysis; color: string }) {
   const entries =
     field.kind === "array"
@@ -315,22 +349,28 @@ function BarList({ field, color }: { field: FieldAnalysis; color: string }) {
     <Card
       title={field.key}
       meta={`${field.kind === "array" ? "多选" : "分布"} · 共 ${entries.length} 种`}
+      color={color}
     >
-      <div className="space-y-2">
+      <div className="space-y-2.5">
         {entries.map(([label, count]) => (
-          <div key={label} className="flex items-center gap-2">
+          <div key={label} className="flex items-center gap-2.5">
             <span className="w-20 text-xs text-gray-500 truncate text-right shrink-0" title={label}>
               {label}
             </span>
-            <div className="flex-1 bg-gray-100 rounded-full h-4 overflow-hidden">
+            <div className="flex-1 bg-gray-50 rounded-full h-5 overflow-hidden">
               <div
-                className="h-4 rounded-full transition-all"
-                style={{ width: `${(count / max) * 100}%`, background: color }}
+                className="h-5 rounded-full transition-all"
+                style={{
+                  width: `${Math.max((count / max) * 100, 3)}%`,
+                  background: `linear-gradient(90deg, ${color}, ${color}99)`,
+                }}
               />
             </div>
-            <span className="w-16 text-[11px] text-gray-500 shrink-0 text-right">
-              {count} 人
-              <span className="text-gray-300">
+            <span className="w-16 text-xs shrink-0 text-right">
+              <span className="font-semibold" style={{ color }}>
+                {count}
+              </span>
+              <span className="text-gray-400">
                 {" "}
                 {baseCount > 0 ? `${Math.round((count / baseCount) * 100)}%` : ""}
               </span>
@@ -342,24 +382,37 @@ function BarList({ field, color }: { field: FieldAnalysis; color: string }) {
   );
 }
 
-/** 高基数文本：Top N 标签 */
-function TagCloud({ field }: { field: FieldAnalysis }) {
+/** 高基数文本：Top N 标签（计数越高底色越深） */
+function TagCloud({ field, color }: { field: FieldAnalysis; color: string }) {
   const entries = counterEntries(field.values);
   const LIMIT = 12;
   const shown = entries.slice(0, LIMIT);
+  const max = entries[0]?.[1] || 1;
 
   return (
-    <Card title={field.key} meta={`共 ${entries.length} 种`}>
+    <Card title={field.key} meta={`共 ${entries.length} 种`} color={color}>
       <div className="flex flex-wrap gap-2">
-        {shown.map(([label, count]) => (
-          <div key={label} className="bg-gray-50 rounded-full px-3 py-1 text-xs border border-gray-100">
-            <span className="text-gray-700">{label}</span>
-            <span className="ml-1.5 text-gray-400">{count}</span>
-          </div>
-        ))}
+        {shown.map(([label, count]) => {
+          const weight = count / max;
+          return (
+            <div
+              key={label}
+              className="rounded-full px-3 py-1 text-xs border transition-colors"
+              style={{
+                background: `${color}${weight > 0.66 ? "26" : weight > 0.33 ? "14" : "0a"}`,
+                borderColor: `${color}33`,
+              }}
+            >
+              <span className="text-gray-700">{label}</span>
+              <span className="ml-1.5 font-semibold" style={{ color }}>
+                {count}
+              </span>
+            </div>
+          );
+        })}
       </div>
       {entries.length > LIMIT && (
-        <div className="text-[11px] text-gray-400 mt-2">
+        <div className="text-[11px] text-gray-400 mt-3">
           另有 {entries.length - LIMIT} 种未显示（按数量降序）
         </div>
       )}
@@ -367,12 +420,13 @@ function TagCloud({ field }: { field: FieldAnalysis }) {
   );
 }
 
-/** 空态骨架：框架在，数据来了自动刷 */
-function EmptySkeleton() {
+/** 空态引导 */
+function EmptyState() {
   return (
-    <div className="rounded-xl border border-dashed border-gray-200 bg-gray-50/50 p-6 text-center">
-      <div className="text-sm text-gray-400">暂无 QuickForm 收集数据</div>
-      <div className="text-xs text-gray-300 mt-1">学生提交后，数据大屏会自动填充</div>
+    <div className="rounded-2xl border border-dashed border-blue-100 bg-gradient-to-b from-blue-50/60 to-white p-10 text-center">
+      <div className="text-3xl mb-2">📊</div>
+      <div className="text-sm font-medium text-gray-600">暂无收集数据</div>
+      <div className="text-xs text-gray-400 mt-1.5">学生提交后，这里会自动点亮整块大屏</div>
     </div>
   );
 }
@@ -416,60 +470,66 @@ export default function QuickFormDashboard({ records, total }: DashboardProps) {
   const arrays = fields.filter((f) => f.kind === "array");
   const highCards = fields.filter((f) => f.kind === "high-cardinality");
 
+  /** 图表卡按展示顺序分配稳定色：数值→蓝、低基数→紫/青/绿循环、数组→橙、高基数→玫红 */
+  const chartCards: { kind: string; field: FieldAnalysis }[] = [
+    ...numerics.map((field) => ({ kind: "numeric", field })),
+    ...lowCards.map((field) => ({ kind: "low-cardinality", field })),
+    ...arrays.map((field) => ({ kind: "array", field })),
+    ...highCards.map((field) => ({ kind: "high-cardinality", field })),
+  ];
+
   if (records.length === 0) {
     return (
       <div className="space-y-4">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-          <MetricTile label="已提交" value="0" accent="text-gray-300" />
-          <MetricTile label="收集字段" value="0" accent="text-gray-300" />
-          <MetricTile label="最近提交" value="—" accent="text-gray-300" />
-          <MetricTile label="数据完整度" value="—" accent="text-gray-300" />
+        <div
+          className="flex rounded-2xl shadow-md"
+          style={{ background: "linear-gradient(120deg, #00338f 0%, #0052D9 55%, #2b7de8 100%)" }}
+        >
+          <HeroStat label="已提交" value="0" />
+          <HeroStat label="收集字段" value="0" divider />
+          <HeroStat label="最近提交" value="—" divider />
+          <HeroStat label="名单人数" value="0" divider />
         </div>
-        <EmptySkeleton />
+        <EmptyState />
       </div>
     );
   }
 
   return (
     <div className="space-y-4">
-      {/* 顶部 KPI 条 */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
-        <MetricTile label="已提交" value={String(total)} accent="text-[#0052D9]" />
-        <MetricTile label="收集字段" value={String(fields.length)} />
-        <MetricTile label="最近提交" value={lastSubmit} accent="text-gray-700" />
-        <MetricTile
-          label="名单人数"
-          value={String(identifiers[0]?.values.length ?? records.length)}
-        />
+      {/* 顶部 KPI 横幅（大屏感） */}
+      <div
+        className="flex flex-col sm:flex-row rounded-2xl shadow-md"
+        style={{ background: "linear-gradient(120deg, #00338f 0%, #0052D9 55%, #2b7de8 100%)" }}
+      >
+        <HeroStat label="已提交" value={String(total)} />
+        <HeroStat label="收集字段" value={String(fields.length)} divider />
+        <HeroStat label="名单人数" value={String(identifiers[0]?.values.length ?? records.length)} divider />
+        <HeroStat label="最近提交" value={lastSubmit} divider />
       </div>
 
       {/* 标识字段：名单墙 */}
-      {identifiers.map((f) => (
-        <NameRoster key={f.key} field={f} />
+      {identifiers.map((f, i) => (
+        <NameRoster key={f.key} field={f} color={pickColor(i)} />
       ))}
 
       {/* 提交时间线 */}
       {timeline.length > 0 && (
-        <Card title="提交时间线" meta={`${timeline.length} 个时段`}>
+        <Card title="提交时间线" meta={`${timeline.length} 个时段`} color="#00A870">
           <ColumnChart entries={timeline} color="#00A870" />
         </Card>
       )}
 
-      {/* 其余字段：两列栅格 */}
-      {numerics.length + lowCards.length + arrays.length + highCards.length > 0 && (
+      {/* 其余字段：两列栅格，逐卡循环取色 */}
+      {chartCards.length > 0 && (
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-          {numerics.map((f) => (
-            <NumericPanel key={f.key} field={f} />
-          ))}
-          {lowCards.map((f) => (
-            <BarList key={f.key} field={f} color="#0052D9" />
-          ))}
-          {arrays.map((f) => (
-            <BarList key={f.key} field={f} color="#7c5cff" />
-          ))}
-          {highCards.map((f) => (
-            <TagCloud key={f.key} field={f} />
-          ))}
+          {chartCards.map(({ kind, field }, i) => {
+            const color = pickColor(i + 1);
+            if (kind === "numeric") return <NumericPanel key={field.key} field={field} color={color} />;
+            if (kind === "low-cardinality") return <BarList key={field.key} field={field} color={color} />;
+            if (kind === "array") return <BarList key={field.key} field={field} color={color} />;
+            return <TagCloud key={field.key} field={field} color={color} />;
+          })}
         </div>
       )}
     </div>
