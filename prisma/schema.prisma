@@ -544,3 +544,30 @@ model ProjectLike {
   @@unique([projectId, studentId])
   @@index([projectId])
 }
+
+// ===== QuickForm 数据任务 =====
+// 规范依据：quickform-core-sdk-设计规范 §5。
+// 独立 qf_ 前缀命名空间，不与 QC 业务表建立外键，互不影响。
+// id 由 SDK（generateTaskId / generateRecordId）生成，故不设 @default。
+model QfTask {
+  id         String      @id
+  name       String
+  fieldsJson String      @map("fields_json") // FieldDef[] JSON；空数组 = 自由 JSON 提交
+  status     String      @default("open") // open / closed
+  createdAt  DateTime    @map("created_at") @default(now())
+  updatedAt  DateTime    @map("updated_at") @updatedAt
+  records    QfRecord[]
+
+  @@map("qf_tasks")
+}
+
+model QfRecord {
+  id          String   @id
+  taskId      String   @map("task_id")
+  dataJson    String   @map("data_json") // RecordData JSON
+  submittedAt DateTime @map("submitted_at") @default(now())
+  task        QfTask   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@map("qf_records")
+}
