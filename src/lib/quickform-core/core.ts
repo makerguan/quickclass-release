@@ -54,7 +54,13 @@ function rowToRecord(row: RecordRow): QfRecord {
   // 保留字段合并进 data（沿用 QuickForm 读取时合并 submitted_at 的行为）
   data[RESERVED_KEYS.recordId] = row.id;
   data[RESERVED_KEYS.submittedAt] = row.submittedAt;
-  return { recordId: row.id, taskId: row.taskId, data, submittedAt: row.submittedAt };
+  return {
+    recordId: row.id,
+    taskId: row.taskId,
+    data,
+    submittedAt: row.submittedAt,
+    ...(row.studentId ? { studentId: row.studentId } : {}),
+  };
 }
 
 function matchFilter(data: RecordData, filter?: Record<string, unknown>): boolean {
@@ -107,6 +113,7 @@ export class QuickFormCore {
       id: generateRecordId(),
       taskId: task.id,
       dataJson: JSON.stringify({ ...data, ...(meta?.ip ? { [RESERVED_KEYS.ip]: meta.ip } : {}) }),
+      studentId: meta?.studentId || null,
       submittedAt: nowIso(),
     };
     await this.store.saveRecord(row);
@@ -121,16 +128,19 @@ export class QuickFormCore {
     return rowToRecord(row);
   }
 
-  /** 读全部/按字段过滤/分页 */
+  /** 读全部/按字段过滤/分页；studentIds 传入时只返回这些学生的记录（班级过滤用） */
   async listRecords(
     taskId: string,
     filter?: Record<string, unknown>,
-    page?: PageOpts
+    page?: PageOpts,
+    studentIds?: string[]
   ): Promise<PagedRecords> {
     await this.getTaskOrThrow(taskId);
+    const idSet = studentIds ? new Set(studentIds) : null;
     const rows = await this.store.queryRecords(taskId, filter);
     const matched: QfRecord[] = [];
     for (const row of rows) {
+      if (idSet && (!row.studentId || !idSet.has(row.studentId))) continue;
       const rec = rowToRecord(row);
       if (matchFilter(rec.data, filter)) matched.push(rec);
     }

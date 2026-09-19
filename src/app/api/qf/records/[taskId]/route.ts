@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { verifyToken } from "@/lib/auth";
 import { getQfCore, getAuthToken, QfError } from "@/lib/quickform";
+import { prisma } from "@/lib/prisma";
 
-// GET /api/qf/records/{taskId}?page=1&pageSize=50&filter=<json>
-// 读取任务数据（老师端 / 数据大屏用）
+// GET /api/qf/records/{taskId}?page=1&pageSize=50&filter=<json>&classId=<id>
+// 读取任务数据（老师端 / 数据大屏用）；classId 传入时只返回该班学生的记录
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ taskId: string }> }
@@ -30,10 +31,18 @@ export async function GET(
       }
     }
 
-    const result = await getQfCore().listRecords(taskId, filter, {
-      page,
-      pageSize,
-    });
+    // 班级过滤：记录上存的是学生 id，班级由学生当前所属班级推导
+    const classId = sp.get("classId") || "";
+    let studentIds: string[] | undefined;
+    if (classId) {
+      const students = await prisma.user.findMany({
+        where: { classId },
+        select: { id: true },
+      });
+      studentIds = students.map((s) => s.id);
+    }
+
+    const result = await getQfCore().listRecords(taskId, filter, { page, pageSize }, studentIds);
     return NextResponse.json(result);
   } catch (error) {
     if (error instanceof QfError) {

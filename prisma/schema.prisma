@@ -575,9 +575,11 @@ model QfRecord {
   id          String   @id
   taskId      String   @map("task_id")
   dataJson    String   @map("data_json") // RecordData JSON
+  studentId   String?  @map("student_id") // 提交学生（User.id）；匿名提交为 null
   submittedAt DateTime @map("submitted_at") @default(now())
   task        QfTask   @relation(fields: [taskId], references: [id], onDelete: Cascade)
 
   @@index([taskId])
+  @@index([studentId])
   @@map("qf_records")
 }

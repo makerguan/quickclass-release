@@ -33,13 +33,14 @@ export function getQfCore(): QuickFormCore {
 export async function submitQfRecord(
   taskId: string,
   data: Record<string, unknown>,
-  replaceRecordId?: string | null
+  replaceRecordId?: string | null,
+  meta?: { ip?: string; studentId?: string }
 ): Promise<QfRecord> {
   const qfCore = getQfCore();
   if (replaceRecordId) {
     await getQfAdapter().deleteRecord(taskId, replaceRecordId);
   }
-  return qfCore.submit(taskId, data);
+  return qfCore.submit(taskId, data, meta);
 }
 
 /**

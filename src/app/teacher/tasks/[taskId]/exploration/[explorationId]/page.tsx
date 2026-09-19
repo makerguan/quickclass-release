@@ -228,7 +228,7 @@ export default function ExplorationAnalysisPage() {
         : (data.classIds?.[0] || "");
       setSelectedClassId(targetClassId);
 
-      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions`, {
+      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions${targetClassId ? `?classId=${targetClassId}` : ""}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (subRes.ok) {
@@ -250,7 +250,7 @@ export default function ExplorationAnalysisPage() {
       if (qfTaskId) {
         setQfLoading(true);
         try {
-          const qfRes = await fetch(`/api/qf/records/${qfTaskId}?page=1&pageSize=500`, {
+          const qfRes = await fetch(`/api/qf/records/${qfTaskId}?page=1&pageSize=500${targetClassId ? `&classId=${targetClassId}` : ""}`, {
             headers: { Authorization: `Bearer ${token}` },
           });
           if (qfRes.ok) {
@@ -285,13 +285,15 @@ export default function ExplorationAnalysisPage() {
    * 轻量刷新：只重拉会变动的数据（提交列表 + QuickForm 收集记录），
    * 不触发整页 loading，用于「切换页签」与「手动刷新」。
    */
-  const refreshLiveData = async () => {
+  const refreshLiveData = async (classOverride?: string) => {
     if (refreshing) return;
     setRefreshing(true);
     try {
       const token = localStorage.getItem("token");
+      // 班级：优先用调用方显式传入（切换班级时 state 还没更新，闭包里是旧值）
+      const cls = classOverride !== undefined ? classOverride : selectedClassId;
 
-      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions`, {
+      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions${cls ? `?classId=${cls}` : ""}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (subRes.ok) {
@@ -311,7 +313,7 @@ export default function ExplorationAnalysisPage() {
         }
       }
       if (tid) {
-        const qfRes = await fetch(`/api/qf/records/${tid}?page=1&pageSize=500`, {
+        const qfRes = await fetch(`/api/qf/records/${tid}?page=1&pageSize=500${cls ? `&classId=${cls}` : ""}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
         if (qfRes.ok) {
@@ -925,6 +927,8 @@ export default function ExplorationAnalysisPage() {
                     setAiReportVersions([]);
                     setAiVersionIndex(0);
                     fetchAiVersions(cid);
+                    // 提交列表 / QF 数据大屏 / 提交详情也按班级重新拉取（显式传新班级，避免闭包旧值）
+                    refreshLiveData(cid);
                   }}
                   className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
                 >

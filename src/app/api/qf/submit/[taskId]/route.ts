@@ -29,7 +29,7 @@ export async function POST(
     const record = await getQfCore().submit(
       taskId,
       data as Record<string, unknown>,
-      { ip: getClientIp(req) }
+      { ip: getClientIp(req), studentId: String(payload.userId) }
     );
 
     return NextResponse.json({

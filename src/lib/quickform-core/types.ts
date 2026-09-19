@@ -35,6 +35,8 @@ export type RecordData = Record<string, unknown>;
 export interface SubmitMeta {
   /** 客户端 IP，由 QC 路由层捕获传入，SDK 自动写入 _ip */
   ip?: string;
+  /** 提交学生（User.id）；匿名提交不传 */
+  studentId?: string;
 }
 
 /** 单条记录（读取时返回；data 内合并 _record_id / _submitted_at / _ip 保留字段） */
@@ -43,6 +45,8 @@ export interface QfRecord {
   taskId: string;
   data: RecordData;
   submittedAt: string;
+  /** 提交学生（User.id）；匿名/存量记录为 undefined */
+  studentId?: string;
 }
 
 /** 分页参数 */
@@ -73,6 +77,7 @@ export interface RecordRow {
   id: string;
   taskId: string;
   dataJson: string;     // RecordData JSON
+  studentId?: string | null; // 提交学生；匿名/存量记录为空
   submittedAt: string;
 }
 

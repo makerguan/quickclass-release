@@ -79,7 +79,7 @@ export async function writeCollectedAnswers(
   answers: Record<string, unknown>,
   opts?: {
     replaceRecordId?: string | null;
-    identity?: { studentName?: string; studentNo?: string };
+    identity?: { studentName?: string; studentNo?: string; studentId?: string };
   }
 ): Promise<WriteAnswersResult> {
   const data: Record<string, unknown> = {};
@@ -109,7 +109,9 @@ export async function writeCollectedAnswers(
   }
 
   try {
-    const rec = await submitQfRecord(qfTaskId, data, opts?.replaceRecordId);
+    const rec = await submitQfRecord(qfTaskId, data, opts?.replaceRecordId, {
+      studentId: opts?.identity?.studentId || undefined,
+    });
     return { recordId: rec.recordId };
   } catch (e) {
     return { error: errText(e) };

@@ -26,8 +26,22 @@ export async function GET(
       return new Response("无权限", { status: 403 });
     }
 
+    // 班级过滤（可选）：只返回所选班级学生的提交
+    const classId = req.nextUrl.searchParams.get("classId") || "";
+    let studentIdFilter: string[] | undefined;
+    if (classId) {
+      const students = await prisma.user.findMany({
+        where: { classId },
+        select: { id: true },
+      });
+      studentIdFilter = students.map((s) => s.id);
+    }
+
     const submissions = await prisma.explorationSubmission.findMany({
-      where: { explorationId: id },
+      where: {
+        explorationId: id,
+        ...(studentIdFilter ? { studentId: { in: studentIdFilter } } : {}),
+      },
       orderBy: { submittedAt: "desc" },
       include: { ExplorationActionLog: { orderBy: { timestamp: "asc" } } },
     });

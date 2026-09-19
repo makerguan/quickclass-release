@@ -46,6 +46,7 @@ function toRecordRow(m: QfRecordRow): RecordRow {
     id: m.id,
     taskId: m.taskId,
     dataJson: m.dataJson,
+    studentId: m.studentId,
     submittedAt: m.submittedAt.toISOString(),
   };
 }
@@ -119,6 +120,7 @@ export class PrismaAdapter implements StorageAdapter {
         id: record.id,
         taskId: record.taskId,
         dataJson: record.dataJson,
+        studentId: record.studentId || null,
         submittedAt: new Date(record.submittedAt),
       },
     });
