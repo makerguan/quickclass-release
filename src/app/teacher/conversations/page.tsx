@@ -454,11 +454,6 @@ export default function TeacherConversationsPage() {
     }
   };
 
-  const formatTime = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-  };
-
   // 按学生分组统计
   const studentStats: Record<string, { count: number; msgCount: number }> = {};
   for (const conv of conversations) {
@@ -705,7 +700,6 @@ export default function TeacherConversationsPage() {
                             </div>
                             <div className="flex items-center gap-2 mt-0.5">
                               <span className="text-xs text-[#63666F]">{conv.title}</span>
-                              <span className="text-xs text-gray-400">{formatTime(conv.updatedAt)}</span>
                               <span className="text-xs text-gray-400">{msgCount} 条消息</span>
                             </div>
                           </div>
@@ -756,7 +750,6 @@ export default function TeacherConversationsPage() {
                                 <span className="text-xs font-medium text-[#1A1A1A]">
                                   {msg.role === "user" ? conv.user.name : "AI 助手"}
                                 </span>
-                                <span className="text-xs text-gray-400">{formatTime(msg.createdAt)}</span>
                               </div>
                               <div className="text-sm text-[#333] break-words bg-[#F7F8FA] rounded-lg p-3 overflow-hidden w-full">
                                 {msg.role === "assistant" ? (

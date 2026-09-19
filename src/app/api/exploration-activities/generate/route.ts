@@ -1,8 +1,9 @@
 import { NextRequest } from "next/server";
 import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
+import { getSubProjectContext } from "@/lib/exploration/context";
 
-// POST: 根据提示词流式生成互动 HTML 网页
+// POST: 多轮对话流式生成/修改互动探究 HTML 网页
 export async function POST(req: NextRequest) {
   try {
     const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -10,84 +11,36 @@ export async function POST(req: NextRequest) {
     const payload = await verifyToken(token);
     if (!payload) return new Response("登录已过期", { status: 401 });
 
-    const { prompt, enableSubmission, submissionCount } = await req.json();
-    if (!prompt?.trim()) {
+    const { subProjectId, initialPrompt, currentHtml, instruction } = await req.json();
+    if (!subProjectId) {
+      return new Response("缺少 subProjectId", { status: 400 });
+    }
+
+    // 课堂背景（作为首轮设计意图的上下文）
+    const ctx = await getSubProjectContext(subProjectId);
+    if (!ctx) {
+      return new Response("未找到课堂", { status: 404 });
+    }
+    const background = `【课堂背景信息】\n课堂主题：${ctx.taskTitle}\n课堂目标：${ctx.taskDesc}\n知识库内容：${ctx.knowledgeContent}`;
+
+    // 首轮 vs 多轮：currentHtml 是否为空
+    const isFirstRound = !currentHtml?.trim();
+    if (isFirstRound && !initialPrompt?.trim()) {
       return new Response("提示词不能为空", { status: 400 });
     }
 
-    // 构建提交项目提示
-    let submissionInstruction = "";
-    if (enableSubmission) {
-      submissionInstruction = `
+    // 多轮 baseline：initialPrompt 可能为空（纯导入 HTML 场景），兜底为增量修改语义
+    const baseline = initialPrompt?.trim()
+      ? `${background}\n\n${initialPrompt.trim()}`
+      : "以下是教师导入的现有 HTML 页面，请严格基于它按后续指令增量修改，不要重新设计或套用探究模板。";
 
-【重要】启用提交功能 - 网页必须有提交成绩按钮
-
-## 网页要求：
-1. 设计一个有趣的互动学习环节（可以是游戏、模拟、练习等）
-2. 互动过程中要记录学生的得分、完成状态等数据
-3. 在网页右下角必须有一个红色的"提交成绩"按钮
-
-## 提交按钮（必须出现在右下角）：
-<button id="submitBtn" onclick="submitResults()">提交成绩</button>
-<style>
-#submitBtn {position:fixed; bottom:30px; right:30px; padding:15px 30px; background:#E34D59; color:white; border:none; border-radius:25px; font-size:18px; cursor:pointer; box-shadow:0 4px 15px rgba(227,77,89,0.4); z-index:1000;}
-</style>
-
-## 提交逻辑（必须包含此 JavaScript）：
-<script>
-function submitResults() {
-  if (!confirm("确认提交成绩？提交后无法修改。")) return;
-  
-  // 计算本次互动的得分和结果
-  const score = window.gameScore || 0; // 从网页游戏中获取分数
-  const maxScore = 100;
-  const completed = window.gameCompleted || true;
-  
-  const submitData = {
-    score: score,
-    maxScore: maxScore,
-    completed: completed,
-    completedAt: new Date().toISOString(),
-    // 可以包含更多互动数据，如：闯关数、用时、游戏级别等
-    extraData: {
-      level: window.gameLevel || 1,
-      timeSpent: window.timeSpent || 0,
-      attempts: window.attempts || 1
-    }
-  };
-  
-  document.getElementById("submitBtn").innerHTML = "提交中...";
-  document.getElementById("submitBtn").disabled = true;
-  
-  fetch("/api/exploration-activities/" + window.__EXPLORATION_ID__ + "/submit", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": "Bearer " + (localStorage.getItem("token") || "") },
-    body: JSON.stringify(submitData)
-  }).then(function(response) {
-    if (response.ok) {
-      response.json().then(function(result) {
-        alert("提交成功！您的得分：" + result.score + " / " + result.maxScore);
-        document.getElementById("submitBtn").innerHTML = "已提交";
-      });
-    } else {
-      alert("提交失败，请重试");
-      document.getElementById("submitBtn").innerHTML = "重新提交";
-      document.getElementById("submitBtn").disabled = false;
-    }
-  }).catch(function(e) {
-    alert("提交失败：" + e.message);
-    document.getElementById("submitBtn").innerHTML = "重新提交";
-    document.getElementById("submitBtn").disabled = false;
-  });
-}
-</script>
-
-重要提醒：
-- 网页要有趣味性，设计学生喜欢的互动环节
-- 必须有得分机制，存储到 window.gameScore 变量
-- 提交按钮必须在右下角，红色醒目
-- 点击提交按钮后，会将得分数据发送到服务器`;
-    }
+    const messages = isFirstRound
+      ? [{ role: "user", content: `${background}\n\n${initialPrompt.trim()}` }]
+      : [
+          { role: "user", content: baseline },
+          { role: "assistant", content: currentHtml },
+          { role: "user", content: instruction?.trim() || "请优化这个页面" },
+        ];
 
     const { chatModel } = await createDashScopeClient();
     const { streamText } = await import("ai");
@@ -130,7 +83,11 @@ function submitResults() {
 7. 视觉反馈要服务于理解：参数变化时图形实时变化、关键信息高亮、对比要素并排
 8. 响应式设计，适配电脑和 Pad
 9. 可使用动画，但服务于"展示变化过程"而非装饰
-${submissionInstruction}
+
+【多轮修改规则】（当对话历史中已有一版 HTML 时适用）
+1. 你在"修改"上一版 HTML，而非重新设计：只改用户明确要求的部分，其余结构、配色、交互、文案保持原样
+2. 每次必须输出完整、可运行的 HTML（不是片段、不是 diff、不要 markdown 包裹）
+3. 除非用户明确要求重做，否则保留上一版整体布局与视觉风格
 
 【页面结构建议】
 - 顶部：探究主题 + 1-2句引导语（这是什么 / 要探索什么）
@@ -143,7 +100,7 @@ ${submissionInstruction}
     const { textStream } = await streamText({
       model: chatModel,
       system: systemPrompt,
-      prompt: prompt.trim(),
+      messages,
       // 统一输出上限 64K：探究 HTML 整页输出远超默认 4096，不传必截断
       maxOutputTokens: 65536,
     });
@@ -175,4 +132,3 @@ ${submissionInstruction}
     return new Response(e.message || "生成失败", { status: 500 });
   }
 }
-

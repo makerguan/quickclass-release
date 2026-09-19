@@ -1,7 +1,7 @@
 import { NextRequest } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
+import { getSubProjectContext } from "@/lib/exploration/context";
 
 // POST: 根据课堂信息自动生成互动网页设计提示词
 export async function POST(req: NextRequest) {
@@ -14,53 +14,25 @@ export async function POST(req: NextRequest) {
     const { subProjectId, teacherIdea } = await req.json();
     if (!subProjectId) return new Response("缺少 subProjectId", { status: 400 });
 
-    const sp = await prisma.subProject.findUnique({
-      where: { id: subProjectId },
-      include: {
-        task: {
-          select: {
-            title: true,
-            description: true,
-            objectives: true,
-            knowledgeBase: true,
-            knowledgeBaseIds: true,
-          },
-        },
-      },
-    });
-    if (!sp || sp.task.title === undefined) {
+    const ctx = await getSubProjectContext(subProjectId);
+    if (!ctx) {
       return new Response("未找到课堂", { status: 404 });
-    }
-
-    // 收集知识库内容
-    let knowledgeContent = "";
-    if (sp.task.knowledgeBaseIds) {
-      try {
-        const kbIds = JSON.parse(sp.task.knowledgeBaseIds) as string[];
-        if (kbIds.length > 0) {
-          const kbs = await prisma.knowledgeBase.findMany({
-            where: { id: { in: kbIds } },
-            select: { content: true },
-          });
-          knowledgeContent = kbs.map((kb) => kb.content).join("\n\n");
-        }
-      } catch { /* ignore */ }
     }
 
     const { chatModel } = await createDashScopeClient();
     const { streamText } = await import("ai");
 
-    // 教师在输入框里写的想法是最高优先级主题；课堂信息仅作背景参考
+    // 提示词编辑区已有用户输入 → 优化已有提示词；为空 → 按课堂背景从零设计
     const ideaSection = teacherIdea?.trim()
-      ? `【教师的想法（最高优先级，必须以此为核心主题展开设计）】\n${teacherIdea.trim()}`
+      ? `【教师已写好的提示词（请只优化这段提示词本身：润色文字、理顺结构、修正表述，严禁新增任何用户未提出的探究主题、可视化方式、交互机制或引导性问题，严禁扩充内容，严禁偏离原意，严禁推倒重写）】\n${teacherIdea.trim()}`
       : "";
-    const backgroundSection = `【课堂背景信息（仅作参考，与教师想法冲突时以教师想法为准）】\n课堂主题：${sp.task.title}\n课堂目标：${sp.task.description || sp.task.objectives || "无"}\n知识库内容：${knowledgeContent || "无"}`;
+    const backgroundSection = `【课堂背景信息（仅作参考，与教师已有提示词冲突时以教师已有提示词为准）】\n课堂主题：${ctx.taskTitle}\n课堂目标：${ctx.taskDesc}\n知识库内容：${ctx.knowledgeContent}`;
 
     const { textStream } = await streamText({
       model: chatModel,
       system: `你是一位专业的互动探究学习设计师。根据提供的课堂信息，设计一个让学生"通过动手探索来理解知识"的网页探究活动。
 
-【优先级规则】若提供【教师的想法】，必须严格围绕其主题展开，不得偏题到其他学科或领域；课堂背景仅作辅助参考。
+【优先级规则】若提供【教师已写好的提示词】，说明教师希望对这段提示词本身做润色优化。你只能做文字润色、结构理顺、表述修正，使其更通顺、清晰、专业；严禁新增任何用户未提出的探究主题、可视化方式、交互机制、引导性问题等要素，严禁扩充内容，严禁借课堂背景擅自补充新内容，严禁偏离原意，严禁推倒重写。课堂背景仅供参考，优化时不得据此添加新内容。
 
 【核心理念】互动探究≠做题闯关，而是让学生通过操作、观察、对比来发现规律、形成理解。
 
