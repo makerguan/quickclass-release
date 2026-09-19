@@ -130,7 +130,14 @@ if not exist "prisma\\dev.db" (\r
     echo [3/5] 正在初始化数据库...\r
     call npx prisma db push --skip-generate --accept-data-loss\r
 ) else (\r
-    echo [3/5] 数据库已就绪\r
+    echo [3/5] 正在同步数据库结构（无损升级，不影响现有数据）...\r
+    call npx prisma db push --skip-generate\r
+    if errorlevel 1 (\r
+        echo [警告] 数据库结构同步未完成，请将上方错误信息截图反馈给开发者\r
+        pause\r
+        exit /b 1\r
+    )\r
+    echo   数据库结构已就绪\r
 )\r
 \r
 if not exist ".next\\BUILD_ID" (\r
@@ -226,12 +233,14 @@ fi
 echo "[2/5] 正在生成 Prisma 客户端..."
 npx prisma generate
 
-# 3. 初始化数据库（空库）
+# 3. 初始化/同步数据库（空库建表；已有库做无损结构同步，升级自动补新表新列）
 if [ ! -f "prisma/dev.db" ]; then
     echo "[3/5] 正在初始化数据库..."
     npx prisma db push --skip-generate --accept-data-loss
 else
-    echo "[3/5] 数据库已就绪"
+    echo "[3/5] 正在同步数据库结构（无损升级，不影响现有数据）..."
+    npx prisma db push --skip-generate || { echo "[警告] 数据库结构同步未完成，请将上方错误信息截图反馈给开发者"; exit 1; }
+    echo "  数据库结构已就绪"
 fi
 
 # 4. 构建生产版本
