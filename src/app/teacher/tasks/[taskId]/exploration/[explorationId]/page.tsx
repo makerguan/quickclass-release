@@ -7,6 +7,7 @@ import { ArrowLeftIcon, ChartBarIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import QuickFormDashboard, { type QfRecordItem } from "@/components/exploration/QuickFormDashboard";
+import QuickFormRecordList from "@/components/exploration/QuickFormRecordList";
 
 interface StudentRecord {
   studentId: string;
@@ -505,6 +506,14 @@ export default function ExplorationAnalysisPage() {
 
   const renderSubmissions = () => {
     if (loading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+
+    // 双轨：探究绑定了 QuickForm 收集任务 → 展示收集数据明细；
+    // 否则回退原有的行为数据（ExplorationSubmission）展示，不影响既有探究
+    if (qfTaskId) {
+      if (qfLoading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+      return <QuickFormRecordList records={qfRecords} total={qfTotal} />;
+    }
+
     if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交记录</div>;
 
     const toggleExpand = (id: string) => {
