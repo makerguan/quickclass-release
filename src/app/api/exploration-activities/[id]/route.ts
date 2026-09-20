@@ -4,6 +4,7 @@ import { verifyToken } from "@/lib/auth";
 import { injectSubmitFunctionality, removeSubmitFunctionality } from "@/lib/prompts/exploration-submit";
 import type { SubmitContext } from "@/lib/prompts/exploration-submit";
 import { removeAiCompanion, upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
+import { ensureQfTaskForExploration } from "@/lib/exploration/qf-binding";
 
 // GET: 获取单个探究详情（含 aiCompanionPrompt）
 export async function GET(
@@ -92,6 +93,7 @@ export async function PUT(
     const existingSubs = await prisma.explorationSubmission.count({ where: { explorationId: id } });
     const updateData: Record<string, unknown> = {};
     let injectWarnings: string[] | undefined;
+    let qfWarnings: string[] | undefined;
     let htmlContentChanged = false;
 
     // 基础字段
@@ -121,7 +123,20 @@ export async function PUT(
       htmlContentChanged = htmlContent !== undefined && htmlContent !== item.htmlContent;
 
       if (enableSubmission === true) {
-        // 启用提交 → 注入提交功能
+        // ① 绑定 / 复用 QuickForm 收集任务（首次创建，之后复用；改名只同步任务名）
+        //    绑定失败不阻断注入：老师照常能开提交，只是答案不入库（会提示）
+        const qf = await ensureQfTaskForExploration({
+          currentTaskId: item.qfTaskId ?? null,
+          title: (updateData.title as string) || item.title || "",
+        });
+        if (qf.error) {
+          qfWarnings = ["QuickForm 收集任务准备失败：" + qf.error];
+        }
+        if (qf.taskId) {
+          updateData.qfTaskId = qf.taskId;
+        }
+
+        // ② 注入提交功能 + 采集块
         const context: SubmitContext = {
           explorationId: id,
           taskTitle: item.SubProject.task.title || "",
@@ -175,6 +190,9 @@ export async function PUT(
     const response: Record<string, unknown> = { ...updated };
     if (injectWarnings && injectWarnings.length > 0) {
       response._injectWarnings = injectWarnings;
+    }
+    if (qfWarnings && qfWarnings.length > 0) {
+      response._qfWarnings = qfWarnings;
     }
 
     return NextResponse.json(response);

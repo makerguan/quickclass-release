@@ -158,6 +158,45 @@ function extractHtml(text: string): string {
   return t;
 }
 
+/** 从 AI 返回的可交互元素（形状不定）中稳健提取「名称」，避免出现一串「?」 */
+function pickElementName(el: unknown): string {
+  if (el === null || el === undefined) return "页面元素";
+  if (typeof el !== "object") {
+    const s = String(el).trim();
+    return s || "页面元素";
+  }
+  const obj = el as Record<string, unknown>;
+  const prefer = ["element", "name", "label", "title", "text", "description", "desc", "type"];
+  for (const k of prefer) {
+    const v = obj[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  for (const k of Object.keys(obj)) {
+    if (k.startsWith("_")) continue;
+    const v = obj[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "页面元素";
+}
+
+/** 提取「说明」，避开与名称重复 */
+function pickElementDesc(el: unknown): string {
+  if (el === null || typeof el !== "object") return "";
+  const obj = el as Record<string, unknown>;
+  const name = pickElementName(el);
+  const prefer = ["description", "desc", "note", "detail", "purpose"];
+  for (const k of prefer) {
+    const v = obj[k];
+    if (typeof v === "string" && v.trim() && v.trim() !== name) return v.trim();
+  }
+  for (const k of Object.keys(obj)) {
+    if (k.startsWith("_")) continue;
+    const v = obj[k];
+    if (typeof v === "string" && v.trim() && v.trim() !== name) return v.trim();
+  }
+  return "";
+}
+
 export default function TeacherTasksPage() {
   const router = useRouter();
   const [tasks, setTasks] = useState<LearningTask[]>([]);
@@ -2914,6 +2953,18 @@ export default function TeacherTasksPage() {
                             {getStatusTag(task.status)}
                             {task.grade && <Tag theme="default" variant="light" size="small">{task.grade}</Tag>}
                             {task.subject && <Tag theme="primary" variant="light" size="small">{task.subject}</Tag>}
+                            {!isExpanded && (() => {
+                              const expCount = task.subProjects?.reduce(
+                                (n, sp) => n + ((sp as any).explorationActivities?.length ?? 0),
+                                0
+                              ) ?? 0;
+                              if (expCount <= 0) return null;
+                              return (
+                                <Tag theme="warning" variant="light" size="small">
+                                  探究 {expCount}
+                                </Tag>
+                              );
+                            })()}
                           </div>
                           <div className="text-xs text-[#63666F]">
                             {task.grade && `${task.grade} · `}{task.subject && `${task.subject} · `}更新于 {new Date(task.createdAt).toLocaleDateString()}
@@ -5059,8 +5110,8 @@ export default function TeacherTasksPage() {
                   <div className="text-xs font-medium text-gray-500 mb-2">🔗 页面中的互动元素</div>
                   <div className="space-y-1 max-h-48 overflow-y-auto border border-gray-100 rounded p-2">
                     {previewAnalysis.interactiveElements.slice(0, 20).map((el: any, i: number) => {
-                      const name = typeof el === "object" ? (el.element || el.name || el.description || "?") : String(el);
-                      const desc = typeof el === "object" ? (el.description || "") : "";
+                      const name = pickElementName(el);
+                      const desc = pickElementDesc(el);
                       return (
                         <div key={i} className="text-xs text-gray-600 flex gap-2 py-0.5">
                           <span className="text-blue-400 shrink-0">•</span>

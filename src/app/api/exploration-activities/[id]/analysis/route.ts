@@ -100,6 +100,7 @@ export async function POST(
 请生成 2-3 条简洁的教学改进建议，用中文回复。`;
     }
 
+    const { chatModel } = await createDashScopeClient();
     const { text: advice } = await generateText({
       model: chatModel,
       system: "你是一个中学教师教学助手，擅长根据学情数据给出教学建议。",

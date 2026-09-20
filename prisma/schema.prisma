@@ -156,6 +156,13 @@ model ExplorationActivity {
   teachingAdvice        String?
   analysisPrompt        String?
   designPrompt          String?
+  /// QuickForm 收集任务 id（qf_tasks.id）。开启提交时创建并绑定，之后每次保存复用；
+  /// 探究改名只同步任务名，不换 id，保证历史数据连续。为空 = 尚未接入 QF 收集。
+  qfTaskId              String?
+  /// 「AI 重排数据大屏」生成的图表配置（JSON 字符串，课级缓存）。
+  /// 只存图表配置（选哪些字段、用什么图），**不存任何原始学生数据**；前端按配置渲染。
+  /// 为空 = 使用默认的字段自动映射大屏。
+  dashboardConfig       String?
   SubProject            SubProject              @relation(fields: [subProjectId], references: [id], onDelete: Cascade)
   ExplorationSubmission ExplorationSubmission[]
   AiCompanionMessage    AiCompanionMessage[]
@@ -185,6 +192,9 @@ model ExplorationSubmission {
   status               String                 @default("submitted")
   submittedAt          DateTime               @default(now())
   gradedAt             DateTime?
+  /// 该次提交在 QuickForm 侧对应的记录 id（qf_records.id）。
+  /// 学生重提交时先删旧记录再写新记录，靠它保证「一人一条」，不重复计数。
+  qfRecordId           String?
   ExplorationActionLog ExplorationActionLog[]
   ExplorationActivity  ExplorationActivity    @relation(fields: [explorationId], references: [id], onDelete: Cascade)
 
@@ -543,4 +553,33 @@ model ProjectLike {
   User       User         @relation(fields: [studentId], references: [id], onDelete: Cascade)
   @@unique([projectId, studentId])
   @@index([projectId])
+}
+
+// ===== QuickForm 数据任务 =====
+// 规范依据：quickform-core-sdk-设计规范 §5。
+// 独立 qf_ 前缀命名空间，不与 QC 业务表建立外键，互不影响。
+// id 由 SDK（generateTaskId / generateRecordId）生成，故不设 @default。
+model QfTask {
+  id         String      @id
+  name       String
+  fieldsJson String      @map("fields_json") // FieldDef[] JSON；空数组 = 自由 JSON 提交
+  status     String      @default("open") // open / closed
+  createdAt  DateTime    @map("created_at") @default(now())
+  updatedAt  DateTime    @map("updated_at") @updatedAt
+  records    QfRecord[]
+
+  @@map("qf_tasks")
+}
+
+model QfRecord {
+  id          String   @id
+  taskId      String   @map("task_id")
+  dataJson    String   @map("data_json") // RecordData JSON
+  studentId   String?  @map("student_id") // 提交学生（User.id）；匿名提交为 null
+  submittedAt DateTime @map("submitted_at") @default(now())
+  task        QfTask   @relation(fields: [taskId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([studentId])
+  @@map("qf_records")
 }

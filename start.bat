@@ -153,15 +153,30 @@ echo [3/5] 正在初始化数据库：!DB_PATH!
 call prisma db push --skip-generate --accept-data-loss
 goto :after_db
 :db_ready
-echo [3/5] 数据库已就绪
+echo [3/5] 正在同步数据库结构（无损升级，不影响现有数据）...
+call prisma db push --skip-generate
+if errorlevel 1 echo   [警告] 数据库结构同步未完成，请将上方错误信息截图反馈给开发者
+echo   数据库结构已就绪
 :after_db
 
-if exist ".next\BUILD_ID" goto :build_ok
+rem 构建可用性：BUILD_ID 存在且 .next\qc-version 与 public\latest.json 版本一致
+rem （源码 ZIP 覆盖解压到旧目录时 .next 会残留旧产物，按版本比对强制重建）
+set "QC_NEED_BUILD=1"
+if exist ".next\BUILD_ID" (
+    node -e "const fs=require('fs');const want=(()=>{try{return String(JSON.parse(fs.readFileSync('public/latest.json','utf8')).version||'')}catch(e){return ''}})();let have='';try{have=fs.readFileSync('.next/qc-version','utf8').trim()}catch(e){};process.exit(want&&have===want?0:1)"
+    if not errorlevel 1 set "QC_NEED_BUILD=0"
+)
+if "%QC_NEED_BUILD%"=="0" goto :build_ok
 echo [4/5] 正在构建生产版本...
 if not exist "%DB_PATH%" goto :do_build
 for %%z in ("%DB_PATH%") do if not "%%~zz"=="0" call prisma db push --skip-generate
 :do_build
 call npm run build
+if errorlevel 1 (
+    echo   [警告] 构建未完成，将以旧版本运行；请将上方错误信息截图反馈给开发者
+) else (
+    node -e "const fs=require('fs');try{fs.writeFileSync('.next/qc-version',String(JSON.parse(fs.readFileSync('public/latest.json','utf8')).version||''))}catch(e){}"
+)
 goto :after_build
 :build_ok
 echo [4/5] 生产版本已就绪

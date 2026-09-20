@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
+import { injectSubmitFunctionality } from "@/lib/prompts/exploration-submit";
+import type { SubmitContext } from "@/lib/prompts/exploration-submit";
+import { ensureQfTaskForExploration } from "@/lib/exploration/qf-binding";
 
 export async function GET(req: NextRequest) {
   try {
@@ -93,7 +96,44 @@ export async function POST(req: NextRequest) {
     let savedItem = item;
     // enableAiCompanion 标志位已在上面 create 时写入，无需额外注入
 
-    return NextResponse.json(savedItem);
+    // 新建时若已开启提交：与 PUT 路径保持一致，绑定 / 复用 QuickForm 收集任务 + 注入采集块。
+    // 否则「新建即开提交」的探究永远不会有 qfTaskId → 数据大屏不显示、答案不入 QF 库。
+    let injectWarnings: string[] | undefined;
+    let qfWarnings: string[] | undefined;
+    if (enableSubmission === true) {
+      const qf = await ensureQfTaskForExploration({
+        currentTaskId: null,
+        title: title.trim(),
+      });
+      if (qf.error) {
+        qfWarnings = ["QuickForm 收集任务准备失败：" + qf.error];
+      }
+
+      const context: SubmitContext = {
+        explorationId: item.id,
+        taskTitle: sp.task.title || "",
+      };
+      const result = injectSubmitFunctionality(item.htmlContent || "", context);
+      injectWarnings = result.warnings;
+
+      const postUpdate: Record<string, unknown> = { htmlContent: result.html };
+      if (qf.taskId) postUpdate.qfTaskId = qf.taskId;
+
+      savedItem = await prisma.explorationActivity.update({
+        where: { id: item.id },
+        data: postUpdate as any,
+      });
+    }
+
+    const responseBody: Record<string, unknown> = { ...savedItem };
+    if (injectWarnings && injectWarnings.length > 0) {
+      responseBody._injectWarnings = injectWarnings;
+    }
+    if (qfWarnings && qfWarnings.length > 0) {
+      responseBody._qfWarnings = qfWarnings;
+    }
+
+    return NextResponse.json(responseBody);
   } catch (error) {
     console.error(error);
     return new Response("创建失败", { status: 500 });

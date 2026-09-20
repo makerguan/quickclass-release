@@ -3,9 +3,13 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { Button, Tag, Select, MessagePlugin, Dialog } from "tdesign-react";
-import { ArrowLeftIcon, ChartBarIcon } from "tdesign-icons-react";
+import { ArrowLeftIcon, ChartBarIcon, RefreshIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
+import QuickFormDashboard, { type QfRecordItem } from "@/components/exploration/QuickFormDashboard";
+import QuickFormRecordList from "@/components/exploration/QuickFormRecordList";
+import QuickFormAiDashboard from "@/components/exploration/QuickFormAiDashboard";
+import type { AiDashboardConfig } from "@/lib/prompts/dashboard-config";
 
 interface StudentRecord {
   studentId: string;
@@ -104,6 +108,17 @@ function InsightContent({ content, className = "" }: { content: string; classNam
 
 type TabKey = "statistics" | "submissions" | "ai";
 
+/** 解析落库的 AI 大屏配置；非法或为空 → null（回退默认大屏，不白屏） */
+function parseDashboardConfig(raw: unknown): AiDashboardConfig | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === "object" ? (o as AiDashboardConfig) : null;
+  } catch {
+    return null;
+  }
+}
+
 export default function ExplorationAnalysisPage() {
   const router = useRouter();
   const params = useParams();
@@ -117,6 +132,22 @@ export default function ExplorationAnalysisPage() {
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [selectedClassId, setSelectedClassId] = useState("");
   const [allClasses, setAllClasses] = useState<{ id: string; name: string }[]>([]);
+
+  // QuickForm 数据大屏状态
+  const [qfTaskId, setQfTaskId] = useState<string | null>(null);
+  const [qfRecords, setQfRecords] = useState<QfRecordItem[]>([]);
+  const [qfTotal, setQfTotal] = useState(0);
+  const [qfLoading, setQfLoading] = useState(false);
+
+  // 「AI 重排」数据大屏状态（配置落库在 exploration.dashboardConfig）
+  const [aiDashConfig, setAiDashConfig] = useState<AiDashboardConfig | null>(null);
+  const [aiDashLoading, setAiDashLoading] = useState(false);
+  const [aiDashError, setAiDashError] = useState("");
+  const [aiDashInstruction, setAiDashInstruction] = useState("");
+
+  // 实时刷新（页签切换 / 手动刷新）
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState("");
 
   // AI 分析报告状态
   const [templates, setTemplates] = useState<AnalysisTemplate[]>([]);
@@ -197,12 +228,44 @@ export default function ExplorationAnalysisPage() {
         : (data.classIds?.[0] || "");
       setSelectedClassId(targetClassId);
 
-      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions`, {
+      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions${targetClassId ? `?classId=${targetClassId}` : ""}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (subRes.ok) {
         const subData = await subRes.json();
         setSubmissions(Array.isArray(subData) ? subData : subData.submissions || []);
+      }
+
+      // 拉取 QuickForm 收集数据（数据大屏）
+      const detailRes = await fetch(`/api/exploration-activities/${explorationId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      let qfTaskId: string | null = null;
+      if (detailRes.ok) {
+        const detail = await detailRes.json();
+        qfTaskId = detail.qfTaskId || null;
+        setQfTaskId(qfTaskId);
+        setAiDashConfig(parseDashboardConfig(detail.dashboardConfig));
+      }
+      if (qfTaskId) {
+        setQfLoading(true);
+        try {
+          const qfRes = await fetch(`/api/qf/records/${qfTaskId}?page=1&pageSize=500${targetClassId ? `&classId=${targetClassId}` : ""}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (qfRes.ok) {
+            const qfData = await qfRes.json();
+            setQfRecords(Array.isArray(qfData.items) ? qfData.items : []);
+            setQfTotal(typeof qfData.total === "number" ? qfData.total : 0);
+          }
+        } catch {
+          // QF 数据拉取失败不影响其它标签展示
+        } finally {
+          setQfLoading(false);
+        }
+      } else {
+        setQfRecords([]);
+        setQfTotal(0);
       }
 
       // 加载已保存的 AI 报告版本
@@ -214,6 +277,108 @@ export default function ExplorationAnalysisPage() {
       setError(e.message || "获取数据失败");
     } finally {
       setLoading(false);
+      setLastUpdated(new Date().toLocaleTimeString());
+    }
+  };
+
+  /**
+   * 轻量刷新：只重拉会变动的数据（提交列表 + QuickForm 收集记录），
+   * 不触发整页 loading，用于「切换页签」与「手动刷新」。
+   */
+  const refreshLiveData = async (classOverride?: string) => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const token = localStorage.getItem("token");
+      // 班级：优先用调用方显式传入（切换班级时 state 还没更新，闭包里是旧值）
+      const cls = classOverride !== undefined ? classOverride : selectedClassId;
+
+      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions${cls ? `?classId=${cls}` : ""}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (subRes.ok) {
+        const subData = await subRes.json();
+        setSubmissions(Array.isArray(subData) ? subData : subData.submissions || []);
+      }
+
+      let tid = qfTaskId;
+      if (!tid) {
+        const detailRes = await fetch(`/api/exploration-activities/${explorationId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (detailRes.ok) {
+          const detail = await detailRes.json();
+          tid = detail.qfTaskId || null;
+          setQfTaskId(tid);
+        }
+      }
+      if (tid) {
+        const qfRes = await fetch(`/api/qf/records/${tid}?page=1&pageSize=500${cls ? `&classId=${cls}` : ""}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (qfRes.ok) {
+          const qfData = await qfRes.json();
+          setQfRecords(Array.isArray(qfData.items) ? qfData.items : []);
+          setQfTotal(typeof qfData.total === "number" ? qfData.total : 0);
+        }
+      }
+
+      setLastUpdated(new Date().toLocaleTimeString());
+    } catch {
+      /* 静默失败：刷新出错不影响已有展示 */
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  /**
+   * 「AI 重排大屏」：把字段摘要交给 AI，产出**图表配置 JSON** 并落库缓存；
+   * 前端只按配置渲染图表（AI 不产出 HTML，避免 XSS）。老师手动触发、低频。
+   */
+  const handleGenerateAiDashboard = async () => {
+    if (aiDashLoading) return;
+    setAiDashLoading(true);
+    setAiDashError("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/exploration-activities/${explorationId}/dashboard-config`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ instruction: aiDashInstruction }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.config) {
+        setAiDashError(data?.message || "生成失败，请重试。");
+        return;
+      }
+      setAiDashConfig(data.config as AiDashboardConfig);
+      MessagePlugin.success("已按 AI 配置重排大屏");
+    } catch {
+      setAiDashError("网络异常，生成失败。");
+    } finally {
+      setAiDashLoading(false);
+    }
+  };
+
+  /** 恢复默认大屏：清空落库配置 */
+  const handleResetAiDashboard = async () => {
+    if (aiDashLoading) return;
+    setAiDashLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      await fetch(`/api/exploration-activities/${explorationId}/dashboard-config`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      /* 静默：失败也先回退本地显示 */
+    } finally {
+      setAiDashConfig(null);
+      setAiDashError("");
+      setAiDashLoading(false);
     }
   };
 
@@ -293,13 +458,75 @@ export default function ExplorationAnalysisPage() {
         ? "border-blue-500 text-blue-600"
         : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
         }`}
-      onClick={() => setActiveTab(tabKey)}
+      onClick={() => { setActiveTab(tabKey); refreshLiveData(); }}
     >
       {label}
     </button>
   );
 
   const renderStatistics = () => {
+    // 优先渲染 QuickForm 数据大屏（有绑定任务时）
+    if (qfTaskId) {
+      if (qfLoading) {
+        return (
+          <div className="space-y-4 animate-pulse" aria-label="数据大屏加载中">
+            <div className="h-20 rounded-2xl bg-blue-100/60" />
+            <div className="h-32 rounded-2xl bg-gray-100" />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div className="h-48 rounded-2xl bg-gray-100" />
+              <div className="h-48 rounded-2xl bg-gray-100" />
+            </div>
+          </div>
+        );
+      }
+
+      // 工具栏：AI 重排 / 自定义要求 / 恢复默认
+      const toolbar = (
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <Button
+            size="small"
+            theme="primary"
+            loading={aiDashLoading}
+            onClick={handleGenerateAiDashboard}
+          >
+            {aiDashConfig ? "AI 重新排布" : "AI 重排大屏"}
+          </Button>
+          <input
+            value={aiDashInstruction}
+            onChange={(e) => setAiDashInstruction(e.target.value)}
+            placeholder="可选：描述风格或重点（如「深色科技风，突出年龄分布」「清新绿色」）"
+            className="flex-1 min-w-[220px] h-8 px-3 text-xs border border-gray-200 rounded-md focus:outline-none focus:border-blue-400"
+          />
+          {aiDashConfig && (
+            <Button
+              size="small"
+              variant="outline"
+              disabled={aiDashLoading}
+              onClick={handleResetAiDashboard}
+            >
+              恢复默认
+            </Button>
+          )}
+        </div>
+      );
+
+      return (
+        <div>
+          {toolbar}
+          {aiDashError && (
+            <div className="mb-3 text-xs text-red-500 bg-red-50 border border-red-100 rounded-md px-3 py-2">
+              {aiDashError}
+            </div>
+          )}
+          {aiDashConfig ? (
+            <QuickFormAiDashboard records={qfRecords} total={qfTotal} config={aiDashConfig} />
+          ) : (
+            <QuickFormDashboard records={qfRecords} total={qfTotal} />
+          )}
+        </div>
+      );
+    }
+
     if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交数据</div>;
 
     const allAnswers: Record<string, any>[] = submissions.map((sub) => {
@@ -459,6 +686,14 @@ export default function ExplorationAnalysisPage() {
 
   const renderSubmissions = () => {
     if (loading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+
+    // 双轨：探究绑定了 QuickForm 收集任务 → 展示收集数据明细；
+    // 否则回退原有的行为数据（ExplorationSubmission）展示，不影响既有探究
+    if (qfTaskId) {
+      if (qfLoading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+      return <QuickFormRecordList records={qfRecords} total={qfTotal} />;
+    }
+
     if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交记录</div>;
 
     const toggleExpand = (id: string) => {
@@ -675,32 +910,49 @@ export default function ExplorationAnalysisPage() {
             <h2 className="text-xl font-semibold">探究分析报告</h2>
             <p className="text-sm text-gray-500 mt-0.5">{analysisData?.explorationTitle}</p>
           </div>
-          {analysisData?.classIds && analysisData.classIds.length > 0 && (
-            <div className="flex items-center gap-2 ml-auto">
-              <span className="text-sm text-gray-500">班级：</span>
-              <select
-                value={selectedClassId}
-                onChange={(e) => {
-                  const cid = e.target.value;
-                  setSelectedClassId(cid);
-                  setAiReport(null);
-                  setAiReportVersions([]);
-                  setAiVersionIndex(0);
-                  fetchAiVersions(cid);
-                }}
-                className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
-              >
-                {analysisData.classIds.map((cid: string) => {
-                  const cls = allClasses.find((c) => c.id === cid);
-                  return (
-                    <option key={cid} value={cid}>
-                      {cls ? cls.name : cid.substring(0, 8)}
-                    </option>
-                  );
-                })}
-              </select>
-            </div>
-          )}
+          <div className="flex items-center gap-3 ml-auto">
+            {lastUpdated && (
+              <span className="text-xs text-gray-400">最后更新 {lastUpdated}</span>
+            )}
+            <Button
+              theme="default"
+              variant="outline"
+              size="small"
+              icon={<RefreshIcon />}
+              loading={refreshing}
+              onClick={() => refreshLiveData()}
+            >
+              刷新
+            </Button>
+            {analysisData?.classIds && analysisData.classIds.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">班级：</span>
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => {
+                    const cid = e.target.value;
+                    setSelectedClassId(cid);
+                    setAiReport(null);
+                    setAiReportVersions([]);
+                    setAiVersionIndex(0);
+                    fetchAiVersions(cid);
+                    // 提交列表 / QF 数据大屏 / 提交详情也按班级重新拉取（显式传新班级，避免闭包旧值）
+                    refreshLiveData(cid);
+                  }}
+                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
+                >
+                  {analysisData.classIds.map((cid: string) => {
+                    const cls = allClasses.find((c) => c.id === cid);
+                    return (
+                      <option key={cid} value={cid}>
+                        {cls ? cls.name : cid.substring(0, 8)}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Tab 切换 */}
