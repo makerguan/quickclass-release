@@ -197,6 +197,36 @@ function pickElementDesc(el: unknown): string {
   return "";
 }
 
+/** 课堂管理页的视图状态：记住上次停在哪门课、展开了哪些子活动、滚动位置 */
+type TasksViewState = { taskId: string | null; spIds: string[]; scrollY: number };
+
+const TASKS_VIEW_STATE_KEY = "quickclass.tasks.viewState";
+
+function readTasksViewState(): TasksViewState | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const raw = window.sessionStorage.getItem(TASKS_VIEW_STATE_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<TasksViewState>;
+    return {
+      taskId: typeof v.taskId === "string" ? v.taskId : null,
+      spIds: Array.isArray(v.spIds) ? v.spIds.filter((id): id is string => typeof id === "string") : [],
+      scrollY: typeof v.scrollY === "number" && v.scrollY >= 0 ? v.scrollY : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeTasksViewState(state: TasksViewState) {
+  try {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem(TASKS_VIEW_STATE_KEY, JSON.stringify(state));
+  } catch {
+    /* 隐私模式下 sessionStorage 不可用，忽略即可（仅影响"记住位置"，不影响功能） */
+  }
+}
+
 export default function TeacherTasksPage() {
   const router = useRouter();
   const [tasks, setTasks] = useState<LearningTask[]>([]);
@@ -232,6 +262,62 @@ export default function TeacherTasksPage() {
   const [editingSubProjects, setEditingSubProjects] = useState<SubProject[]>([]);
   const [savingSubProjects, setSavingSubProjects] = useState(false);
   const [expandedSpIds, setExpandedSpIds] = useState<Set<string>>(new Set());
+
+  // 视图状态记忆：离开列表（进分析页等）前记录，返回时恢复，避免又跳回第一门课
+  const viewReadyRef = useRef(false);
+  const viewStateRef = useRef<TasksViewState>({ taskId: null, spIds: [], scrollY: 0 });
+
+  // 把最新的展开状态同步到 ref：滚动监听 / 跳转前记录都从这里取，避免 React 闭包读到旧值
+  useEffect(() => {
+    if (!viewReadyRef.current) return;
+    viewStateRef.current = {
+      taskId: expandedTaskId,
+      spIds: Array.from(expandedSpIds),
+      scrollY: viewStateRef.current.scrollY,
+    };
+  }, [expandedTaskId, expandedSpIds]);
+
+  // 记录一次当前视图（含滚动位置）
+  const persistTasksView = (scrollY?: number) => {
+    if (!viewReadyRef.current) return;
+    const state: TasksViewState = {
+      ...viewStateRef.current,
+      scrollY: typeof scrollY === "number" ? scrollY : window.scrollY,
+    };
+    viewStateRef.current = state;
+    writeTasksViewState(state);
+  };
+
+  // 打开/收起课堂、展开子活动后记录
+  useEffect(() => {
+    if (!viewReadyRef.current) return;
+    persistTasksView();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedTaskId, expandedSpIds]);
+
+  // 滚动位置节流记录（返回列表时能滚回原处，不用重新往下找）
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onScroll = () => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        persistTasksView(window.scrollY);
+      }, 250);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 跳转到其他页面前先记录一次（带走最新滚动位置）
+  const goTo = (url: string) => {
+    persistTasksView();
+    router.push(url);
+  };
 
   // 对话活动名片式独立 CRUD 弹窗状态
   // 测试成功后，将下方开关改为 true 即可隐藏老「对话管理」按钮
@@ -386,7 +472,7 @@ export default function TeacherTasksPage() {
   };
 
   const openBrowse = (id: string) => {
-    router.push(`/teacher/tasks/project/${id}`);
+    goTo(`/teacher/tasks/project/${id}`);
   };
 
   const [operatingProjectId, setOperatingProjectId] = useState<string | null>(null);
@@ -1805,26 +1891,66 @@ export default function TeacherTasksPage() {
           return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
         });
         setTasks(sortedData);
-        // 仅在首次加载时自动展开
+        // 仅在首次加载时决定展开哪门课：优先恢复上次停留的位置，其次才默认展开第一门
         if (initial) {
-          const enabledTask = data.find((t: LearningTask) => t.status === "ENABLED");
-          if (enabledTask) {
-            setExpandedTaskId(enabledTask.id);
-            const allSpIds = new Set<string>();
-            data.forEach((t: LearningTask) => {
+          const enabledSpIdsOf = (list: LearningTask[]) => {
+            const ids = new Set<string>();
+            list.forEach((t: LearningTask) => {
               if (t.status === "ENABLED") {
                 t.subProjects.forEach((sp) => {
-                  if (sp.id) allSpIds.add(sp.id);
+                  if (sp.id) ids.add(sp.id);
                 });
               }
             });
-            setExpandedSpIds(allSpIds);
-            const firstSp = enabledTask.subProjects[0];
+            return ids;
+          };
+          const openFirstSp = (task: LearningTask) => {
+            const firstSp = task.subProjects?.[0];
             if (firstSp?.id) {
-              openQuizPanel(firstSp.id, enabledTask);
+              openQuizPanel(firstSp.id, task);
               // 同时自动加载互动探究列表（如果已有探究项目，面板会立刻显示；没有则无影响）
-              openExplorationPanel(firstSp.id, enabledTask);
+              openExplorationPanel(firstSp.id, task);
             }
+          };
+
+          const saved = readTasksViewState();
+          const savedTask = saved?.taskId ? sortedData.find((t: LearningTask) => t.id === saved.taskId) : undefined;
+          const enabledTask = sortedData.find((t: LearningTask) => t.status === "ENABLED");
+
+          if (savedTask) {
+            // 恢复上次停留的课堂与展开的子活动
+            const validSpIds = enabledSpIdsOf(sortedData);
+            setExpandedTaskId(savedTask.id);
+            // 只恢复仍然存在的子活动；一个都对不上（如刚编辑过课程、子活动被重建）就整体展开，避免"展开了却空着"
+            const restoredSpIds = (saved?.spIds || []).filter((id) => validSpIds.has(id));
+            const restoredSpIdSet = restoredSpIds.length > 0 ? new Set(restoredSpIds) : validSpIds;
+            setExpandedSpIds(restoredSpIdSet);
+            // 该课堂若不在第一页，自动翻到它所在的那一页
+            const savedIndex = sortedData.findIndex((t: LearningTask) => t.id === savedTask.id);
+            if (savedIndex >= 0) setCurrentPage(Math.floor(savedIndex / pageSize) + 1);
+            openFirstSp(savedTask);
+
+            // 等这一帧渲染完，把画面滚回上次的位置
+            const savedScrollY = saved?.scrollY || 0;
+            const restoredTaskId = savedTask.id;
+            const restoredSpIdsArray = Array.from(restoredSpIdSet);
+            setTimeout(() => {
+              const el = document.getElementById(`task-card-${restoredTaskId}`);
+              if (savedScrollY > 0) window.scrollTo({ top: savedScrollY });
+              else if (el) el.scrollIntoView({ block: "start" });
+              viewStateRef.current = { taskId: restoredTaskId, spIds: restoredSpIdsArray, scrollY: savedScrollY };
+              viewReadyRef.current = true;
+            }, 250);
+          } else if (enabledTask) {
+            // 没有历史记录（首次进入，或标签页已关闭）：保持原有默认行为——展开第一门课
+            const allSpIds = enabledSpIdsOf(sortedData);
+            setExpandedTaskId(enabledTask.id);
+            setExpandedSpIds(allSpIds);
+            openFirstSp(enabledTask);
+            viewStateRef.current = { taskId: enabledTask.id, spIds: Array.from(allSpIds), scrollY: 0 };
+            viewReadyRef.current = true;
+          } else {
+            viewReadyRef.current = true;
           }
         }
         return data;
@@ -2925,6 +3051,7 @@ export default function TeacherTasksPage() {
               return (
                 <Card key={task.id} className="template-compact-card">
                   <div
+                    id={`task-card-${task.id}`}
                     className="cursor-pointer"
                     onClick={() => {
                       if (isExpanded) {
@@ -2998,7 +3125,7 @@ export default function TeacherTasksPage() {
                             variant="text"
                             size="small"
                             icon={<ChartBarIcon />}
-                            onClick={() => router.push(`/teacher/tasks/${task.id}/insights`)}
+                            onClick={() => goTo(`/teacher/tasks/${task.id}/insights`)}
                           />
                         </Tooltip>
                         <Tooltip content="重置清理学生记录">
@@ -3433,7 +3560,7 @@ export default function TeacherTasksPage() {
                                             variant="text"
                                             size="small"
                                             icon={<ChartBarIcon />}
-                                            onClick={() => router.push(`/teacher/tasks/${task.id}/insights?pc=${pc.id}`)}
+                                            onClick={() => goTo(`/teacher/tasks/${task.id}/insights?pc=${pc.id}`)}
                                           >
                                             分析
                                           </Button>
@@ -3538,7 +3665,7 @@ export default function TeacherTasksPage() {
                                           {e.enableSubmission && (
                                             <Button theme="success" variant="text" size="small"
                                               icon={<ChartBarIcon />}
-                                              onClick={() => router.push(`/teacher/tasks/${expandedTaskId}/exploration/${e.id}`)}>分析</Button>
+                                              onClick={() => goTo(`/teacher/tasks/${expandedTaskId}/exploration/${e.id}`)}>分析</Button>
                                           )}
                                           <Button theme="primary" variant="text" size="small"
                                             icon={<EditIcon />}
@@ -3848,7 +3975,7 @@ export default function TeacherTasksPage() {
                                             {q.status === "INACTIVE" && (
                                               <>
                                                 <Button theme="primary" variant="text" size="small" icon={<EditIcon />} onClick={() => startEditQuiz(q)}>快编</Button>
-                                                <Button theme="primary" variant="text" size="small" icon={<FileIcon />} onClick={() => router.push(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/questions`)}>题目管理</Button>
+                                                <Button theme="primary" variant="text" size="small" icon={<FileIcon />} onClick={() => goTo(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/questions`)}>题目管理</Button>
                                                 <Button theme="default" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openQuizPreview(q)}>预览</Button>
                                                 {(q._count?.attempts ?? 0) > 0 && (
                                                   <Button theme="warning" variant="text" size="small" icon={<DeleteIcon />} loading={clearingAttemptsQuizId === q.id} onClick={() => handleClearAttempts(q.id)}>清除答题</Button>
@@ -3860,7 +3987,7 @@ export default function TeacherTasksPage() {
                                             {/* 生效中（ACTIVE）按钮 */}
                                             {q.status === "ACTIVE" && (
                                               <>
-                                                <Button theme="success" variant="text" size="small" icon={<ChartBarIcon />} onClick={() => router.push(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/report`)}>查看报告</Button>
+                                                <Button theme="success" variant="text" size="small" icon={<ChartBarIcon />} onClick={() => goTo(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/report`)}>查看报告</Button>
                                                 <Button theme="default" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openQuizPreview(q)}>预览</Button>
                                                 {(q._count?.attempts ?? 0) > 0 && (
                                                   <Button theme="warning" variant="text" size="small" icon={<DeleteIcon />} loading={clearingAttemptsQuizId === q.id} onClick={() => handleClearAttempts(q.id)}>清除答题</Button>
