@@ -3665,12 +3665,12 @@ export default function TeacherTasksPage() {
                                           <>
                                             <Button theme="default" variant="text" size="small"
                                               disabled={psIdx === 0 || reorderingProjectId === ps.id}
-                                              onClick={() => handleProjectReorder(ps.id, "up", ps.subProjectId || spId)}>
+                                              onClick={() => handleProjectReorder(ps.id, "up", ps.subProjectId)}>
                                               <ChevronUpIcon />
                                             </Button>
                                             <Button theme="default" variant="text" size="small"
                                               disabled={psIdx === allPs.length - 1 || reorderingProjectId === ps.id}
-                                              onClick={() => handleProjectReorder(ps.id, "down", ps.subProjectId || spId)}>
+                                              onClick={() => handleProjectReorder(ps.id, "down", ps.subProjectId)}>
                                               <ChevronDownIcon />
                                             </Button>
                                           </>
