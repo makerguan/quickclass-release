@@ -10,6 +10,7 @@ import QuickFormDashboard, { type QfRecordItem } from "@/components/exploration/
 import QuickFormRecordList from "@/components/exploration/QuickFormRecordList";
 import QuickFormAiDashboard from "@/components/exploration/QuickFormAiDashboard";
 import type { AiDashboardConfig } from "@/lib/prompts/dashboard-config";
+import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 
 interface StudentRecord {
   studentId: string;
@@ -847,6 +848,19 @@ export default function ExplorationAnalysisPage() {
               ))}
             </select>
           )}
+          {selectedTemplateId && (() => {
+            const tpl: any = templates.find((t: any) => t.id === selectedTemplateId);
+            if (!tpl) return null;
+            return (
+              <TemplatePreviewButton
+                templateId={tpl.id}
+                templateName={tpl.name}
+                templateType={tpl.type}
+                hasPreview={!!tpl.hasPreview}
+                previewStale={!!tpl.previewStale}
+              />
+            );
+          })()}
           <Button
             theme="primary"
             size="small"

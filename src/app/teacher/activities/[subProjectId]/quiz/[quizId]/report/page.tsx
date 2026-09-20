@@ -7,6 +7,7 @@ import {
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from "recharts";
 import { Switch, MessagePlugin, Dialog } from "tdesign-react";
+import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 
 interface Question {
@@ -621,6 +622,19 @@ export default function QuizReportPage() {
                     ))}
                   </select>
                 )}
+                {selectedTemplateId && (() => {
+                  const tpl = templates.find((t: any) => t.id === selectedTemplateId);
+                  if (!tpl) return null;
+                  return (
+                    <TemplatePreviewButton
+                      templateId={tpl.id}
+                      templateName={tpl.name}
+                      templateType={tpl.type}
+                      hasPreview={!!tpl.hasPreview}
+                      previewStale={!!tpl.previewStale}
+                    />
+                  );
+                })()}
                 <button
                   onClick={handleGenerateAiReport}
                   disabled={generatingReport || !selectedTemplateId}

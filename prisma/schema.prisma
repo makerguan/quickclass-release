@@ -36,6 +36,21 @@ model AnalysisTemplate {
   QuizActivity                               QuizActivity[]
   subProjectsAsClassInsightTemplate           SubProject[]         @relation("SubProject_classInsightTemplateIdToAnalysisTemplate")
   subProjectsAsStudentInsightTemplate         SubProject[]         @relation("SubProject_studentInsightTemplateIdToAnalysisTemplate")
+  preview                                     TemplatePreview?
+}
+
+/// 模板「效果预览」：AI 用示例数据把模板跑一次的结果，一条模板只保留一份（刷新即覆盖）
+model TemplatePreview {
+  id          String   @id @default(cuid())
+  templateId  String   @unique
+  kind        String   @default("text") // text | html
+  content     String // 渲染后的预览内容（已截断：文本 20KB / HTML 200KB）
+  contentHash String // 生成时模板正文的哈希，用于判断"模板已修改 → 预览过期"
+  sampleVer   Int      @default(1) // 示例数据集版本，升级后统一失效
+  model       String? // 生成所用模型，便于换模型后统一刷新
+  generatedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  Template    AnalysisTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 }
 
 model Class {

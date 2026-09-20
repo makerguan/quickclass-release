@@ -2,6 +2,7 @@
 import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Switch, MessagePlugin } from "tdesign-react";
+import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 
 export default function TeacherQuizListPage() {
   const params = useParams();
@@ -228,6 +229,22 @@ export default function TeacherQuizListPage() {
                   还没有作业设计模板？请前往「模板设置」页面创建后再新建作业。
                 </div>
               )}
+              {selectedTemplateId && (() => {
+                const tpl = templates.find((t: any) => t.id === selectedTemplateId);
+                if (!tpl) return null;
+                return (
+                  <div className="mt-2 flex items-center gap-2">
+                    <TemplatePreviewButton
+                      templateId={tpl.id}
+                      templateName={tpl.name}
+                      templateType={tpl.type}
+                      hasPreview={!!tpl.hasPreview}
+                      previewStale={!!tpl.previewStale}
+                    />
+                    <span className="text-xs text-gray-400">先看一眼这份模板会生成什么效果</span>
+                  </div>
+                );
+              })()}
             </div>
             <textarea
               className="w-full border rounded-lg px-3 py-2 mb-3 text-sm"

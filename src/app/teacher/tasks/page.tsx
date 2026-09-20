@@ -46,6 +46,7 @@ import {
   PieChart, Pie, Legend, ResponsiveContainer,
 } from "recharts";
 import { injectSubmitFunctionality, removeSubmitFunctionality } from "@/lib/prompts/exploration-submit";
+import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 import ViewFrame from "./ViewFrame";
 
 interface AnalysisTemplate {
@@ -3772,6 +3773,21 @@ export default function TeacherTasksPage() {
                                             {(templates.filter((t: any) => t.type === "QUIZ_DESIGN") || []).map((t: any) => (<option key={t.id} value={t.id}>{t.name}</option>))}
                                           </select>
                                           {!selectedQuizTemplateId && <div className="mt-2 p-3 bg-yellow-50 rounded-lg text-xs text-yellow-700">提示：还没有作业设计模板？去「模板设置」页面创建一个。</div>}
+                                          {selectedQuizTemplateId && (() => {
+                                            const tpl: any = templates.find((t: any) => t.id === selectedQuizTemplateId);
+                                            if (!tpl) return null;
+                                            return (
+                                              <div className="mt-2">
+                                                <TemplatePreviewButton
+                                                  templateId={tpl.id}
+                                                  templateName={tpl.name}
+                                                  templateType={tpl.type}
+                                                  hasPreview={!!tpl.hasPreview}
+                                                  previewStale={!!tpl.previewStale}
+                                                />
+                                              </div>
+                                            );
+                                          })()}
                                         </div>
                                         <Textarea value={quizDesignTemplateContent} onChange={(v) => setQuizDesignTemplateContent(v)} placeholder="作业设计提示词..." rows={6} />
                                         <div className="flex gap-2 items-center">

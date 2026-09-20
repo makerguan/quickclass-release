@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { hashTemplateContent } from "@/lib/template-preview/generate";
+import { PREVIEW_SAMPLE_VER } from "@/lib/template-preview/samples";
 
 // GET /api/analysis-templates - 获取教师的所有模板
 export async function GET(req: NextRequest) {
@@ -22,15 +24,32 @@ export async function GET(req: NextRequest) {
         ],
       },
       orderBy: [{ type: "asc" }, { isDefault: "desc" }, { createdAt: "desc" }],
+      // 只取预览的"状态字段"，不取预览正文（正文可能很大，列表接口要保持轻量）
+      include: {
+        preview: { select: { contentHash: true, sampleVer: true, generatedAt: true } },
+      },
+    });
+
+    // 给模板附上预览状态：hasPreview=已生成过；previewStale=模板内容已改或示例数据已升级
+    const withPreviewState = templates.map((t) => {
+      const { preview, ...rest } = t;
+      return {
+        ...rest,
+        hasPreview: !!preview,
+        previewStale: preview
+          ? preview.contentHash !== hashTemplateContent(t.content) || preview.sampleVer !== PREVIEW_SAMPLE_VER
+          : false,
+        previewAt: preview?.generatedAt ?? null,
+      };
     });
 
     // 按类型分组
-    const studentTemplates = templates.filter((t) => t.type === "student");
-    const classTemplates = templates.filter((t) => t.type === "class");
-    const conversationTemplates = templates.filter((t) => t.type === "conversation");
-    const quizDesignTemplates = templates.filter((t) => t.type === "QUIZ_DESIGN");
-    const quizAnalysisTemplates = templates.filter((t) => t.type === "QUIZ_ANALYSIS");
-    const explorationAnalysisTemplates = templates.filter((t) => t.type === "EXPLORATION_ANALYSIS");
+    const studentTemplates = withPreviewState.filter((t) => t.type === "student");
+    const classTemplates = withPreviewState.filter((t) => t.type === "class");
+    const conversationTemplates = withPreviewState.filter((t) => t.type === "conversation");
+    const quizDesignTemplates = withPreviewState.filter((t) => t.type === "QUIZ_DESIGN");
+    const quizAnalysisTemplates = withPreviewState.filter((t) => t.type === "QUIZ_ANALYSIS");
+    const explorationAnalysisTemplates = withPreviewState.filter((t) => t.type === "EXPLORATION_ANALYSIS");
 
     return NextResponse.json({
       studentTemplates,
@@ -39,7 +58,7 @@ export async function GET(req: NextRequest) {
       quizDesignTemplates,
       quizAnalysisTemplates,
       explorationAnalysisTemplates,
-      all: templates,
+      all: withPreviewState,
     });
   } catch (error) {
     console.error("Get templates error:", error);
