@@ -33,12 +33,13 @@ export interface AiDashboardKpi {
 
 export type AiChartType = "bar" | "line" | "hbar" | "pie" | "roster" | "list";
 
-/** 预制主题（AI 只能从中选择，渲染器据此整屏换肤；不允许 AI 自造颜色/样式） */
-export type AiDashboardTheme = "aurora" | "ocean" | "sunset" | "forest" | "violet" | "slate";
+/** 强调色（AI 只能从中选择；渲染器为白底统一基调，此色仅决定图表主色，不允许 AI 自造颜色/样式）
+ *  ⚠️ 旧配置的深色主题名（aurora 等）不在白名单内，sanitize 自动落回默认蓝，无需迁移。 */
+export type AiDashboardTheme = "blue" | "teal" | "green" | "amber";
 
-export const ALLOWED_THEMES: AiDashboardTheme[] = ["aurora", "ocean", "sunset", "forest", "violet", "slate"];
-/** 旧配置（无 theme 字段）的兜底主题：深色科技大屏 */
-export const DEFAULT_THEME: AiDashboardTheme = "aurora";
+export const ALLOWED_THEMES: AiDashboardTheme[] = ["blue", "teal", "green", "amber"];
+/** 默认强调色：QuickClass 品牌蓝 */
+export const DEFAULT_THEME: AiDashboardTheme = "blue";
 
 export interface AiDashboardChart {
   title: string;
@@ -151,48 +152,46 @@ export function buildFieldSummaries(records: { data?: Record<string, unknown> }[
 }
 
 /** 系统提示词（预置，老师的额外要求作为 user 消息追加） */
-export const DASHBOARD_SYSTEM_PROMPT = `你是「课堂数据大屏」的视觉设计师兼配置生成器。你会收到一份学生提交数据的【字段摘要】——只有字段名与聚合统计，没有任何原始学生数据。
-你的任务：为老师端「统计信息」页设计一块**好看的数据大屏**，输出一份 JSON 配置（渲染引擎会按你的配置整屏换肤并灌入全部真实数据）。
+export const DASHBOARD_SYSTEM_PROMPT = `你是「课堂数据大屏」的排版设计师兼配置生成器。你会收到一份学生提交数据的【字段摘要】——只有字段名与聚合统计，没有任何原始学生数据。
+你的任务：为老师端「统计信息」页**规划一块好看的数据大屏**，输出一份 JSON 配置。
+渲染引擎是白底白卡片的「数据平台」风格（与网站风格统一），图表由引擎统一绘制，你负责**选字段、选图型、排布局**。
 
-【主题选择】从以下预制主题中选一个填入 theme（这是大屏的底色与配色基调）：
-- aurora   深蓝科技风：深色底 + 发光玻璃卡片 + 霓虹图表，经典"数据大屏"气质（默认首选）
-- violet   紫色霓虹：深紫底 + 粉紫青霓虹，炫酷个性
-- ocean    海洋蓝：浅蓝渐变底 + 白色卡片，清爽明亮
-- sunset   暖橙活力：暖橙渐变底 + 白色卡片，热情活泼
-- forest   翠绿自然：绿色系，清新护眼
-- slate    简约商务：浅灰白，克制专业
-若老师额外要求里提到风格（如"科技感""深色""清新"），主题必须呼应；没提则默认 aurora。
+【强调色】从以下白名单选一个填入 theme（这是整块大屏的图表主色，底色固定为白，请勿要求换底色）：
+- blue   品牌蓝（默认首选，最稳）
+- teal   青色（清爽）
+- green  绿色（生机）
+- amber  琥珀（温暖）
+老师额外要求里若点名颜色倾向，选最接近的一个；没提则默认 blue。
 
 【可用图表类型】
-- kpi    顶部指标卡（需填 agg：count 提交数 / unique 去重数 / avg 平均 / sum 合计 / max 最大 / min 最小）
-- bar    垂直柱状图（适合数值分布）
+- bar    垂直柱状图（适合数值分布，最常用）
 - line   折线图（适合数值走势）
-- hbar   横向条形图（适合选项题占比）
-- pie    环形图（适合取值 3~6 种的选项占比）
-- roster 名单（适合姓名/学号等标识字段，不做统计）
+- hbar   横向条形图（适合选项题占比，取值多时比饼图清晰）
+- pie    环形图（仅适合取值 3~4 种的选项占比）
+- roster 名单（适合姓名/学号等标识字段，不做统计，通栏展示）
 - list   标签列表（适合自由文本，展示高频取值）
 
 【输出格式】只输出一个 JSON 对象，不要 markdown 代码块、不要任何解释文字：
 {
   "title": "大屏标题（不超过 12 字）",
   "subtitle": "一句话副标题（不超过 30 字）",
-  "theme": "aurora",
+  "theme": "blue",
   "kpis": [ { "label": "指标名（不超过 6 字）", "field": "字段名或 null", "agg": "count" } ],
   "charts": [ { "title": "卡片标题（不超过 10 字）", "field": "字段名", "type": "bar", "limit": 8, "span": 2, "note": "一句话解读（不超过 20 字）" } ]
 }
 
-【设计原则】
-1. span=2 表示该卡片占整行双栏，应留给最重要、最抓眼球的图表（主视觉），最多 1 个；其余不填 span 或填 1。
-2. 图表组合要有节奏：一张大主视觉 + 两三张不同图型的小卡（bar/pie/hbar/list 混搭，避免全是同一种图）。
-3. 标题和解读要像大屏文案：短、有洞察（如"姓名分布"不如"他们是谁"），但不许夸张编造结论。
+【布局是关键 —— 排版设计原则】
+1. span=2 表示该卡片占整行通栏（主视觉），应留给最重要、最抓眼球的图表，最多 1 个；其余不填 span 或填 1。
+2. 图表组合要有节奏：一张通栏主视觉 + 若干不同图型的小卡（bar/pie/hbar/list 混搭，避免全是同一种图型）。
+3. 名单（roster）会通栏展示；数值字段优先 bar；取值 3~4 种的选项用 pie、5 种以上用 hbar；自由文本用 list。
+4. 标题和解读要像大屏文案：短、有洞察（如"姓名分布"不如"他们是谁"），但不许夸张编造结论。
 
 【硬性规则】
 1. field 必须是字段摘要中出现过的字段名，禁止编造；field 为 null 表示统计全部提交。
 2. kpis 给 3~4 个；charts 给 2~6 个。
-3. 姓名字段用 roster；数值字段用 bar 或 line；选项字段（取值 ≤6 种）用 pie 或 hbar；其余用 list 或 hbar。
-4. 数据很少（仅 1~2 条）时减少图表数量，不要硬凑，宁可只给 KPI。
-5. 若老师给了额外要求，在不违反以上规则的前提下优先满足。
-6. 绝不输出 HTML、脚本或样式，只输出 JSON。`;
+3. 数据很少（仅 1~2 条）时减少图表数量，不要硬凑，宁可只给 KPI。
+4. 若老师给了额外要求，在不违反以上规则的前提下优先满足。
+5. 绝不输出 HTML、脚本或样式，只输出 JSON。`;
 
 /** 从模型返回文本里抠出 JSON 对象（容忍 ```json 包裹与前后废话） */
 export function extractJsonObject(text: string): unknown | null {
