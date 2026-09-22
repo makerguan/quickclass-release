@@ -73,6 +73,18 @@ export async function GET(req: NextRequest) {
     // 查询总数
     const total = await prisma.conversation.count({ where });
 
+    // 统计全量消息总数（当前筛选条件下的所有对话消息）
+    const totalMessages = await prisma.message.count({
+      where: { Conversation: where as any },
+    });
+
+    // 统计去重学生数
+    const studentGroups = await prisma.conversation.groupBy({
+      by: ["userId"],
+      where: where as any,
+    });
+    const totalStudents = studentGroups.length;
+
     // 分页查询
     const skip = (page - 1) * pageSize;
     const rawConversations = await prisma.conversation.findMany({
@@ -121,7 +133,7 @@ export async function GET(req: NextRequest) {
       messages: Message,
     }));
 
-    return NextResponse.json({ conversations, total, page, pageSize });
+    return NextResponse.json({ conversations, total, page, pageSize, totalMessages, totalStudents });
   } catch (error) {
     console.error("Get teacher conversations error:", error);
     const message = error instanceof Error ? error.message : "未知错误";

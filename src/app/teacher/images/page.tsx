@@ -10,6 +10,8 @@ import {
   Tag,
   Textarea,
   Loading,
+  Pagination,
+  InputNumber,
 } from "tdesign-react";
 import {
   AddIcon,
@@ -59,6 +61,8 @@ function thumbUrl(id: string): string {
 export default function ImageLibraryPage() {
   const [list, setList] = useState<ImageGroup[]>([]);
   const [loading, setLoading] = useState(true);
+  const [pageSize, setPageSize] = useState<number>(10);
+  const [currentPage, setCurrentPage] = useState<number>(1);
   const [search, setSearch] = useState("");
 
   // 组表单
@@ -307,6 +311,10 @@ export default function ImageLibraryPage() {
       )
     : list;
 
+  const totalPages = Math.max(1, Math.ceil(filteredList.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedList = filteredList.slice((safePage - 1) * pageSize, safePage * pageSize);
+
   return (
     <TeacherLayout>
       <div className="space-y-6 pb-8">
@@ -317,7 +325,7 @@ export default function ImageLibraryPage() {
           <div className="flex items-center gap-2">
             <Input
               value={search}
-              onChange={(v) => setSearch(v as string)}
+              onChange={(v) => { setSearch(v as string); setCurrentPage(1); }}
               placeholder="搜索图片组名称或描述"
               className="w-48"
               clearable
@@ -340,7 +348,7 @@ export default function ImageLibraryPage() {
           </Card>
         ) : (
           <div className="space-y-3">
-            {filteredList.map((g) => (
+            {pagedList.map((g) => (
               <Card key={g.id} className={!g.enabled ? "opacity-60" : ""}>
                 <div className="flex items-center justify-between">
                   <div className="flex-1 min-w-0">
@@ -446,6 +454,35 @@ export default function ImageLibraryPage() {
             AI 会根据学生问题智能发送组内图片。
           </p>
         </div>
+
+        {/* 分页 */}
+        {list.length > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm text-[#63666F]">
+              <span>每页</span>
+              <InputNumber
+                value={pageSize}
+                min={1}
+                max={100}
+                theme="column"
+                onChange={(val) => {
+                  const n = Math.max(1, Math.min(100, Number(val) || 1));
+                  setPageSize(n);
+                  setCurrentPage(1);
+                }}
+                style={{ width: 72 }}
+              />
+              <span>个图片组，共 {filteredList.length} 个</span>
+            </div>
+            <Pagination
+              total={filteredList.length}
+              pageSize={pageSize}
+              current={safePage}
+              showJumper
+              onChange={(pageInfo) => setCurrentPage(pageInfo.current)}
+            />
+          </div>
+        )}
 
         {/* 新建/编辑图片组对话框 */}
         <Dialog
