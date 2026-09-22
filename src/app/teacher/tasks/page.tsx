@@ -3003,30 +3003,45 @@ export default function TeacherTasksPage() {
                             {task.grade && <Tag theme="default" variant="light" size="small">{task.grade}</Tag>}
                             {task.subject && <Tag theme="primary" variant="light" size="small">{task.subject}</Tag>}
                             {!isExpanded && (() => {
-                              const expCount = task.subProjects?.reduce(
-                                (n, sp) => n + ((sp as any).explorationActivities?.length ?? 0),
-                                0
-                              ) ?? 0;
-                              if (expCount <= 0) return null;
+                              const counts = task.subProjects?.reduce(
+                                (acc, sp) => {
+                                  acc.conversations += ((sp as any).presetConversations?.length ?? 0);
+                                  acc.quizzes += ((sp as any).quizActivities?.length ?? 0);
+                                  acc.projects += ((sp as any).projectSubmissions?.length ?? 0);
+                                  acc.explorations += ((sp as any).explorationActivities?.length ?? 0);
+                                  return acc;
+                                },
+                                { conversations: 0, quizzes: 0, projects: 0, explorations: 0 }
+                              ) ?? { conversations: 0, quizzes: 0, projects: 0, explorations: 0 };
+                              const badges = [
+                                { label: "对话", count: counts.conversations, theme: "default" as const },
+                                { label: "作业", count: counts.quizzes, theme: "primary" as const },
+                                { label: "项目", count: counts.projects, theme: "success" as const },
+                                { label: "探究", count: counts.explorations, theme: "warning" as const },
+                              ].filter((b) => b.count > 0);
+                              if (badges.length === 0) return null;
                               return (
-                                <Tag theme="warning" variant="light" size="small">
-                                  探究 {expCount}
-                                </Tag>
+                                <>
+                                  {badges.map((b) => (
+                                    <Tag key={b.label} theme={b.theme} variant="light" size="small">
+                                      {b.label} {b.count}
+                                    </Tag>
+                                  ))}
+                                </>
                               );
                             })()}
-                          </div>
-                          <div className="text-xs text-[#63666F]">
-                            {task.grade && `${task.grade} · `}{task.subject && `${task.subject} · `}更新于 {new Date(task.createdAt).toLocaleDateString()}
                           </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-1 mr-2">
-                          {task.assignments.map((a) => (
-                            <Tag key={a.classId} theme="primary" variant="light" size="small">
-                              {a.class.name}
-                            </Tag>
-                          ))}
+                          {task.assignments.length > 0 && (
+                            <Tooltip content={task.assignments.map((a) => a.class.name).join("、")}>
+                              <Tag theme="primary" variant="light" size="small">
+                                班级 {task.assignments.length}
+                              </Tag>
+                            </Tooltip>
+                          )}
                         </div>
                         <Button
                           theme={task.status === "ENDED" ? "warning" : "default"}
