@@ -49,13 +49,35 @@ export async function POST(
     });
     if (!quiz) return NextResponse.json({ error: "作业不存在" }, { status: 404 });
 
+    // 确定分析班级：优先前端传的 classId，否则回退到作业第一个分配班级
+    const effectiveClassId = classId || quiz.SubProject?.task?.assignments?.[0]?.classId || null;
+
+    // 按班级过滤答题记录（仅统计本班学生）
+    const classAttempts = effectiveClassId
+      ? quiz.QuizAttempt.filter(a => a.User.classId === effectiveClassId)
+      : quiz.QuizAttempt;
+
     // 仅统计已完成答题的学生
-    const completedAttempts = quiz.QuizAttempt.filter(a => a.QuestionAttempt.length === quiz.Question.length);
+    const completedAttempts = classAttempts.filter(a => a.QuestionAttempt.length === quiz.Question.length);
     const totalStudents = completedAttempts.length;
     const passScore = quiz.passScore ?? 60;
     const classAvgScore = totalStudents > 0
       ? Math.round(completedAttempts.reduce((s, a) => s + a.score, 0) / totalStudents)
       : 0;
+
+    // 班级信息：真实班级名 + 班级名册总人数
+    let className = "本班";
+    let classSize = totalStudents;
+    if (effectiveClassId) {
+      const classInfo = await prisma.class.findUnique({
+        where: { id: effectiveClassId },
+        select: { name: true },
+      });
+      if (classInfo) className = classInfo.name;
+      classSize = await prisma.user.count({
+        where: { classId: effectiveClassId, role: "STUDENT" },
+      });
+    }
 
     // 各题正确率详情（分母 = 完成人数）
     const questionStatsRaw = quiz.Question.map((q) => {
@@ -118,7 +140,8 @@ export async function POST(
     const dataSection = [
       "## 检测信息",
       `作业名称：${quiz.title}`,
-      `班级：本班`,
+      `班级：${className}`,
+      `班级总人数：${classSize}人`,
       `参与人数：${totalStudents}人`,
       `合格线：${passScore}分`,
       `班级平均分：${classAvgScore}分`,
@@ -151,9 +174,9 @@ export async function POST(
     const quizAnalysisVars: Record<string, string> = {
       "quizTitle": quiz.title,
       "quiz.title": quiz.title,
-      "className": "本班",
+      "className": className,
       "totalStudents": String(totalStudents),
-      "classSize": String(totalStudents),
+      "classSize": String(classSize),
       "classAvgScore": `${classAvgScore}分`,
       "passScore": `${passScore}分`,
       "questionStats": questionStats || "无",
@@ -199,8 +222,7 @@ export async function POST(
     const content = processChartBlocks(aiData.choices?.[0]?.message?.content || "");
 
     // 保存到 AIInsight（使用班级ID，不是task ID）
-    // 优先使用前端传递的 classId，否则使用第一个班级
-    const saveClassId = classId || quiz.SubProject?.task?.assignments?.[0]?.classId;
+    const saveClassId = effectiveClassId;
     if (saveClassId) {
       // 获取已有版本数量，用于设置新版本号
       const existingCount = await prisma.aIInsight.count({

@@ -137,6 +137,7 @@ export default function QuizStatsPage() {
       const res = await fetch(`/api/quiz-activities/${quizId}/report/generate`, {
         method: "POST",
         headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ classId: selectedClassId || undefined }),
       });
       if (res.ok) {
         const data = await res.json();
