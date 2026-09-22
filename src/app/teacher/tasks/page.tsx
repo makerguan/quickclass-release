@@ -95,6 +95,7 @@ interface LearningTask {
   requirements: string;
   knowledgeBase?: string;
   knowledgeBaseIds?: string;
+  imageGroupIds?: string;
   analysisPrompt?: string;
   status: string;
   createdAt: string;
@@ -115,6 +116,13 @@ interface KnowledgeBaseItem {
   status: string;
   enabled: boolean; // 是否启用
   contentLength: number; // 知识库字符数
+}
+
+interface ImageGroupItem {
+  id: string;
+  name: string;
+  enabled: boolean; // 是否启用
+  imageCount: number; // 组内图片数
 }
 
 const STATUS_CONFIG = {
@@ -166,6 +174,8 @@ export default function TeacherTasksPage() {
   const [conversationTemplates, setConversationTemplates] = useState<AnalysisTemplate[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseItem[]>([]);
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
+  const [imageGroups, setImageGroups] = useState<ImageGroupItem[]>([]);
+  const [selectedImageGroupIds, setSelectedImageGroupIds] = useState<string[]>([]);
   // 分页：每页课堂数（用户自定义）与当前页
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -1730,6 +1740,7 @@ export default function TeacherTasksPage() {
     fetchClasses();
     fetchTemplates();
     fetchKnowledgeBases();
+    fetchImageGroups();
   }, []);
 
   // 作业分析弹窗滚动到AI区域
@@ -1865,6 +1876,36 @@ export default function TeacherTasksPage() {
       .reduce((sum, kb) => sum + (kb?.contentLength || 0), 0);
   };
 
+  const fetchImageGroups = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/image-groups", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setImageGroups(
+          data
+            .filter((g: { id: string; name: string; enabled: boolean; images: unknown[] }) => g.enabled)
+            .map((g: { id: string; name: string; enabled: boolean; images: unknown[] }) => ({
+              id: g.id,
+              name: g.name,
+              enabled: g.enabled,
+              imageCount: g.images?.length || 0,
+            }))
+        );
+      }
+    } catch {
+      console.error("获取图片组失败");
+    }
+  };
+
+  const toggleImageGroupSelection = (groupId: string) => {
+    setSelectedImageGroupIds((prev) =>
+      prev.includes(groupId) ? prev.filter((id) => id !== groupId) : [...prev, groupId]
+    );
+  };
+
   const toggleKbSelection = (kbId: string) => {
     setSelectedKbIds((prev) => {
       if (prev.includes(kbId)) {
@@ -1889,6 +1930,7 @@ export default function TeacherTasksPage() {
     setObjectivesBackup(null);
     setFormClassIds([]);
     setSelectedKbIds([]);
+    setSelectedImageGroupIds([]);
     setEditingTask(null);
     setFormStudentTemplateId("");
     setFormClassTemplateId("");
@@ -2303,6 +2345,12 @@ export default function TeacherTasksPage() {
     } catch {
       setSelectedKbIds([]);
     }
+    try {
+      const imgIds = (task as any).imageGroupIds ? JSON.parse((task as any).imageGroupIds) : [];
+      setSelectedImageGroupIds(Array.isArray(imgIds) ? imgIds : []);
+    } catch {
+      setSelectedImageGroupIds([]);
+    }
     setFormVisible(true);
   };
 
@@ -2409,6 +2457,7 @@ export default function TeacherTasksPage() {
         knowledgeBase: editingTask?.knowledgeBase || "",
         analysisPrompt: formAnalysisPrompt || editingTask?.analysisPrompt || "",
         knowledgeBaseIds: selectedKbIds.length > 0 ? JSON.stringify(selectedKbIds) : null,
+        imageGroupIds: selectedImageGroupIds.length > 0 ? JSON.stringify(selectedImageGroupIds) : null,
         classIds: formClassIds,
         classAnalysisPrompt: formClassAnalysisPrompt || (editingTask as any)?.classAnalysisPrompt || "",
       };
@@ -3106,6 +3155,27 @@ export default function TeacherTasksPage() {
                                   </Tag>
                                 ))}
                                 <span className="text-xs text-gray-400 ml-1">共 {totalLen.toLocaleString()} 字符</span>
+                              </div>
+                            );
+                          }
+                        } catch { /* ignore */ }
+                        return null;
+                      })()}
+
+                      {/* 关联图片组 */}
+                      {(task as any).imageGroupIds && (() => {
+                        try {
+                          const gIds = JSON.parse((task as any).imageGroupIds) as string[];
+                          const linkedGroups = imageGroups.filter((g) => gIds.includes(g.id));
+                          if (linkedGroups.length > 0) {
+                            return (
+                              <div className="text-sm text-[#63666F]">
+                                <span className="text-gray-500">图片组：</span>
+                                {linkedGroups.map((g) => (
+                                  <Tag key={g.id} theme="primary" variant="light" size="small" style={{ marginRight: 4 }}>
+                                    {g.name}（{g.imageCount}张）
+                                  </Tag>
+                                ))}
                               </div>
                             );
                           }
@@ -4230,6 +4300,32 @@ export default function TeacherTasksPage() {
               )}
               <p className="text-xs text-gray-400">
                 选择后，该课堂下所有对话活动将自动注入所选知识库的全文内容，总字符数不超过 50,000
+              </p>
+            </div>
+
+            {/* 引用图片组 */}
+            <div className="space-y-2">
+              <h4 className="font-medium text-sm text-[#63666F]">引用图片组（选填）</h4>
+              <div className="flex flex-wrap gap-2">
+                {imageGroups.map((g) => (
+                  <Tag
+                    key={g.id}
+                    theme={selectedImageGroupIds.includes(g.id) ? "primary" : "default"}
+                    variant={selectedImageGroupIds.includes(g.id) ? "dark" : "light"}
+                    className="cursor-pointer"
+                    onClick={() => toggleImageGroupSelection(g.id)}
+                  >
+                    {g.name}（{g.imageCount} 张）
+                  </Tag>
+                ))}
+                {imageGroups.length === 0 && (
+                  <span className="text-xs text-gray-400 py-1">
+                    暂无图片组，请先到「图片仓库」页面创建
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-gray-400">
+                选择后，该课堂下所有对话活动中的 AI 可根据学生问题智能发送组内图片（教师课前准备的素材图）
               </p>
             </div>
 

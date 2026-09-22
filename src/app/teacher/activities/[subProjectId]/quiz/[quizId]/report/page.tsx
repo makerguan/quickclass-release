@@ -8,6 +8,7 @@ import {
 } from "recharts";
 import { Switch, MessagePlugin, Dialog } from "tdesign-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
+import { cleanInsightContent } from "@/lib/insight-clean";
 
 interface Question {
   id?: string;
@@ -26,16 +27,8 @@ export default function QuizReportPage() {
   const subProjectId = params.subProjectId as string;
   const quizId = params.quizId as string;
 
-  // 剥离 AI 返回内容中可能的 ```html ... ``` 包裹
-  const stripMarkdownCodeBlock = (text: string) => {
-    if (!text) return text;
-    const mdBlockMatch = text.match(/^\s*```(?:html|HTML)?\s*\n?([\s\S]*?)\n?\s*```\s*$/);
-    if (mdBlockMatch) return mdBlockMatch[1].trim();
-    // fallback：移除首尾的 ``` 标记
-    let cleaned = text.replace(/^\s*```(?:html|HTML)?\s*\n?/, "");
-    cleaned = cleaned.replace(/\n?\s*```\s*$/, "");
-    return cleaned.trim() || text;
-  };
+  // 统一清理 AI 返回内容：剥 ```html 围栏 + 截取 HTML 文档主体（丢弃前后说明文字）
+  const stripMarkdownCodeBlock = (text: string) => cleanInsightContent(text);
 
   const [quiz, setQuiz] = useState<any>(null);
   const [reportData, setReportData] = useState<any>(null);

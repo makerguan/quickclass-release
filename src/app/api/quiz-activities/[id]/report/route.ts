@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { cleanInsightContent } from "@/lib/insight-clean";
 
 export async function GET(
   req: NextRequest,
@@ -300,11 +301,12 @@ export async function GET(
       questionDiscrimination,
       difficultyTrend,
       // AI 报告版本管理
-      aiContent: quizInsight?.content || null,
+      // 展示层统一清理：旧数据入库时未剥说明文字/围栏，返回前用 cleanInsightContent 截取 HTML 主体（幂等，库数据不动）
+      aiContent: quizInsight ? cleanInsightContent(quizInsight.content || "") || null : null,
       aiContentVersion: quizInsight?.version || null,
       aiReportVersions: allQuizInsights.map(i => ({ 
         id: i.id, 
-        content: i.content, 
+        content: cleanInsightContent(i.content || ""), 
         version: i.version, 
         createdAt: i.createdAt.toISOString() 
       })), // 所有版本列表

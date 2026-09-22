@@ -250,6 +250,31 @@ model KnowledgeBase {
   updatedAt  DateTime
 }
 
+// 图片组：教师级资产，课堂通过 imageGroupIds 引用（对齐知识库模式）
+model ImageGroup {
+  id          String       @id @default(cuid())
+  teacherId   String
+  name        String
+  description String?                 // 组的使用场景说明
+  enabled     Boolean      @default(true)
+  images      ImageAsset[]
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime
+}
+
+// 组内单张图片，物理文件存 uploads/image-library/{groupId}/{cuid}.{ext}
+model ImageAsset {
+  id           String     @id @default(cuid())
+  groupId      String
+  filename     String
+  originalName String
+  description  String                 // 图片内容描述，AI 引用依据
+  fileType     String
+  fileSize     Int
+  createdAt    DateTime   @default(now())
+  ImageGroup   ImageGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+}
+
 model LearningProgress {
   id    String    @id @default(cuid())
   userId         String
@@ -271,6 +296,7 @@ model LearningTask {
   requirements                                                             String
   knowledgeBase                                                            String?
   knowledgeBaseIds                                                         String?
+  imageGroupIds                                                            String?
   analysisPrompt                                                           String?
   studentInsightTemplateId                                                 String?
   classInsightTemplateId                                                   String?

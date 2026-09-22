@@ -137,8 +137,8 @@ export default function TemplateSettingsPage() {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // 只允许 .md 文件
-    if (!file.name.endsWith(".md")) {
+    // 只允许 .md 文件（大小写不敏感，兼容 .MD）
+    if (!file.name.toLowerCase().endsWith(".md")) {
       MessagePlugin.warning("请选择 .md 格式的模板文件");
       e.target.value = "";
       return;

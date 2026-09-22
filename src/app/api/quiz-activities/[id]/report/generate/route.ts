@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { getAIConfig } from "@/lib/ai";
 import { getReportTime } from "@/lib/prompts/insight";
-import { processChartBlocks } from "@/lib/report-charts";
+import { cleanInsightContent } from "@/lib/insight-clean";
 
 // 课堂作业分析模板变量替换
 function replaceQuizAnalysisVars(template: string, vars: Record<string, string>): string {
@@ -218,8 +218,8 @@ export async function POST(
     }
 
     const aiData = await aiResponse.json();
-    // 渲染 chart 数据块为确定性 SVG（无块时原样返回；失败降级表格，最坏 = 现状）
-    const content = processChartBlocks(aiData.choices?.[0]?.message?.content || "");
+    // 统一清理：chart 数据块渲染 + 剥 markdown 围栏 + 截取 HTML 文档主体（丢弃前后说明文字）
+    const content = cleanInsightContent(aiData.choices?.[0]?.message?.content || "");
 
     // 保存到 AIInsight（使用班级ID，不是task ID）
     const saveClassId = effectiveClassId;
@@ -229,26 +229,14 @@ export async function POST(
         where: { type: "quiz_class", classId: saveClassId, scopeId: id },
       });
       
-      // 清理 content 中的 markdown 代码块标记（```html / ```HTML / ```）
-      // 注意：chart 块已在上方被替换为 SVG，此处只剥外层包裹 fence
-      let cleanContent = content;
-      const mdBlockMatch = cleanContent.match(/^\s*```(?:html|HTML)?\s*\n?([\s\S]*?)\n?\s*```\s*$/);
-      if (mdBlockMatch) {
-        cleanContent = mdBlockMatch[1].trim();
-      } else {
-        // fallback：简单剥离首尾标记
-        cleanContent = cleanContent.replace(/^\s*```(?:html|HTML)?\s*\n?/, "");
-        cleanContent = cleanContent.replace(/\n?\s*```\s*$/, "");
-        cleanContent = cleanContent.trim();
-      }
-      
       // 创建新版本（不删除旧版本）
+      // content 已由 cleanInsightContent 统一清理：chart 渲染 + 剥围栏 + 截取 HTML 主体（丢弃前后说明文字）
       await prisma.aIInsight.create({
         data: {
           type: "quiz_class",
           classId: saveClassId,
           scopeId: id,
-          content: cleanContent.trim(),
+          content: content.trim(),
           version: existingCount + 1,
         },
       });

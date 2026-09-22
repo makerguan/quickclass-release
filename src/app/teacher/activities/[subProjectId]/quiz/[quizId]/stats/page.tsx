@@ -10,6 +10,7 @@ import { Card, Button, Select, Tag, Loading, MessagePlugin } from "tdesign-react
 import { ChevronLeftIcon, ChartBarIcon, RefreshIcon } from "tdesign-icons-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import Markdown from "@/components/Markdown";
+import { cleanInsightContent } from "@/lib/insight-clean";
 
 interface QuestionStat {
   questionId: string;
@@ -491,11 +492,26 @@ export default function QuizStatsPage() {
                   {reportData?.aiContent ? "重新分析" : "生成分析"}
                 </Button>
               </div>
-              {reportData?.aiContent ? (
-                <div className="bg-purple-50 rounded-lg p-4 text-sm text-gray-700 whitespace-pre-line prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all">
-                  <Markdown>{reportData.aiContent}</Markdown>
-                </div>
-              ) : (
+              {reportData?.aiContent ? (() => {
+                // 清理：剥围栏 + 截取 HTML 主体（丢弃前后说明文字）；HTML 报告用 iframe 渲染
+                const cleanContent = cleanInsightContent(reportData.aiContent);
+                const isHtml = cleanContent.includes("<!DOCTYPE") ||
+                  cleanContent.includes("<html") ||
+                  (cleanContent.includes("<div") && cleanContent.includes("</div>"));
+                return isHtml ? (
+                  <iframe
+                    srcDoc={cleanContent}
+                    className="w-full border-none rounded-lg bg-white"
+                    style={{ minHeight: "400px" }}
+                    sandbox="allow-scripts"
+                    title="AI 学情分析报告"
+                  />
+                ) : (
+                  <div className="bg-purple-50 rounded-lg p-4 text-sm text-gray-700 whitespace-pre-line prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all">
+                    <Markdown>{cleanContent}</Markdown>
+                  </div>
+                );
+              })() : (
                 <div className="text-center py-8 text-gray-400">
                   <p>点击「生成分析」按钮，AI 将基于作业数据生成智能分析报告</p>
                 </div>

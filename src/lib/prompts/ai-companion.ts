@@ -39,7 +39,7 @@ function loadKatexAssets(): { js: string; css: string; available: boolean } {
 // 模块加载时执行一次（Next.js 路由在 Node.js 环境中运行）
 const katexAssets = loadKatexAssets();
 
-export const AI_COMPANION_VERSION = "math-renderer-v7";
+export const AI_COMPANION_VERSION = "image-renderer-v8";
 
 /**
 * AI伴学浮动对话框CSS样式
@@ -149,6 +149,7 @@ export const aiCompanionCSS = `
 #ai-companion-root .ac-msg ul, #ai-companion-root .ac-msg ol { margin: 4px 0 4px 18px; padding: 0; }
 #ai-companion-root .ac-msg li { margin: 2px 0; }
 #ai-companion-root .ac-msg a { color: #667eea; text-decoration: underline; }
+#ai-companion-root .ac-msg.assistant img { display: block; max-width: 100%; max-height: 260px; border-radius: 8px; margin: 6px 0; border: 1px solid #e5e7eb; cursor: zoom-in; }
 
 /* 公式容器样式 */
 #ai-companion-root .ac-math-inline { display: inline-block; vertical-align: middle; }
@@ -377,18 +378,45 @@ export const aiCompanionScript = String.raw`
         return true;
       } catch (e) { return false; }
     }
-    // 服务端不可用（没外网 / 合成失败）→ 回退本机朗读；本机也没有中文音色才算"没声音"
+    // 安卓平板常见坑：speechSynthesis 存在但系统没有 TTS 引擎（无 GMS / Google 语音服务不可达），
+    // getVoices() 永远为空 —— speak() 不报错也不出声，按钮会一直停在"播放中"。
+    // 先等音色列表就绪（Chrome 桌面首帧为空、稍后 voiceschanged 才有），仍为空才算"没有语音"。
+    function hasAnyVoice(cb) {
+      if (!window.speechSynthesis) { cb(false); return; }
+      var list = [];
+      try { list = window.speechSynthesis.getVoices() || []; } catch (e) {}
+      if (list.length) { cb(true); return; }
+      var settled = false;
+      function finish(ok) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { window.speechSynthesis.removeEventListener('voiceschanged', onChange); } catch (e) {}
+        cb(ok);
+      }
+      function onChange() {
+        var v = [];
+        try { v = window.speechSynthesis.getVoices() || []; } catch (e) {}
+        if (v.length) finish(true);
+      }
+      var timer = setTimeout(function() { finish(false); }, 1500);
+      try { window.speechSynthesis.addEventListener('voiceschanged', onChange); } catch (e) { finish(false); }
+    }
+    // 服务端不可用（没外网 / 合成失败 / 自动播放被拦截）→ 回退本机朗读；本机也没有语音引擎才算"没声音"
     function fallbackToLocal(cleanText) {
       if (token !== speechSeq) return;
       releaseAudio();
       playingBtn = btn;
-      if (speakLocally(cleanText || content)) {
-        setBtnState(btn, 'playing');
-      } else {
-        playingBtn = null;
-        setBtnState(btn, 'idle');
-        showSpeakError(btn, '当前设备没有可用的语音');
-      }
+      hasAnyVoice(function(ok) {
+        if (token !== speechSeq) return;
+        if (ok && speakLocally(cleanText || content)) {
+          setBtnState(btn, 'playing');
+        } else {
+          playingBtn = null;
+          setBtnState(btn, 'idle');
+          showSpeakError(btn, '当前设备没有可用的语音，请检查媒体音量');
+        }
+      });
     }
 
     // ---------- 首选：服务端合成的神经音色 ----------
@@ -542,6 +570,33 @@ export const aiCompanionScript = String.raw`
           parent.appendChild(codeEl);
           i = endC + 1;
           continue;
+        }
+      }
+
+      // 图片 ![alt](url)：课堂图片组素材（AI 回复中的教学图片）
+      if (ch === '!' && nx === '[') {
+        var endAltImg = s.indexOf(']', i + 2);
+        if (endAltImg > 0 && s.charAt(endAltImg + 1) === '(') {
+          var endUrlImg = s.indexOf(')', endAltImg + 2);
+          if (endUrlImg > endAltImg + 1) {
+            var altImg = s.substring(i + 2, endAltImg);
+            var urlImg = s.substring(endAltImg + 2, endUrlImg).trim();
+            flushText();
+            var imgEl = document.createElement('img');
+            imgEl.alt = altImg;
+            imgEl.loading = 'lazy';
+            // 本地教学图片追加登录 token（<img> 无法带 header；同源 iframe 可读 localStorage）
+            if (urlImg.indexOf('/api/images/') === 0 && urlImg.indexOf('token=') === -1) {
+              try {
+                var acTk = localStorage.getItem('token');
+                if (acTk) urlImg += (urlImg.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(acTk);
+              } catch (e) { /* 忽略 */ }
+            }
+            imgEl.src = urlImg;
+            parent.appendChild(imgEl);
+            i = endUrlImg + 1;
+            continue;
+          }
         }
       }
 

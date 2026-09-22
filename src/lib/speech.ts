@@ -579,7 +579,39 @@ async function registerTts(text: string, voice: string): Promise<string> {
   return data.id;
 }
 
-export type SpeakResult = "server" | "fallback" | "none";
+/**
+ * 等待系统音色列表就绪（Chrome 首次 getVoices() 返回空数组，需等 voiceschanged 事件）。
+ * 超时仍为空 → 这台设备没有可用的语音引擎（安卓平板常见：无 GMS 或 Google 语音服务
+ * 不可达时 speechSynthesis 存在但永远无声），返回 false。
+ */
+function waitForVoices(timeoutMs = 1500): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      resolve(false);
+      return;
+    }
+    const synth = window.speechSynthesis;
+    if ((synth.getVoices() || []).length > 0) {
+      resolve(true);
+      return;
+    }
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      synth.removeEventListener("voiceschanged", onChange);
+      resolve(ok);
+    };
+    const onChange = () => {
+      if ((synth.getVoices() || []).length > 0) finish(true);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    synth.addEventListener("voiceschanged", onChange);
+  });
+}
+
+export type SpeakResult = "server" | "fallback" | "no-voice" | "none";
 
 /**
  * 学生端朗读统一入口：优先服务端**流式**合成，失败自动回退浏览器内置朗读。
@@ -635,8 +667,13 @@ export async function speakSmart(
     if (seq === speakSeq) releaseAudio();
   }
 
-  // ② 回退：浏览器内置朗读（音色取决于学生电脑，但保证"读得出来"）
+  // ② 回退：浏览器内置朗读（音色取决于学生电脑，但保证"读得出来"）。
+  // 安卓平板常见坑：speechSynthesis 存在但系统没有 TTS 引擎（无 GMS / Google 语音被墙），
+  // getVoices() 永远为空，speak() 不报错也不出声 —— 先确认真的有音色可用再回退。
   if (seq !== speakSeq) return "none";
+  const hasVoice = await waitForVoices();
+  if (seq !== speakSeq) return "none";
+  if (!hasVoice) return "no-voice";
   speak(markdown, rate, () => {
     if (seq === speakSeq) setSpeakingOwner(null);
   });

@@ -51,6 +51,11 @@ export default function TeacherLayout({
       label: "知识仓库",
     },
     {
+      key: "/teacher/images",
+      icon: <Icon.ImageIcon />,
+      label: "图片仓库",
+    },
+    {
       key: "/teacher/classes",
       icon: <Icon.RootListIcon />,
       label: "班级管理",

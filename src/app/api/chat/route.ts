@@ -3,6 +3,7 @@ import { streamText } from "ai";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
+import { buildImageInjection, MERMAID_HINT } from "@/lib/image-library";
 import { aiQueue } from "@/lib/ai-queue";
 import { dbWrite } from "@/lib/db-queue";
 import {
@@ -184,6 +185,22 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // 3.5 图片组（课堂级，AI 可在回复中用 Markdown 图片语法发送组内图片）
+      try {
+        const imageInjection = await buildImageInjection(
+          task.imageGroupIds,
+          task.teacherId
+        );
+        if (imageInjection) {
+          systemPrompt += imageInjection;
+        }
+      } catch {
+        // 图片组注入失败，忽略（不影响对话）
+      }
+
+      // 3.6 Mermaid 示意图能力（前端 Markdown 组件渲染 ```mermaid 代码块）
+      systemPrompt += MERMAID_HINT;
+
       // 4. 兜底：教师模板未引用 {pcDescription} 时，自动追加对话目标
       if (presetConv.description && !/\{pcDescription\}/.test(teacherTemplate)) {
         systemPrompt += `\n对话目标：${presetConv.description}\n`;
@@ -204,6 +221,9 @@ export async function POST(req: NextRequest) {
           systemPrompt += `[片段${i + 1}] ${chunk.content}\n`;
         });
       }
+
+      // Mermaid 示意图能力（前端 Markdown 组件渲染 ```mermaid 代码块）
+      systemPrompt += MERMAID_HINT;
     }
 
     // 如果消息包含图片，提示 AI 可以分析图片
@@ -307,7 +327,8 @@ export async function POST(req: NextRequest) {
 
           // 重试后仍为空：按真实原因提示，不再一律归咎于图片输入
           if (chunkCount === 0) {
-            const raw = streamError?.message || "";
+            // streamError 仅在 onError 回调内赋值，控制流分析会把它收窄为 null，需断言
+            const raw = (streamError as Error | null)?.message || "";
             let errMsg: string;
             if (raw) {
               errMsg = /quota|配额|free|429|rate|limit/i.test(raw)

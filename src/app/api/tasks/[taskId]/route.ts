@@ -86,7 +86,7 @@ export async function PUT(
       return NextResponse.json({ error: "无权限" }, { status: 403 });
 
     const body = await req.json();
-    const { title, description, grade, subject, objectives, requirements, knowledgeBase, analysisPrompt, knowledgeBaseIds, subProjects, classIds, studentInsightTemplateId, classInsightTemplateId, classAnalysisPrompt } = body;
+    const { title, description, grade, subject, objectives, requirements, knowledgeBase, analysisPrompt, knowledgeBaseIds, imageGroupIds, subProjects, classIds, studentInsightTemplateId, classInsightTemplateId, classAnalysisPrompt } = body;
 
     // 调试日志：打印 classIds
     console.log("[PUT /api/tasks/:taskId] classIds=", classIds, "'classIds' in body:", 'classIds' in body);
@@ -240,6 +240,7 @@ export async function PUT(
             analysisPrompt,
             classAnalysisPrompt,
             knowledgeBaseIds,
+            imageGroupIds,
             updatedAt: new Date(),
           },
         });
@@ -534,7 +535,8 @@ export async function PUT(
       // 保存对话活动时，不修改课堂基本信息，只更新 updatedAt
       if (title !== undefined || description !== undefined || grade !== undefined || subject !== undefined ||
           objectives !== undefined || requirements !== undefined || knowledgeBase !== undefined ||
-          analysisPrompt !== undefined || classAnalysisPrompt !== undefined || knowledgeBaseIds !== undefined) {
+          analysisPrompt !== undefined || classAnalysisPrompt !== undefined || knowledgeBaseIds !== undefined ||
+          imageGroupIds !== undefined) {
         await tx.learningTask.update({
           where: { id: taskId },
           data: {
@@ -548,6 +550,7 @@ export async function PUT(
             ...(analysisPrompt !== undefined && { analysisPrompt }),
             ...(classAnalysisPrompt !== undefined && { classAnalysisPrompt }),
             ...(knowledgeBaseIds !== undefined && { knowledgeBaseIds }),
+            ...(imageGroupIds !== undefined && { imageGroupIds }),
             updatedAt: new Date(),
           },
         });

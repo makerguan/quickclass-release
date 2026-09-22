@@ -36,6 +36,8 @@ export default function SpeakButton({ text, owner, className = "" }: Props) {
       const result = await speakSmart(text, { owner });
       if (result === "fallback") {
         MessagePlugin.warning("语音服务暂不可用，已改用浏览器内置音色");
+      } else if (result === "no-voice") {
+        MessagePlugin.warning("当前设备没有可用的语音，请检查媒体音量或改用其他设备");
       }
     } catch {
       MessagePlugin.error("朗读失败，请稍后重试");

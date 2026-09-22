@@ -69,7 +69,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "无权限" }, { status: 403 });
 
     const body = await req.json();
-    const { title, description, grade, subject, objectives, requirements, knowledgeBase, analysisPrompt, knowledgeBaseIds, subProjects, classIds, studentInsightTemplateId, classInsightTemplateId, classAnalysisPrompt } = body;
+    const { title, description, grade, subject, objectives, requirements, knowledgeBase, analysisPrompt, knowledgeBaseIds, imageGroupIds, subProjects, classIds, studentInsightTemplateId, classInsightTemplateId, classAnalysisPrompt } = body;
 
     if (!title) {
       return NextResponse.json({ error: "请填写课堂标题" }, { status: 400 });
@@ -116,6 +116,7 @@ export async function POST(req: NextRequest) {
         analysisPrompt,
         classAnalysisPrompt: classAnalysisPrompt || null,
         knowledgeBaseIds: knowledgeBaseIds || null,
+        imageGroupIds: imageGroupIds || null,
         teacherId: String(payload.userId),
         updatedAt: new Date(),
         subProjects: {

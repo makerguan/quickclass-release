@@ -247,7 +247,7 @@ export default function ExplorationPanel({
               srcDoc={htmlContentFinal}
               className="w-full rounded-lg border border-gray-200"
               style={{ height: "calc(100vh - 200px)" }}
-              sandbox="allow-scripts allow-same-origin allow-forms"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-autoplay"
               title="探究内容"
             />
           </div>
@@ -259,7 +259,7 @@ export default function ExplorationPanel({
               srcDoc={htmlContentFinal}
               className="w-full rounded-lg border border-gray-200"
               style={{ height: "calc(100vh - 160px)" }}
-              sandbox="allow-scripts allow-same-origin"
+              sandbox="allow-scripts allow-same-origin allow-autoplay"
               title="探究内容"
             />
           </div>

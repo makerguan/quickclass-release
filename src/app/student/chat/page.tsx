@@ -534,7 +534,15 @@ export default function StudentChatPage() {
 
       // 流式回答生成完毕后，若朗读开关为开则自动朗读整段回答（讲完再读）
       if (getSpeechSettings().enabled && assistantContent.trim()) {
-        speakSmart(assistantContent, { owner: `msg-${assistantIndexRef.current}` });
+        // 安卓平板等设备可能没有任何语音引擎，静默失败会让学生以为"坏了"，给出可见提示
+        speakSmart(assistantContent, { owner: `msg-${assistantIndexRef.current}` }).then(
+          (result) => {
+            if (result === "no-voice") {
+              MessagePlugin.warning("自动朗读失败：当前设备没有可用的语音，请检查媒体音量或改用电脑");
+            }
+          },
+          () => {}
+        );
       }
 
     } catch (error) {
