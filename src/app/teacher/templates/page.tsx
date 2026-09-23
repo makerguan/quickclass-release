@@ -14,6 +14,7 @@ import {
   FileIcon,
 } from "tdesign-icons-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
+import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 
 interface AnalysisTemplate {
   id: string;
@@ -23,6 +24,10 @@ interface AnalysisTemplate {
   isDefault: boolean;
   createdAt: string;
   updatedAt: string;
+  // 模板效果预览状态（由列表接口带下来，避免每张卡片各发一次请求）
+  hasPreview?: boolean;
+  previewStale?: boolean;
+  previewAt?: string | null;
 }
 
 interface TemplateVariable {
@@ -663,6 +668,20 @@ export default function TemplateSettingsPage() {
   };
 
   // 渲染单个类别（可展开）
+  // 预览状态变化（首次生成 / 刷新后）→ 就地更新该模板，让按钮颜色立刻跟着变
+  const updatePreviewState = (id: string, state: "none" | "ok" | "stale") => {
+    const patch = (list: AnalysisTemplate[]) =>
+      list.map((t) =>
+        t.id === id ? { ...t, hasPreview: state !== "none", previewStale: state === "stale" } : t
+      );
+    setStudentTemplates(patch);
+    setClassTemplates(patch);
+    setConversationTemplates(patch);
+    setQuizDesignTemplates(patch);
+    setQuizAnalysisTemplates(patch);
+    setExplorationAnalysisTemplates(patch);
+  };
+
   const renderCategory = (type: "student" | "class" | "conversation" | "QUIZ_DESIGN" | "QUIZ_ANALYSIS" | "EXPLORATION_ANALYSIS") => {
     const config = TYPE_CONFIG[type];
     const Icon = config.icon;
@@ -824,6 +843,14 @@ export default function TemplateSettingsPage() {
                       </span>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
+                      <TemplatePreviewButton
+                        templateId={tpl.id}
+                        templateName={tpl.name}
+                        templateType={tpl.type}
+                        hasPreview={!!tpl.hasPreview}
+                        previewStale={!!tpl.previewStale}
+                        onStateChange={(st) => updatePreviewState(tpl.id, st)}
+                      />
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
