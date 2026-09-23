@@ -737,20 +737,41 @@ export default function TeacherTasksPage() {
     setConvDialogVisible(true);
   };
 
-  // 打开编辑对话活动弹窗
-  const openEditConversationDialog = (task: any, pc: any) => {
+  // 打开「编辑对话活动」弹窗
+  // ⚠️ 列表接口已剥离提示词正文，打开前必须拉一次该对话活动的完整字段
+  //    （契约见 fetchTaskDetailLite 上方）；失败则**不开弹窗**，避免空值覆盖库里的提示词。
+  // 注：这里走 /api/preset-conversations/[id] 单条接口，而不是 fetchTaskDetailLite，
+  //     因为只需要这一条对话活动，没必要把整节课拉下来。
+  const openEditConversationDialog = async (task: any, pc: any) => {
     const defaultSp = task.subProjects?.find((sp: any) => sp.presetConversations.some((p: any) => p.id === pc.id));
+    let detail: any = pc;
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/preset-conversations/${pc.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        MessagePlugin.error("读取对话活动详情失败，请重试");
+        return;
+      }
+      const data = await res.json();
+      if (data?.presetConversation) detail = data.presetConversation;
+    } catch {
+      MessagePlugin.error("读取对话活动详情失败，请重试");
+      return;
+    }
     setConvDialogMode("edit");
     setConvDialogTaskId(task.id);
     setConvDialogSpId(defaultSp?.id ?? null);
-    setConvDialogPc(pc);
+    setConvDialogPc(detail);
     setConvForm({
-      title: pc.title || "",
-      description: pc.description || "",
-      systemPrompt: pc.systemPrompt || "",
-      analysisPrompt: pc.analysisPrompt || "",
-      classAnalysisPrompt: pc.classAnalysisPrompt || "",
-      conversationPromptTemplateId: pc.conversationPromptTemplateId || "",
+      title: detail.title || "",
+      description: detail.description || "",
+      systemPrompt: detail.systemPrompt || "",
+      analysisPrompt: detail.analysisPrompt || "",
+      classAnalysisPrompt: detail.classAnalysisPrompt || "",
+      // 模板关联不在库中存字段，靠 systemPrompt 内容反查（此前读 pc.xxx 恒为空）
+      conversationPromptTemplateId: findConversationPromptTemplateId(detail.systemPrompt) || "",
     });
     setConvDialogVisible(true);
   };
@@ -1718,34 +1739,52 @@ export default function TeacherTasksPage() {
     setAiCompanionPromptText((e as any).aiCompanionPrompt || "");
     setAiCompanionStatus(e.enableAiCompanion ? "ready" : "idle");
     setShowAiCompanionPrompt(false);
-    setExplorationModalVisible(true);
+    // ⚠️ 这里**故意不打开**弹窗：列表接口已不下发 htmlContent 与提示词正文，
+    //    必须等下面详情拉回来再打开。否则就是「先开弹窗、后补数据」——
+    //    一旦详情拉取失败，源码区 / 预览区 / 提示词会全为空，用户一保存就把
+    //    库里的探究正文和提示词整片清空。
+    //    （真正打开弹窗的动作在下方 async 块的成功分支末尾）
 
     // 从详情接口获取完整 htmlContent（列表已瘦身，编辑时按需拉取）
     // 详情含注入版HTML + 最新提示词；预览用注入版，源码区保持纯净
     (async () => {
       try {
         const token = localStorage.getItem("token") || "";
+        // 拉完整详情：/api/exploration-activities/[id] 始终返回完整字段
+        // （含 htmlContent 正文与 designPrompt / analysisPrompt / aiCompanionPrompt）。
+        // ⚠️ 编辑探究**必须**拿正文，所以这里不要改用 fetchTaskDetailLite（它会剥掉 htmlContent）。
         const detailRes = await fetch(`/api/exploration-activities/${e.id}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (detailRes.ok) {
-          const detail = await detailRes.json();
-          if (detail.htmlContent) {
-            const clean = e.enableAiCompanion ? stripAiCompanionCode(detail.htmlContent) : detail.htmlContent;
-            setExplorationHtml(clean);          // 源码编辑区：纯净稿
-            setExplorationPreview(detail.htmlContent); // 预览区：注入版
-            setOriginalHtmlForInjection(clean);
-            // 详情是权威完整版，重建版本栈 v0
-            setHtmlVersions([clean]);
-            setVersionIndex(0);
-          }
-          if (detail.aiCompanionPrompt && detail.aiCompanionPrompt.length > 50) {
-            setAiCompanionPromptText(detail.aiCompanionPrompt);
-            setAiCompanionStatus("ready");
-          }
+        if (!detailRes.ok) {
+          // 拿不到权威完整数据就**不进编辑态**（弹窗不开），避免空白内容覆盖数据库
+          MessagePlugin.error("读取探究详情失败，请重试");
+          return;
         }
+        const detail = await detailRes.json();
+        if (detail.htmlContent) {
+          const clean = e.enableAiCompanion ? stripAiCompanionCode(detail.htmlContent) : detail.htmlContent;
+          setExplorationHtml(clean);          // 源码编辑区：纯净稿
+          setExplorationPreview(detail.htmlContent); // 预览区：注入版
+          setOriginalHtmlForInjection(clean);
+          // 详情是权威完整版，重建版本栈 v0
+          setHtmlVersions([clean]);
+          setVersionIndex(0);
+        }
+        if (detail.aiCompanionPrompt && detail.aiCompanionPrompt.length > 50) {
+          setAiCompanionPromptText(detail.aiCompanionPrompt);
+          setAiCompanionStatus("ready");
+        }
+        // 列表接口已剥离提示词正文，这两个提示词改由本详情接口补齐。
+        // ⚠️ 别再依赖列表数据回填它们 —— 否则「首轮设计意图 / 分析提示词」会显示为空，
+        //    用户一保存就把库里的内容清掉（契约见 fetchTaskDetailLite 上方说明）。
+        if (detail.designPrompt !== undefined) setInitialPrompt(detail.designPrompt || "");
+        if (detail.analysisPrompt !== undefined) setExplorationPrompt(detail.analysisPrompt || "");
+        // 数据已到齐，此刻才允许进入编辑态
+        setExplorationModalVisible(true);
       } catch {
-        // 详情拉取失败则保持列表已有数据
+        // 详情拉取失败：同样不进编辑态（上面已 return / 这里已没有可用的权威数据）
+        MessagePlugin.error("读取探究详情失败，请重试");
       }
     })();
   };
@@ -2495,24 +2534,69 @@ export default function TeacherTasksPage() {
     setFormVisible(true);
   };
 
-  const openEditForm = (task: LearningTask) => {
-    setEditingTask(task);
-    setFormTitle(task.title);
-    setFormDescription(task.description || "");
-    setFormGrade(task.grade || "");
-    setFormSubject(task.subject || "");
-    setFormClassIds(task.assignments.map((a) => a.classId));
-    // 设置分析提示词到独立 state
-    setFormAnalysisPrompt(task.analysisPrompt || "");
-    setFormClassAnalysisPrompt((task as any).classAnalysisPrompt || "");
+  // ── 按需拉取课堂详情（「列表瘦身契约」的前端那一半） ──────────────────────
+  // ⚠️ 为什么必须存在：GET /api/tasks（列表接口）**有意不下发**提示词正文
+  //   （systemPrompt / analysisPrompt / classAnalysisPrompt / designPrompt /
+  //    aiCompanionPrompt）与探究 HTML 正文 —— 实测 8 个课堂的列表响应 372 KiB 里
+  //   89% 是这些大字段，而数据库查询只要 14ms，所以「课堂管理页打开慢」的根因
+  //   就是每次刷新都要传它们。瘦身后 372 KiB → 65.5 KiB（降 82.4%）。
+  //
+  //   代价：编辑弹窗不能再拿列表数据直接初始化表单，必须**先拉详情**，
+  //   否则输入框是空的，用户一保存就把库里原有的提示词清掉（真实数据丢失）。
+  //
+  // ⛔ 调用约定（以后新加编辑入口务必遵守）：
+  //   凡是「打开一个会把提示词/正文回写到数据库的表单或编辑器」，都必须先
+  //   `await` 本函数；拿不到 detail 就 `MessagePlugin.error(...)` + `return`，
+  //   **不要**先打开弹窗再补数据，也**不要**拿列表对象兜底（那等于用空值覆盖数据库）。
+  //   现有 4 个调用点：
+  //     - openEditForm（编辑课堂）            → 本函数（lite）
+  //     - startEditingSubProjects（编辑子活动） → 本函数（lite）
+  //     - openEditConversationDialog（编辑对话活动）→ GET /api/preset-conversations/[id]
+  //     - openEditExploration（编辑探究）      → GET /api/exploration-activities/[id]（要正文，不带 lite）
+  //
+  // lite=1：不带探究 HTML 正文（单课可达数百 KB，编辑课堂/子活动并不需要它）。
+  // 接口侧契约（为什么列表要剥、为什么不能加回去）见
+  // src/app/api/tasks/route.ts GET 分支顶部的「列表瘦身契约」注释块。
+  // ──────────────────────────────────────────────────────────────────────────
+  const fetchTaskDetailLite = async (taskId: string): Promise<any | null> => {
     try {
-      const ids = task.knowledgeBaseIds ? JSON.parse(task.knowledgeBaseIds) : [];
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/tasks/${taskId}?lite=1`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
+
+  // 编辑课堂：⚠️ 必须**先拿到详情再打开表单**（原因见 fetchTaskDetailLite 上方的契约）。
+  // 拉取失败直接 return —— 不要退化成「用列表里的 task 对象打开表单」，
+  // 那样提示词框是空的，用户一点保存就会把库里已有的提示词覆盖成空。
+  const openEditForm = async (task: LearningTask) => {
+    const detail = await fetchTaskDetailLite(task.id);
+    if (!detail) {
+      MessagePlugin.error("读取课堂详情失败，请重试");
+      return;
+    }
+    setEditingTask(detail as LearningTask);
+    setFormTitle(detail.title || "");
+    setFormDescription(detail.description || "");
+    setFormGrade(detail.grade || "");
+    setFormSubject(detail.subject || "");
+    setFormClassIds((detail.assignments || []).map((a: any) => a.classId));
+    // 设置分析提示词到独立 state
+    setFormAnalysisPrompt(detail.analysisPrompt || "");
+    setFormClassAnalysisPrompt(detail.classAnalysisPrompt || "");
+    try {
+      const ids = detail.knowledgeBaseIds ? JSON.parse(detail.knowledgeBaseIds) : [];
       setSelectedKbIds(Array.isArray(ids) ? ids : []);
     } catch {
       setSelectedKbIds([]);
     }
     try {
-      const imgIds = (task as any).imageGroupIds ? JSON.parse((task as any).imageGroupIds) : [];
+      const imgIds = detail.imageGroupIds ? JSON.parse(detail.imageGroupIds) : [];
       setSelectedImageGroupIds(Array.isArray(imgIds) ? imgIds : []);
     } catch {
       setSelectedImageGroupIds([]);
@@ -2793,11 +2877,18 @@ export default function TeacherTasksPage() {
   };
 
   // startEditingSubProjects：analysisPrompt 直接赋值，不再做模板映射
-  const startEditingSubProjects = (task: LearningTask) => {
+  // ⚠️ 列表接口已剥离提示词正文，进入编辑态前先拉详情补齐（契约见 fetchTaskDetailLite 上方）；
+  // 拉取失败或子活动为空则**不进编辑态**，避免整屏空白框被保存回库。
+  const startEditingSubProjects = async (task: LearningTask) => {
+    const detail = await fetchTaskDetailLite(task.id);
+    if (!detail || !Array.isArray(detail.subProjects) || detail.subProjects.length === 0) {
+      MessagePlugin.error("读取课堂详情失败，请重试");
+      return;
+    }
     setEditingTaskId(task.id);
 
     setEditingSubProjects(
-      task.subProjects.map((sp) => ({
+      detail.subProjects.map((sp: any) => ({
         id: sp.id,
         title: sp.title,
         description: sp.description || "",
@@ -2805,7 +2896,7 @@ export default function TeacherTasksPage() {
         requirements: sp.requirements || "",
         knowledgeBase: sp.knowledgeBase || "",
         analysisPrompt: sp.analysisPrompt || "",
-        presetConversations: sp.presetConversations.map((pc) => ({
+        presetConversations: (sp.presetConversations || []).map((pc: any) => ({
           id: pc.id,
           title: pc.title,
           description: pc.description || "",
