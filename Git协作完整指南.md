@@ -133,6 +133,26 @@ git push origin dev
 3. 把 `main` 推送到 Gitee。
 4. 把 `main` 同步到 GitHub 国际版。
 
+### 4.0 每天开工第一步：先处理待合并的 PR
+
+在基于 `dev` 做任何开发之前，先确认有没有合作者提了**还没合并**的 PR —— PR 未合并 = 改动还不在 `dev` 里，在旧代码上继续开发会产生冲突。
+
+> 若使用 AI 编程助手，这一步已由**仓库内规则文件**接管：助手在会话开始时会自动读到并提醒，无需你记得。
+> 规则入口见仓库根目录 **`AGENTS.md`**（跨工具的规范事实来源；Trae 桌面版需在「设置 → 规则 → 导入设置」开一次「将 AGENTS.md 包含在上下文中」开关）。
+> 各工具专属目录（`.trae/rules/`、`.codebuddy/rules/`）里**只放指向 `AGENTS.md` 的薄指针**，正文不复制 —— 详见文末「附录：AI 协作规范写在哪」。
+
+```bash
+# 查待合并的 PR
+curl -s -H "Authorization: Bearer $GITEE_TOKEN" \
+  "https://gitee.com/api/v5/repos/maoyouhui/quickclass-release/pulls?state=open"
+
+# 合并某个 PR（<编号> 换成上面的 PR 编号）
+curl -s -X PUT -H "Authorization: Bearer $GITEE_TOKEN" \
+  "https://gitee.com/api/v5/repos/maoyouhui/quickclass-release/pulls/<编号>/merge"
+```
+
+`GITEE_TOKEN` 获取：Gitee → 设置 → 私人令牌 → 新建令牌，勾选仓库读写（`projects`）权限；在本机设为环境变量即可（Windows：`setx GITEE_TOKEN "你的令牌"`），**不要提交到仓库**。
+
 ### 4.1 在 dev 上开发
 
 #### 命令行方式
@@ -390,3 +410,24 @@ bash scripts/release.sh
 - **核心原则**：`main` 和 GitHub 是国际/国内发布分支，保持稳定性，不直接开发。
 
 按照这个流程，国内版和国际版可以保持一致，团队协作也不容易出错。
+
+---
+
+## 附录：AI 协作规范写在哪（多工具通用）
+
+AI 编程助手会「自动读」的规则文件，各工具互不相同。若为每种工具都维护一份规范全文，必然出现**多版本漂移**——改了一份、忘另一份，最后没人知道哪份算数。
+
+本仓库采用 **「内容唯一、入口轻薄」**：
+
+```
+AGENTS.md                            ← 规范正文（唯一事实来源），跨工具通用
+├── .trae/rules/pr-sync-guard.md         ← 薄指针：只写「去读 AGENTS.md」
+├── .codebuddy/rules/pr-sync-guard.mdc   ← 薄指针
+└──（未来新增工具）                       ← 再加一个 3 行的指针，不抄正文
+```
+
+**为什么选 `AGENTS.md`**：它是当前跨工具的事实标准，20+ 工具原生读取（Cursor、GitHub Copilot、Codex、Windsurf、Zed、RooCode、Cline、Gemini CLI、Jules、Amp、goose、opencode…）。**Trae 也支持**——但桌面版需在「设置 → 规则 → 导入设置」打开一次「将 AGENTS.md 包含在上下文中」；TRAE CLI 则默认读取，无需开关。
+
+**怎么用**：不论你用什么工具，**先读根目录 `AGENTS.md`**。其 §0 有「怎么让本文件在你的工具里生效」的对照表；不在表内的工具，照 §0 说明在各自规则目录加一个**指向 `AGENTS.md` 的薄指针**即可。
+
+> ⛔ 维护者注意：`AGENTS.md` 是唯一正文。工具专属文件里出现规范正文 = 违规，请改回指针。
