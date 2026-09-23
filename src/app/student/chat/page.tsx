@@ -169,14 +169,20 @@ export default function StudentChatPage() {
   const [pendingImages, setPendingImages] = useState<MessageImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const activePresetRef = useRef<string | null>(null);
   const isSwitchingRef = useRef(false); // 防止 switch 函数重入
   const latestDetailConvRef = useRef<string | null>(null); // 最新一次详情请求的对话 ID（竞态保护：快速切换后丢弃旧响应）
+  const scrollContainerRef = useRef<HTMLDivElement>(null); // 消息滚动容器（判断是否处于底部附近）
+  const messagesInnerRef = useRef<HTMLDivElement>(null); // 消息内容内层（供 ResizeObserver 观察内容高度突变）
+  const prevMsgCountRef = useRef(-1); // 上一次渲染的消息条数（区分"新增消息"与"流式更新最后一条"）
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // 直接设置消息容器的 scrollTop：只滚动消息区，绝不波及页面级滚动。
+    // scrollIntoView 默认 block:"start" 会滚动所有可滚动祖先链（含页面本身），
+    // 流式期间高频调用会导致页面来回跳动、底部输入框位置闪烁。
+    const el = scrollContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   };
 
   useEffect(() => {
@@ -184,8 +190,35 @@ export default function StudentChatPage() {
   }, []);
 
   useEffect(() => {
-    scrollToBottom();
+    // 新增消息（条数变化：发送、回复首包、加载历史）→ 无条件滚到底；
+    // 流式更新最后一条内容（条数不变）→ 仅当用户本就在底部附近时跟随，
+    // 避免学生上滚回看流程图时被强行拉回底部
+    const countChanged = prevMsgCountRef.current !== messages.length;
+    prevMsgCountRef.current = messages.length;
+    const el = scrollContainerRef.current;
+    const nearBottom =
+      !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (countChanged || nearBottom) {
+      scrollToBottom();
+    }
   }, [messages]);
+
+  // 高度突变补偿：mermaid 图表渲染完成、图片加载等会撑高内容但不改变 messages，
+  // 此时若用户在底部附近则跟随滚动，修复"画面停留在流程图而非最新消息"
+  useEffect(() => {
+    const outer = scrollContainerRef.current;
+    const inner = messagesInnerRef.current;
+    if (!outer || !inner || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const nearBottom =
+        outer.scrollHeight - outer.scrollTop - outer.clientHeight < 120;
+      if (nearBottom) {
+        scrollToBottom();
+      }
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [activePresetId, activeType]);
 
   // 当 activePresetId 变化时，清除重入锁（让后续点击可进入 switchToChat）
   useEffect(() => {
@@ -863,7 +896,8 @@ onClick={() => {
 
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4">
+              <div ref={messagesInnerRef} className="space-y-4">
               {messages.length === 0 && currentInfo && (
                 <div className="text-center text-gray-400 mt-10">
                   <p className="text-lg mb-2">{currentInfo.preset.title}</p>
@@ -917,7 +951,7 @@ onClick={() => {
                   </div>
                 </div>
               )}
-              <div ref={messagesEndRef} />
+              </div>
             </div>
 
             {pendingImages.length > 0 && (

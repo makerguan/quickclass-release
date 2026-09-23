@@ -49,6 +49,9 @@ function MermaidBlock({ code }: { code: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    // code 变化时重置失败标记：流式输出期间 mermaid 语法尚不完整导致的渲染失败
+    // 不应永久化（否则流结束后语法完整了仍显示源码而非图表）
+    setFailed(false);
     (async () => {
       try {
         const mermaid = (await import("mermaid")).default;
