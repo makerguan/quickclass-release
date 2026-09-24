@@ -45,7 +45,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   PieChart, Pie, Legend, ResponsiveContainer,
 } from "recharts";
-import { injectSubmitFunctionality, removeSubmitFunctionality } from "@/lib/prompts/exploration-submit";
+import { injectSubmitFunctionality, removeSubmitFunctionality, detectInstrumentation } from "@/lib/prompts/exploration-submit";
 import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 import ViewFrame from "./ViewFrame";
 
@@ -1077,6 +1077,84 @@ export default function TeacherTasksPage() {
       MessagePlugin.success("HTML 文件已加载，可继续用对话修改");
     };
     input.click();
+  };
+
+  // AI 接入提交采集：对导入/存量的未接桩 HTML 一键插桩（复用 generate 多轮分支，版本栈天然备份可撤销）
+  const [adapting, setAdapting] = useState(false);
+  const handleAdaptInstrumentation = async () => {
+    if (!explorationPanelSpId) return;
+    if (!explorationHtml.trim()) {
+      MessagePlugin.warning("请先生成或上传 HTML 内容");
+      return;
+    }
+    const detection = detectInstrumentation(explorationHtml);
+    if (!detection.needsAdaptation) {
+      MessagePlugin.info("该页面已接入提交采集，无需改造");
+      return;
+    }
+    // 混淆代码提示：minified/混淆变量 AI 难以识别，效果可能不佳
+    const minified = /[\w$]{200,}/.test(explorationHtml) || /_0x[a-f0-9]{4,}/.test(explorationHtml);
+    const confirmed = window.confirm(
+      minified
+        ? "检测到该 HTML 可能经过压缩/混淆，AI 接入效果可能不佳，仍要继续吗？\n（改造会作为新版本入栈，可随时撤销还原）"
+        : "AI 将把页面中的分数/关卡/答案状态变量接入提交采集，不改变任何视觉与交互。\n（改造会作为新版本入栈，可随时撤销还原）"
+    );
+    if (!confirmed) return;
+
+    setAdapting(true);
+    const startAt = Date.now();
+    let msg = await MessagePlugin.loading("AI 接入采集中... 0s", 0);
+    const timer = setInterval(async () => {
+      const s = Math.round((Date.now() - startAt) / 1000);
+      msg.close();
+      msg = await MessagePlugin.loading(`AI 接入采集中... ${s}s`, 0);
+    }, 1000);
+    try {
+      const token = localStorage.getItem("token") || "";
+      const response = await fetch("/api/exploration-activities/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          subProjectId: explorationPanelSpId,
+          initialPrompt: "",
+          currentHtml: explorationHtml,
+          instruction:
+            "请只做一件事：找到页面中记录分数、关卡、完成状态、用户答案的变量/函数，在它们被更新的代码处插入防御式上报调用（if (typeof updateScore === \"function\") updateScore(x) 等），并把这些状态同步挂到 window.__gameState__。不得改变页面任何视觉、交互逻辑、文案，输出完整 HTML。如果页面中已存在 __gameState__ 初始化或 typeof updateScore 之类的上报调用，说明已接入，直接原样输出 HTML 不要改动。",
+        }),
+      });
+      if (!response.ok || !response.body) throw new Error(`生成失败（${response.status}）`);
+
+      // 流式接收
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let received = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += decoder.decode(value, { stream: true });
+      }
+      const html = received.trim();
+      if (!html) throw new Error("AI 未返回内容");
+
+      // 改造结果入版本栈（备份/撤销天然可用）
+      const baseVersions = htmlVersions.slice(0, versionIndex + 1);
+      const newIndex = baseVersions.length;
+      setHtmlVersions([...baseVersions, html]);
+      setVersionIndex(newIndex);
+      setExplorationHtml(html);
+      setExplorationPreview(html);
+      setChatMessages((prev) => [
+        ...prev,
+        { role: "ai", content: "🔌 已完成提交采集接入（AI 插桩），建议预览试玩验证得分上报，可撤销还原" },
+      ]);
+      MessagePlugin.success("AI 接入采集完成，建议预览试玩验证（可撤销）");
+    } catch (e: any) {
+      MessagePlugin.error(e.message || "接入采集失败");
+    } finally {
+      clearInterval(timer);
+      msg.close();
+      setAdapting(false);
+    }
   };
 
   // 自动生成提示词（流式：提示词编辑区已有输入时优化已有提示词，否则从零设计）
@@ -5118,6 +5196,17 @@ export default function TeacherTasksPage() {
                     <Button theme="default" variant="text" size="small" icon={<FileIcon />} onClick={handleExportHtml}>
                       导出
                     </Button>
+                    {explorationHtml.trim() && detectInstrumentation(explorationHtml).needsAdaptation ? (
+                      <Tooltip content="该页面未接入提交采集（分数/关卡不会上报），点击让 AI 一键接入，可撤销">
+                        <Button theme="warning" variant="dashed" size="small" loading={adapting} onClick={handleAdaptInstrumentation}>
+                          AI 接入采集
+                        </Button>
+                      </Tooltip>
+                    ) : explorationHtml.trim() ? (
+                      <Tooltip content="该页面已接入提交采集，学生得分/进度可正常上报">
+                        <span className="text-xs text-green-600 px-1">✓ 已接入采集</span>
+                      </Tooltip>
+                    ) : null}
                     {explorationPreview && (
                       <Button theme="default" variant="text" size="small" onClick={() => openPreview(explorationPreview)}>
                         全屏

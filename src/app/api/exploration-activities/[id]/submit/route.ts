@@ -34,6 +34,9 @@ export async function POST(
       taskTitle, studentName, className,
       // QuickForm 采集块带上来的学生答案（没有采集块时为空）
       answers,
+      // 双轨采集新增：契约轨明细 + 兜底采集
+      gameState, scoreInferred,
+      canvasSnapshots, storageSnapshot, textSnapshot,
     } = body;
 
     const finalScore = typeof score === "number" ? score : 0;
@@ -50,6 +53,20 @@ export async function POST(
       taskTitle: taskTitle ?? "",
       studentName: studentName ?? "",
       className: className ?? "",
+      // 契约轨明细（AI 挂载的 __gameState__ 原样存档，教师端展示用）
+      gameState: gameState && typeof gameState === "object" && !Array.isArray(gameState) ? gameState : null,
+      // 分数是否为正则推测值（非契约/函数上报）
+      scoreInferred: scoreInferred === true,
+      // 兜底采集：canvas 快照（每张限 500KB、最多 3 张）
+      canvasSnapshots: Array.isArray(canvasSnapshots)
+        ? canvasSnapshots.filter((s: unknown) => typeof s === "string" && s.length < 500_000).slice(0, 3)
+        : [],
+      // 兜底采集：localStorage 白名单快照（注入端已限 20 键 × 200 字符）
+      storageSnapshot: storageSnapshot && typeof storageSnapshot === "object" && !Array.isArray(storageSnapshot)
+        ? storageSnapshot
+        : {},
+      // 兜底采集：页面文本快照（限 10KB）
+      textSnapshot: typeof textSnapshot === "string" ? textSnapshot.slice(0, 10000) : "",
     };
 
     // actionLog 明细写入独立表

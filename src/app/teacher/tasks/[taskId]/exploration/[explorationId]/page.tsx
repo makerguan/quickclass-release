@@ -41,6 +41,7 @@ interface AnalysisData {
 
 interface UserSubmission {
   id: string;
+  studentId: string;
   studentName: string;
   answers: string;
   score: number | null;
@@ -157,6 +158,10 @@ export default function ExplorationAnalysisPage() {
   const [aiReportVersions, setAiReportVersions] = useState<InsightVersion[]>([]);
   const [aiVersionIndex, setAiVersionIndex] = useState(0);
   const [generatingReport, setGeneratingReport] = useState(false);
+
+  // 提交详情缓存：展开有 canvas 快照的学生时按 studentId 拉取完整数据
+  // （列表接口已剥离 canvasSnapshots / textSnapshot 等大字段，只留 canvasCount）
+  const [detailCache, setDetailCache] = useState<Record<string, Record<string, any>>>({});
 
   // 删除版本
   const [deleteVisible, setDeleteVisible] = useState(false);
@@ -697,16 +702,33 @@ export default function ExplorationAnalysisPage() {
 
     if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交记录</div>;
 
-    const toggleExpand = (id: string) => {
+    const toggleExpand = (id: string, studentId: string, canvasCount: number) => {
+      const willExpand = !expandedIds.has(id);
       setExpandedIds((prev) => {
         const next = new Set(prev);
         if (next.has(id)) next.delete(id);
         else next.add(id);
         return next;
       });
+      // 展开且有 canvas 快照时，按 studentId 拉取该学生的完整数据（含大字段）
+      if (willExpand && canvasCount > 0 && !detailCache[id]) {
+        fetch(`/api/exploration-activities/${explorationId}/submissions?studentId=${studentId}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((arr) => {
+            if (Array.isArray(arr) && arr[0]?.answers) {
+              try {
+                const full = JSON.parse(arr[0].answers);
+                setDetailCache((prev) => ({ ...prev, [id]: full }));
+              } catch { /* 解析失败保持基础展示 */ }
+            }
+          })
+          .catch(() => { /* 拉取失败不影响基础展示 */ });
+      }
     };
 
-    const renderAnswersDetail = (answers: Record<string, unknown>) => {
+    const renderAnswersDetail = (answers: Record<string, any>, canvasShots: string[]) => {
       const fieldLabels: Record<string, string> = {
         timeSpent: "停留时间（秒）",
         interactions: "互动次数",
@@ -714,22 +736,81 @@ export default function ExplorationAnalysisPage() {
         attempts: "尝试次数",
         gameLevel: "游戏关卡",
         completedSections: "完成环节",
+        canvasCount: "作品快照数",
       };
-      const items = Object.entries(answers).filter(([, v]) => v !== "" && v !== null && v !== undefined);
-      if (items.length === 0) return <div className="text-xs text-gray-400">无数据</div>;
+      // 大字段 / 对象字段单独渲染，不进通用网格
+      const { gameState, storageSnapshot, textSnapshot, canvasCount, scoreInferred, ...rest } = answers;
+      const items = Object.entries(rest).filter(
+        ([, v]) => v !== "" && v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0)
+      );
 
       return (
-        <div className="grid grid-cols-2 gap-2">
-          {items.map(([key, val]) => (
-            <div key={key} className="bg-gray-50 rounded px-3 py-2">
-              <div className="text-xs text-gray-400">{fieldLabels[key] || key}</div>
-              <div className="text-sm font-medium text-gray-700 mt-0.5">
-                {key === "completedSections"
-                  ? (Array.isArray(val) && val.length > 0 ? val.join("、") : "无")
-                  : Array.isArray(val) ? val.join("、") : String(val)}
+        <div className="space-y-3">
+          {items.length === 0 && canvasShots.length === 0 ? (
+            <div className="text-xs text-gray-400">无数据</div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {items.map(([key, val]) => (
+                <div key={key} className="bg-gray-50 rounded px-3 py-2">
+                  <div className="text-xs text-gray-400">{fieldLabels[key] || key}</div>
+                  <div className="text-sm font-medium text-gray-700 mt-0.5">
+                    {key === "completedSections"
+                      ? (Array.isArray(val) && val.length > 0 ? val.join("、") : "无")
+                      : Array.isArray(val) ? val.join("、") : String(val)}
+                  </div>
+                </div>
+              ))}
+              {scoreInferred === true && (
+                <div className="bg-amber-50 rounded px-3 py-2">
+                  <div className="text-xs text-gray-400">分数来源</div>
+                  <div className="text-sm font-medium text-amber-700 mt-0.5">页面文本推测（页面未主动上报）</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* AI 上报的页面状态（契约轨明细） */}
+          {gameState && typeof gameState === "object" && Object.keys(gameState).length > 0 && (
+            <div>
+              <div className="text-xs text-gray-400 mb-1">🤖 页面状态（AI 上报）</div>
+              <div className="bg-blue-50/50 rounded p-2 text-xs font-mono break-all">
+                {JSON.stringify(gameState)}
               </div>
             </div>
-          ))}
+          )}
+
+          {/* canvas 作品快照（详情拉取后展示） */}
+          {canvasShots.length > 0 && (
+            <div>
+              <div className="text-xs text-gray-400 mb-1">🖼️ 作品快照</div>
+              <div className="flex flex-wrap gap-2">
+                {canvasShots.map((src, i) => (
+                  <img
+                    key={i}
+                    src={src}
+                    alt={`作品快照 ${i + 1}`}
+                    className="max-w-[220px] rounded border border-gray-200"
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 页面文本快照（折叠） */}
+          {typeof textSnapshot === "string" && textSnapshot.trim() && (
+            <details>
+              <summary className="text-xs text-gray-400 cursor-pointer">📄 页面文本快照</summary>
+              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-gray-50 rounded p-2 whitespace-pre-wrap">{textSnapshot}</pre>
+            </details>
+          )}
+
+          {/* 页面存档数据（折叠） */}
+          {storageSnapshot && typeof storageSnapshot === "object" && Object.keys(storageSnapshot).length > 0 && (
+            <details>
+              <summary className="text-xs text-gray-400 cursor-pointer">💾 页面存档数据</summary>
+              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-gray-50 rounded p-2 whitespace-pre-wrap">{JSON.stringify(storageSnapshot, null, 2)}</pre>
+            </details>
+          )}
         </div>
       );
     };
@@ -744,12 +825,17 @@ export default function ExplorationAnalysisPage() {
           let answers: any = {};
           try { answers = JSON.parse(sub.answers || "{}"); } catch { }
           const isExpanded = expandedIds.has(sub.id);
+          // 详情缓存命中时用完整版 answers（含 canvasSnapshots / textSnapshot）
+          const displayAnswers = detailCache[sub.id] || answers;
+          const canvasShots: string[] = Array.isArray(displayAnswers.canvasSnapshots)
+            ? displayAnswers.canvasSnapshots
+            : [];
 
           return (
             <div key={sub.id} className="border border-gray-200 rounded-lg overflow-hidden">
               <div
                 className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
-                onClick={() => toggleExpand(sub.id)}
+                onClick={() => toggleExpand(sub.id, sub.studentId, displayAnswers.canvasCount || 0)}
               >
                 <div className="flex items-center gap-3">
                   <span className="font-medium text-gray-800">{sub.studentName}</span>
@@ -766,7 +852,7 @@ export default function ExplorationAnalysisPage() {
                 <div className="px-4 py-3 space-y-4 border-t border-gray-100">
                   <div>
                     <h5 className="text-xs font-medium text-gray-500 mb-2">📊 提交数据</h5>
-                    {renderAnswersDetail(answers)}
+                    {renderAnswersDetail(displayAnswers, canvasShots)}
                   </div>
                   <div>
                     <h5 className="text-xs font-medium text-gray-500 mb-2">📋 操作记录</h5>

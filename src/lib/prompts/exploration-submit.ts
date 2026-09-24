@@ -37,14 +37,152 @@ export const submitButtonCSS = `
 `.trim();
 
 export const submitMessageScript = `
+// ===== 兜底采集函数（提交时调用，全部 ES5）=====
+
+// canvas 作品快照：最多 3 张，缩放至 640px 宽，jpeg 0.7
+function qfCollectCanvas() {
+  var shots = [], cs = document.querySelectorAll("canvas");
+  for (var i = 0; i < cs.length && shots.length < 3; i++) {
+    try {
+      var c = cs[i];
+      if (!c.width || !c.height) continue;
+      var s = Math.min(1, 640 / c.width);
+      var t = document.createElement("canvas");
+      t.width = Math.round(c.width * s); t.height = Math.round(c.height * s);
+      t.getContext("2d").drawImage(c, 0, 0, t.width, t.height);
+      shots.push(t.toDataURL("image/jpeg", 0.7));
+    } catch (e) { /* 跨域污染的 canvas 跳过 */ }
+  }
+  return shots;
+}
+
+// localStorage 白名单快照：只读游戏相关前缀键，其余（含 token）一律不碰
+function qfCollectStorage() {
+  var out = {}, n = 0;
+  try {
+    for (var i = 0; i < localStorage.length && n < 20; i++) {
+      var k = localStorage.key(i);
+      if (k && /^(game|score|level|progress|state|quiz)/i.test(k)) {
+        out[k] = String(localStorage.getItem(k) || "").slice(0, 200);
+        n++;
+      }
+    }
+  } catch (e) { /* 无 localStorage 权限时跳过 */ }
+  return out;
+}
+
+// 文本快照：body.innerText 截断 10KB，万能回看兜底
+function qfTextSnapshot() {
+  try {
+    return (document.body ? (document.body.innerText || "") : "").slice(0, 10000);
+  } catch (e) { return ""; }
+}
+
+// ===== 行为流自动记录（capture 阶段，与 AI 主动的 recordAction 并存，上限 500 条）=====
+if (!window.__ACTION_HOOK_BOUND__) {
+  window.__ACTION_HOOK_BOUND__ = 1;
+  (function () {
+    function autoLog(type, target, value) {
+      var d = window.__explorationData__;
+      if (!d) return;
+      if (!d.actionLog) d.actionLog = [];
+      if (d.actionLog.length >= 500) return; // 上限截断
+      d.actionLog.push({ type: type, target: target, value: value || "", timestamp: Date.now() });
+    }
+    function descOf(el) {
+      var t = "";
+      try {
+        if (el && el.getAttribute) t = el.getAttribute("aria-label") || el.getAttribute("data-label") || "";
+        if (!t && el && el.textContent) t = String(el.textContent).replace(/\\s+/g, " ").trim().slice(0, 30);
+        if (!t && el && el.tagName) t = String(el.tagName).toLowerCase() + (el.id ? "#" + el.id : "");
+      } catch (e) { t = "element"; }
+      return t || "element";
+    }
+    document.addEventListener("click", function (e) {
+      autoLog("auto:click", descOf(e.target), "");
+    }, true);
+    document.addEventListener("input", function (e) {
+      var el = e.target;
+      if (el && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA")) {
+        autoLog("auto:fill", descOf(el), String(el.value || "").slice(0, 50));
+      }
+    }, true);
+    document.addEventListener("change", function (e) {
+      autoLog("auto:change", descOf(e.target), "");
+    }, true);
+    document.addEventListener("dragstart", function (e) {
+      autoLog("auto:drag", descOf(e.target), "开始拖动");
+    }, true);
+    document.addEventListener("drop", function (e) {
+      autoLog("auto:drag", descOf(e.target), "放下");
+    }, true);
+  })();
+}
+
+// ===== 提交：双轨合并（__gameState__ 契约轨优先，__explorationData__ 函数调用轨兜底）=====
 function submitResults() {
   var data = window.__explorationData__ || {};
+  var gs = window.__gameState__ || {};
+  var answers = {};
   // QuickForm 采集块存在时，把学生填写的内容一起带上；
   // 采集块缺失 / 采集异常都不影响原有行为数据的提交。
-  var answers = {};
   try {
     if (typeof qfCollectAnswers === "function") answers = qfCollectAnswers() || {};
   } catch (e) { answers = {}; }
+
+  // --- score：契约轨有真实分数取契约轨，否则取函数调用轨写入值 ---
+  var gsScore = (typeof gs.score === "number" && gs.score > 0) ? gs.score : 0;
+  var sysScore = (typeof data.score === "number" && data.score > 0) ? data.score : 0;
+  var finalScore = gsScore > 0 ? gsScore : sysScore;
+
+  // --- maxScore：AI 设计的真实满分优先 ---
+  var finalMaxScore = (typeof gs.maxScore === "number" && gs.maxScore > 0) ? gs.maxScore : (data.maxScore || 100);
+
+  // --- gameLevel：取较大值 ---
+  var gsLevel = (typeof gs.gameLevel === "number" && gs.gameLevel >= 1) ? gs.gameLevel : 1;
+  var sysLevel = (typeof data.gameLevel === "number" && data.gameLevel >= 1) ? data.gameLevel : 1;
+  var finalLevel = Math.max(gsLevel, sysLevel);
+
+  // --- completedSections：并集 ---
+  var sections = [];
+  var arr1 = Array.isArray(data.completedSections) ? data.completedSections : [];
+  var arr2 = Array.isArray(gs.completedSections) ? gs.completedSections : [];
+  for (var i = 0; i < arr1.length; i++) if (sections.indexOf(arr1[i]) === -1) sections.push(arr1[i]);
+  for (var j = 0; j < arr2.length; j++) if (sections.indexOf(arr2[j]) === -1) sections.push(arr2[j]);
+
+  // --- answers：QuickForm 扫描（标准控件）+ __gameState__.answers（自定义控件，同名覆盖）---
+  if (gs.answers && typeof gs.answers === "object" && !Array.isArray(gs.answers)) {
+    for (var k in gs.answers) {
+      if (Object.prototype.hasOwnProperty.call(gs.answers, k)) answers[k] = gs.answers[k];
+    }
+  }
+
+  // --- 兜底：分数正则（仅两轨都无分数时，从页面文本推测，取最后一次匹配）---
+  var inferred = false;
+  if (finalScore === 0) {
+    try {
+      var text = document.body ? (document.body.innerText || "") : "";
+      var mScore = text.match(/(?:得分|分数|成绩|积分)\\s*[:：]?\\s*(\\d+)/g);
+      if (mScore && mScore.length) {
+        var lastS = mScore[mScore.length - 1].match(/(\\d+)/);
+        if (lastS && parseInt(lastS[1], 10) > 0) { finalScore = parseInt(lastS[1], 10); inferred = true; }
+      }
+      var mLevel = text.match(/第\\s*(\\d+)\\s*关/g);
+      if (mLevel && mLevel.length) {
+        var lastL = mLevel[mLevel.length - 1].match(/(\\d+)/);
+        if (lastL) finalLevel = Math.max(finalLevel, parseInt(lastL[1], 10) || 1);
+      }
+    } catch (e) { /* 文本推测失败不影响提交 */ }
+  }
+
+  // --- 兜底：canvas 快照 / localStorage 白名单 / 文本快照 ---
+  var canvasSnapshots = [];
+  try { if (typeof qfCollectCanvas === "function") canvasSnapshots = qfCollectCanvas(); } catch (e) {}
+  var storageSnapshot = {};
+  try { if (typeof qfCollectStorage === "function") storageSnapshot = qfCollectStorage(); } catch (e) {}
+  var textSnapshot = "";
+  try { if (typeof qfTextSnapshot === "function") textSnapshot = qfTextSnapshot(); } catch (e) {}
+
   window.parent.postMessage({
     type: "EXPLORATION_SUBMIT",
     payload: {
@@ -52,12 +190,19 @@ function submitResults() {
       interactions: data.interactions || 0,
       scrollDepth: data.scrollDepth || 0,
       attempts: data.attempts || 1,
-      score: data.score || 0,
-      maxScore: data.maxScore || 100,
-      completedSections: data.completedSections || [],
-      gameLevel: data.gameLevel || 1,
+      score: finalScore,
+      maxScore: finalMaxScore,
+      completedSections: sections,
+      gameLevel: finalLevel,
       actionLog: data.actionLog || [],
-      answers: answers
+      answers: answers,
+      // 契约轨明细（教师端展示用）
+      gameState: gs,
+      scoreInferred: inferred,
+      // 兜底采集
+      canvasSnapshots: canvasSnapshots,
+      storageSnapshot: storageSnapshot,
+      textSnapshot: textSnapshot
     }
   }, "*");
 }
@@ -128,7 +273,12 @@ document.addEventListener("click", function() {
 // 更新得分
 function updateScore(score) {
   if (window.__explorationData__) {
-    window.__explorationData__.score = Math.max(0, Math.min(score, window.__explorationData__.maxScore));
+    var d = window.__explorationData__;
+    if (typeof score === "number" && score >= 0) {
+      // 分数超过当前满分时自动提升满分（兼容非百分制游戏，如 300 分制）
+      if (score > d.maxScore) d.maxScore = score;
+      d.score = Math.max(0, Math.min(score, d.maxScore));
+    }
   }
 }
 
@@ -179,72 +329,6 @@ function recordAction(type, target, value) {
  * 提交按钮 HTML
  */
 export const submitButtonHTML = `<div id="quickclass-submit-root"><button id="submitBtn" onclick="submitResults()">提交</button></div>`;
-// ===== 提交 =====
-async function submitResults() {
-  if (!confirm("确认提交？提交后将无法修改。")) return;
-
-  var btn = document.getElementById("submitBtn");
-  if (btn) { btn.innerHTML = "提交中..."; (btn as HTMLButtonElement).disabled = true; }
-
-  // 准备提交数据
-  var submitData = {
-    // 行为数据
-    timeSpent: window.__explorationData__ ? window.__explorationData__.timeSpent : 0,
-    interactions: window.__explorationData__ ? window.__explorationData__.interactions : 0,
-    scrollDepth: window.__explorationData__ ? window.__explorationData__.scrollDepth : 0,
-    attempts: window.__explorationData__ ? window.__explorationData__.attempts : 1,
-
-    // 得分
-    score: window.__explorationData__ ? window.__explorationData__.score : 0,
-    maxScore: window.__explorationData__ ? window.__explorationData__.maxScore : 100,
-
-    // 环节完成
-    completedSections: window.__explorationData__ ? window.__explorationData__.completedSections : [],
-
-    // 级别
-    gameLevel: window.__explorationData__ ? window.__explorationData__.gameLevel : 1,
-
-    // 操作明细日志
-    actionLog: window.__explorationData__ ? window.__explorationData__.actionLog : [],
-
-    // 上下文
-    taskTitle: window.__TASK_TITLE__ || "",
-    studentName: window.__STUDENT_NAME__ || "",
-    className: window.__CLASS_NAME__ || ""
-  };
-
-  try {
-    var token = localStorage.getItem("token") || "";
-    var submitBtn = document.getElementById("submitBtn");
-    var eid = submitBtn ? (submitBtn.getAttribute('data-eid') || "") : "";
-    var response = await fetch("/api/exploration-activities/" + eid + "/submit", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": "Bearer " + token
-      },
-      body: JSON.stringify(submitData)
-    });
-
-    if (response.ok) {
-      var result = await response.json();
-      var info = [
-        "提交成功！",
-        "得分：" + result.score + " / " + result.maxScore,
-        "停留时间：" + (window.__explorationData__ ? window.__explorationData__.timeSpent : 0) + "秒",
-        "互动次数：" + (window.__explorationData__ ? window.__explorationData__.interactions : 0) + "次"
-      ].join("\n");
-      alert(info);
-      if (btn) { btn.innerHTML = "已提交 ✓"; btn.style.background = "#4CAF50"; }
-    } else {
-      alert("提交失败，请重试。");
-      if (btn) { btn.innerHTML = "重新提交"; (btn as HTMLButtonElement).disabled = false; }
-    }
-} catch (e) {
-      alert("提交失败：" + (e instanceof Error ? e.message : String(e)));
-      if (btn) { btn.innerHTML = "重新提交"; (btn as HTMLButtonElement).disabled = false; }
-  }
-}
 
 /* ==========================================================================
  * QuickForm 采集块（Part 1）
@@ -604,6 +688,29 @@ export interface InjectResult {
 }
 
 /**
+ * 桩检测：判断 HTML 是否已接入提交采集（契约轨）
+ * 用于「AI 接入改造」按钮的显示逻辑——已有桩则无需改造
+ */
+export function detectInstrumentation(html: string): {
+  hasGameState: boolean; // AI 契约桩：window.__gameState__ 初始化
+  hasGuardedCalls: boolean; // 防御式调用：typeof updateScore 等
+  hasTracking: boolean; // 系统桩：window.__explorationData__ 初始化
+  needsAdaptation: boolean; // 是否建议 AI 接入改造
+} {
+  const hasGameState = /window\.__gameState__\s*=/.test(html);
+  const hasGuardedCalls =
+    /typeof\s+(updateScore|completeSection|setGameLevel|recordAction)\s*===?\s*["']function["']/.test(html);
+  const hasTracking = /window\.__explorationData__\s*=/.test(html);
+  return {
+    hasGameState,
+    hasGuardedCalls,
+    hasTracking,
+    // 只有系统桩（函数定义在但无人调用）不算已接入——正是"0 分/无关卡"的形态
+    needsAdaptation: !hasGameState && !hasGuardedCalls,
+  };
+}
+
+/**
  * 注入提交功能到 HTML
  *
  * @param html 原始 HTML
@@ -637,6 +744,26 @@ export function injectSubmitFunctionality(html: string, context: SubmitContext):
         break;
       }
     }
+  }
+
+  // 2.5 裸调用检测：AI 生成的页面若未防御直接调用注入函数，
+  //     页面脚本先于注入脚本执行时会 ReferenceError 中断整个页面。
+  //     排除：typeof 防御处、函数定义处、方法调用（obj.updateScore）；
+  //     调用点前 120 字符内出现同函数名的 typeof 检查视为防御式，跳过。
+  const bareCallRe = /(?<!typeof\s)(?<!function\s)(?<!\.)\b(updateScore|setGameLevel|completeSection|addAttempt|recordAction)\s*\(/g;
+  let bareMatch: RegExpExecArray | null;
+  let hasBareCall = false;
+  while ((bareMatch = bareCallRe.exec(modified)) !== null) {
+    const fnName = bareMatch[1];
+    // 页面自定义了同名函数 → 页面内调用的是自己的函数（注入侧已走 _INJ 后缀改名），不告警
+    if (modified.includes("function " + fnName)) continue;
+    const before = modified.slice(Math.max(0, bareMatch.index - 120), bareMatch.index);
+    if (new RegExp(`typeof\\s+${fnName}\\b`).test(before)) continue; // 防御式调用
+    hasBareCall = true;
+    break;
+  }
+  if (hasBareCall) {
+    warnings.push("检测到未防御的上报函数裸调用，页面脚本可能在注入前执行而报错，建议让 AI 修正为 typeof 防御式调用");
   }
 
   // 3. 注入 CSS（如果未注入过提交功能）

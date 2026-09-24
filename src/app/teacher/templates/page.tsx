@@ -261,6 +261,8 @@ export default function TemplateSettingsPage() {
         if (data.templateVariables) {
           setTemplateVariables(data.templateVariables);
         }
+      } else {
+        MessagePlugin.error(`获取模板列表失败（${res.status}）`);
       }
     } catch {
       MessagePlugin.error("获取模板列表失败");

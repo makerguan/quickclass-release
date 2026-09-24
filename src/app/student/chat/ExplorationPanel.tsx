@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { Button } from "tdesign-react";
+import { Button, MessagePlugin } from "tdesign-react";
 import SpeechControls from "@/components/speech/SpeechControls";
 import { stopSpeaking } from "@/lib/speech";
 
@@ -74,16 +74,24 @@ export default function ExplorationPanel({
     // 监听 iframe 内 postMessage 提交请求
     const handleMessage = async (e: MessageEvent) => {
       if (e.data?.type === "EXPLORATION_SUBMIT") {
+        // 校验消息来源为当前 iframe，防止其它窗口伪造提交
+        if (e.source !== iframeRef.current?.contentWindow) return;
         const token = localStorage.getItem("token") || "";
-        const response = await fetch(`/api/exploration-activities/${explorationId}/submit`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-          body: JSON.stringify(e.data.payload),
-        });
-        if (response.ok) {
-          const result = await response.json();
-          setSubmitted(true);
-          setSubmissionData(result);
+        try {
+          const response = await fetch(`/api/exploration-activities/${explorationId}/submit`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+            body: JSON.stringify(e.data.payload),
+          });
+          if (response.ok) {
+            const result = await response.json();
+            setSubmitted(true);
+            setSubmissionData(result);
+          } else {
+            MessagePlugin.error(`提交失败（${response.status}），请重试`);
+          }
+        } catch {
+          MessagePlugin.error("提交失败，请检查网络后重试");
         }
       }
     };

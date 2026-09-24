@@ -80,6 +80,23 @@ export async function POST(req: NextRequest) {
 - 不要把探究等同于"做题"（避免大量选择题、填空题、判断题堆砌）
 - 不要让学生"猜答案"，而是让学生"看到规律"
 
+【数据上报规范】（极重要：系统靠它采集学生的完成情况与得分，不遵守 = 教师后台看不到任何数据）
+页面运行时系统会注入全局函数。你必须在代码中同步学生状态：
+1. 主通道（必须）：在页面脚本开头初始化 window.__gameState__ = {}，并在状态变化处同步赋值：
+   - 计分/闯关类：__gameState__.score = 当前得分; __gameState__.gameLevel = 第几关; __gameState__.maxScore = 满分
+   - 调查表类（自定义控件如卡片选择、星级评分）：__gameState__.answers = { 题目: 值 }
+     （标准 input/select/textarea 系统自动采集，无需挂载）
+   - 拖拽/连线/排序类：__gameState__.placements = { 元素: 目标位置 }
+   - 绘图/轨迹类：__gameState__.artwork = { 数据点或操作描述 }（canvas 画面系统会自动截图）
+   - 通用：__gameState__.completedSections = ["环节名", ...]
+2. 增强通道（可选，必须防御式，禁止裸调用）：
+   if (typeof updateScore === "function") updateScore(得分)
+   if (typeof setGameLevel === "function") setGameLevel(第几关)
+   if (typeof completeSection === "function") completeSection("环节名")
+   if (typeof recordAction === "function") recordAction("drag", "元素A", "放到区域B")
+3. 状态变化时同步更新（不是只在最后更新一次），防止学生中途提交丢数据。
+4. 不要自己定义这些函数，只调用；禁止自己写提交逻辑（不要自己 fetch 提交、不要自己弹"提交成功"），提交按钮由系统注入。
+
 【输出要求】
 1. 输出必须是完整、可运行的 HTML，包含内联 style 和 script 标签
 2. 不依赖任何外部资源（无外部 CDN、无图片链接、无外部样式表）
@@ -95,6 +112,7 @@ export async function POST(req: NextRequest) {
 1. 你在"修改"上一版 HTML，而非重新设计：只改用户明确要求的部分，其余结构、配色、交互、文案保持原样
 2. 每次必须输出完整、可运行的 HTML（不是片段、不是 diff、不要 markdown 包裹）
 3. 除非用户明确要求重做，否则保留上一版整体布局与视觉风格
+4. 必须保留页面中已有的 __gameState__ 更新与防御式上报调用（typeof updateScore 等），不得删除
 
 【页面结构建议】
 - 顶部：探究主题 + 1-2句引导语（这是什么 / 要探索什么）

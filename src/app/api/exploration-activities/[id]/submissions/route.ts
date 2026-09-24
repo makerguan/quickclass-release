@@ -28,6 +28,8 @@ export async function GET(
 
     // 班级过滤（可选）：只返回所选班级学生的提交
     const classId = req.nextUrl.searchParams.get("classId") || "";
+    // 单学生过滤（可选）：教师展开某条提交时，拉取该学生的完整数据（含 canvas 快照等大字段）
+    const studentId = req.nextUrl.searchParams.get("studentId") || "";
     let studentIdFilter: string[] | undefined;
     if (classId) {
       const students = await prisma.user.findMany({
@@ -41,6 +43,7 @@ export async function GET(
       where: {
         explorationId: id,
         ...(studentIdFilter ? { studentId: { in: studentIdFilter } } : {}),
+        ...(studentId ? { studentId } : {}),
       },
       orderBy: { submittedAt: "desc" },
       include: { ExplorationActionLog: { orderBy: { timestamp: "asc" } } },
@@ -54,17 +57,32 @@ export async function GET(
     });
     const studentNameMap = new Map(students.map(u => [u.id, u.name]));
 
+    // 列表请求（无 studentId 参数）剥离 answers JSON 里的大字段（canvas 快照 / 文本快照），
+    // 避免 50 学生 × 300KB 级响应；单学生请求（有 studentId）返回完整数据供详情展示。
+    const stripLargeFields = (answersRaw: string) => {
+      try {
+        const parsed = JSON.parse(answersRaw || "{}");
+        if (parsed.canvasSnapshots) parsed.canvasCount = parsed.canvasSnapshots.length;
+        delete parsed.canvasSnapshots;
+        delete parsed.textSnapshot;
+        return JSON.stringify(parsed);
+      } catch {
+        return answersRaw;
+      }
+    };
+
     const result = submissions.map((s) => ({
       id: s.id,
       studentId: s.studentId,
       studentName: studentNameMap.get(s.studentId) || s.studentId,
-      answers: s.answers,
+      answers: studentId ? s.answers : stripLargeFields(s.answers),
       score: s.score,
       totalScore: s.totalScore,
       submittedAt: s.submittedAt,
       actionLogs: s.ExplorationActionLog.map((log) => ({
         type: log.type,
-        timestamp: log.timestamp,
+        // timestamp 在 schema 中是 BigInt，JSON.stringify 无法序列化 BigInt，必须转 Number
+        timestamp: Number(log.timestamp),
       })),
     }));
 
