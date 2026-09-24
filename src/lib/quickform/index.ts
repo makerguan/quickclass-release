@@ -12,7 +12,7 @@ import { PrismaAdapter } from "./prisma-adapter";
 let adapter: PrismaAdapter | null = null;
 let core: QuickFormCore | null = null;
 
-/** 存储适配器单例（PrismaAdapter 有 SDK 契约之外的扩展方法，业务层有时要直接取用） */
+/** 存储适配器单例（业务层应通过 getQfCore 访问，一般不直接取 adapter） */
 export function getQfAdapter(): PrismaAdapter {
   if (!adapter) adapter = new PrismaAdapter(prisma);
   return adapter;
@@ -27,8 +27,8 @@ export function getQfCore(): QuickFormCore {
 /**
  * 写入一条收集数据。
  *
- * 传了 `replaceRecordId` 时先删旧记录再写新记录：SDK 契约里没有 updateRecord，
- * 这是「同一学生重新提交」不产生重复记录的唯一做法（保持一人一条）。
+ * 传了 `replaceRecordId` 时走原子替换（core.replaceRecord）：删旧 + 写新在同一条
+ * 事务里完成，避免「先删后写」两步之间的崩溃窗口丢答案（保持一人一条）。
  */
 export async function submitQfRecord(
   taskId: string,
@@ -38,7 +38,7 @@ export async function submitQfRecord(
 ): Promise<QfRecord> {
   const qfCore = getQfCore();
   if (replaceRecordId) {
-    await getQfAdapter().deleteRecord(taskId, replaceRecordId);
+    return qfCore.replaceRecord(taskId, replaceRecordId, data, meta);
   }
   return qfCore.submit(taskId, data, meta);
 }

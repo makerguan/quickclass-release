@@ -44,6 +44,12 @@ export class MemoryAdapter implements StorageAdapter {
   async saveRecord(record: RecordRow): Promise<void> {
     this.records.set(record.id, { ...record });
   }
+  async replaceRecord(taskId: string, oldRecordId: string, record: RecordRow): Promise<void> {
+    for (const [rid, r] of [...this.records]) {
+      if (r.taskId === taskId && rid === oldRecordId) this.records.delete(rid);
+    }
+    this.records.set(record.id, { ...record });
+  }
   async getRecord(taskId: string, recordId: string): Promise<RecordRow | null> {
     const r = this.records.get(recordId);
     return r && r.taskId === taskId ? { ...r } : null;

@@ -178,6 +178,10 @@ model ExplorationActivity {
   /// 只存图表配置（选哪些字段、用什么图），**不存任何原始学生数据**；前端按配置渲染。
   /// 为空 = 使用默认的字段自动映射大屏。
   dashboardConfig       String?
+  /// 「采集类别清单」JSON（src/lib/exploration/collect-profile.ts 的 CollectProfile）。
+  /// 启用提交时由 AI 分析 HTML 得出（hasScoring/hasFormControls/hasCanvas），
+  /// 决定采哪些数据 + 老师端展示哪些维度。空 = 旧数据/未分析，展示端走兜底逻辑。
+  collectProfile        String?
   SubProject            SubProject              @relation(fields: [subProjectId], references: [id], onDelete: Cascade)
   ExplorationSubmission ExplorationSubmission[]
   AiCompanionMessage    AiCompanionMessage[]

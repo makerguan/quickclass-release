@@ -26,6 +26,7 @@ interface QfRecordRow {
   id: string;
   taskId: string;
   dataJson: string;
+  studentId: string | null;
   submittedAt: Date;
 }
 
@@ -126,6 +127,27 @@ export class PrismaAdapter implements StorageAdapter {
     });
   }
 
+  /**
+   * 原子替换：删旧记录 + 写新记录放进同一条事务。
+   * ⚠️ GOTCHA：若拆成 deleteMany 后再 create，两步之间进程崩溃会丢答案；
+   *   这里用 $transaction 保证「要么都成、要么都不成」，堵住崩溃窗口。
+   * ⛔ DO NOT REVERT：不要改回「先 deleteRecord 再 saveRecord」的两步写法。
+   */
+  async replaceRecord(taskId: string, oldRecordId: string, record: RecordRow): Promise<void> {
+    await this.prisma.$transaction([
+      this.prisma.qfRecord.deleteMany({ where: { id: oldRecordId, taskId } }),
+      this.prisma.qfRecord.create({
+        data: {
+          id: record.id,
+          taskId: record.taskId,
+          dataJson: record.dataJson,
+          studentId: record.studentId || null,
+          submittedAt: new Date(record.submittedAt),
+        },
+      }),
+    ]);
+  }
+
   async getRecord(taskId: string, recordId: string): Promise<RecordRow | null> {
     const row = await this.prisma.qfRecord.findFirst({
       where: { id: recordId, taskId },
@@ -156,16 +178,5 @@ export class PrismaAdapter implements StorageAdapter {
 
   async clearRecords(taskId: string): Promise<void> {
     await this.prisma.qfRecord.deleteMany({ where: { taskId } });
-  }
-
-  /**
-   * 删除单条记录（**超出 StorageAdapter 契约的扩展方法**）。
-   *
-   * 用途：学生重提交时把上一次的记录换掉，保证「一人一条」。
-   * SDK 核心只提供 clearRecords（清全部），没有 updateRecord，
-   * 所以这一层由 QuickClass 侧自己补，不修改 vendor SDK。
-   */
-  async deleteRecord(taskId: string, recordId: string): Promise<void> {
-    await this.prisma.qfRecord.deleteMany({ where: { id: recordId, taskId } });
   }
 }

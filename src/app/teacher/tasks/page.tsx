@@ -77,6 +77,8 @@ interface SubProject {
   requirements: string;
   knowledgeBase?: string;
   analysisPrompt?: string;
+  analysisTemplateId?: string;
+  explorationActivities?: any[];
   presetConversations: PresetConversation[];
 }
 
@@ -925,13 +927,26 @@ export default function TeacherTasksPage() {
   const [originalHtmlForInjection, setOriginalHtmlForInjection] = useState("");
 
   // 去除 AI 伴学注入代码（用于源码编辑器保持纯净稿）
+  // 注入结构见 injectAiCompanion：<style>#ai-companion-root…</style> 入 </head> 前，
+  // <div id="ai-companion-root">…</div> + katex/伴学 <script> 入 </body> 前。
+  // 旧实现只剥 <style>，第二条正则依赖并不存在的 <!--__AI_COMPANION_INJECTED__--> 注释（失效），
+  // 会残留浮动按钮 DOM 与对话脚本 → 源码区/导出都不纯净。这里按 CSS / script / DOM 三段剥净。
+  // 🔗 RELATED 与后端 removeAiCompanion（src/lib/prompts/ai-companion.ts）语义一致，改这里要同步看那边。
   const stripAiCompanionCode = (html: string) => {
     if (!html) return "";
     let s = html;
-    // 移除注入的 AI 伴学 <style> 块
-    s = s.replace(/<style>[\s\S]*?#ai-companion-root[\s\S]*?<\/style>/g, "");
-    // 移除注入的 HTML + 脚本块（从 __AI_COMPANION_INJECTED__ 注释到 </body> 前）
-    s = s.replace(/<!--\s*__AI_COMPANION_INJECTED__[^>]*-->[\s\S]*?(?=<\/body>)/g, "");
+    // 1. 伴学 <style>（含 #ai-companion-root）
+    s = s.replace(/<style>[\s\S]*?#ai-companion-root[\s\S]*?<\/style>/gi, "");
+    // 2. 伴学交互 <script>（IIFE 内含 __AI_COMPANION_INJECTED__ 标记）
+    s = s.replace(/<script>\s*\(function\s*\(\)\s*\{[\s\S]*?__AI_COMPANION_INJECTED__[\s\S]*?\}\)\(\);?\s*<\/script>/gi, "");
+    // 3. 伴学 DOM + 依赖脚本（katex）：从 <div id="ai-companion-root" 起到 </body> 前整段删除
+    const rootIdx = s.indexOf('<div id="ai-companion-root"');
+    if (rootIdx > -1) {
+      const bodyClose = s.lastIndexOf("</body>");
+      if (bodyClose > rootIdx) {
+        s = s.substring(0, rootIdx) + s.substring(bodyClose);
+      }
+    }
     return s;
   };
 
@@ -1079,28 +1094,11 @@ export default function TeacherTasksPage() {
     input.click();
   };
 
-  // AI 接入提交采集：对导入/存量的未接桩 HTML 一键插桩（复用 generate 多轮分支，版本栈天然备份可撤销）
+  // AI 接入提交采集：对导入/存量的未接桩 HTML 插桩（复用 generate 多轮分支）
   const [adapting, setAdapting] = useState(false);
-  const handleAdaptInstrumentation = async () => {
-    if (!explorationPanelSpId) return;
-    if (!explorationHtml.trim()) {
-      MessagePlugin.warning("请先生成或上传 HTML 内容");
-      return;
-    }
-    const detection = detectInstrumentation(explorationHtml);
-    if (!detection.needsAdaptation) {
-      MessagePlugin.info("该页面已接入提交采集，无需改造");
-      return;
-    }
-    // 混淆代码提示：minified/混淆变量 AI 难以识别，效果可能不佳
-    const minified = /[\w$]{200,}/.test(explorationHtml) || /_0x[a-f0-9]{4,}/.test(explorationHtml);
-    const confirmed = window.confirm(
-      minified
-        ? "检测到该 HTML 可能经过压缩/混淆，AI 接入效果可能不佳，仍要继续吗？\n（改造会作为新版本入栈，可随时撤销还原）"
-        : "AI 将把页面中的分数/关卡/答案状态变量接入提交采集，不改变任何视觉与交互。\n（改造会作为新版本入栈，可随时撤销还原）"
-    );
-    if (!confirmed) return;
 
+  // 纯函数：调用 AI 对 HTML 插桩，成功返回改造后的 HTML，失败返回 null（不抛错、不改任何 state）
+  const adaptHtmlWithAi = async (html: string): Promise<string | null> => {
     setAdapting(true);
     const startAt = Date.now();
     let msg = await MessagePlugin.loading("AI 接入采集中... 0s", 0);
@@ -1117,9 +1115,9 @@ export default function TeacherTasksPage() {
         body: JSON.stringify({
           subProjectId: explorationPanelSpId,
           initialPrompt: "",
-          currentHtml: explorationHtml,
+          currentHtml: html,
           instruction:
-            "请只做一件事：找到页面中记录分数、关卡、完成状态、用户答案的变量/函数，在它们被更新的代码处插入防御式上报调用（if (typeof updateScore === \"function\") updateScore(x) 等），并把这些状态同步挂到 window.__gameState__。不得改变页面任何视觉、交互逻辑、文案，输出完整 HTML。如果页面中已存在 __gameState__ 初始化或 typeof updateScore 之类的上报调用，说明已接入，直接原样输出 HTML 不要改动。",
+            "请先判断页面形态，再按形态接入采集，全程不得改变页面任何视觉、交互逻辑、文案，输出完整 HTML：\n【游戏/练习型】页面有得分、关卡、对错等：找到记录分数/关卡/完成状态/用户答案的变量或函数，在它们被更新的代码处插入防御式上报调用（if (typeof updateScore === \"function\") updateScore(分数)；if (typeof completeSection === \"function\") completeSection(环节名)；if (typeof setGameLevel === \"function\") setGameLevel(关卡)），并把 score、maxScore、gameLevel、completedSections、answers 同步挂到 window.__gameState__。\n【纯交互/探索型】页面无作答表单（模拟实验、概念可视化、拖拽观察等，无分数也无答题）：不要虚构分数或答案。找出学生的关键可观察状态——滑杆/参数最终值、开关/灯泡状态、学生输入的结论或观察文字、关键变量等，在它们更新处插入防御式上报（if (typeof recordAction === \"function\") recordAction(类型, 描述, 值)），并以自定义键名把这些状态挂到 window.__gameState__（如 { 滑杆值: 3.2, 灯泡状态: \"亮\", 我的发现: \"...\" }）。\n【两者兼有】同时处理。\n如果页面已存在 __gameState__ 初始化或 typeof updateScore 之类的上报调用，说明已接入，直接原样输出 HTML 不要改动。",
         }),
       });
       if (!response.ok || !response.body) throw new Error(`生成失败（${response.status}）`);
@@ -1133,28 +1131,56 @@ export default function TeacherTasksPage() {
         if (done) break;
         received += decoder.decode(value, { stream: true });
       }
-      const html = received.trim();
-      if (!html) throw new Error("AI 未返回内容");
-
-      // 改造结果入版本栈（备份/撤销天然可用）
-      const baseVersions = htmlVersions.slice(0, versionIndex + 1);
-      const newIndex = baseVersions.length;
-      setHtmlVersions([...baseVersions, html]);
-      setVersionIndex(newIndex);
-      setExplorationHtml(html);
-      setExplorationPreview(html);
-      setChatMessages((prev) => [
-        ...prev,
-        { role: "ai", content: "🔌 已完成提交采集接入（AI 插桩），建议预览试玩验证得分上报，可撤销还原" },
-      ]);
-      MessagePlugin.success("AI 接入采集完成，建议预览试玩验证（可撤销）");
-    } catch (e: any) {
-      MessagePlugin.error(e.message || "接入采集失败");
+      const adapted = received.trim();
+      if (!adapted) throw new Error("AI 未返回内容");
+      return adapted;
+    } catch {
+      return null;
     } finally {
       clearInterval(timer);
       msg.close();
       setAdapting(false);
     }
+  };
+
+  // 手动重试入口：降级后教师可再次触发 AI 接入（带确认，改造入版本栈可撤销）
+  const handleAdaptInstrumentation = async () => {
+    if (!explorationPanelSpId) return;
+    if (!explorationHtml.trim()) {
+      MessagePlugin.warning("请先生成或上传 HTML 内容");
+      return;
+    }
+    const detection = detectInstrumentation(explorationHtml);
+    if (!detection.needsAdaptation) {
+      MessagePlugin.info("该页面已接入提交采集，无需改造");
+      return;
+    }
+    // 混淆代码提示：minified/混淆变量 AI 难以识别，效果可能不佳
+    const minified = /[\w$]{200,}/.test(explorationHtml) || /_0x[a-f0-9]{4,}/.test(explorationHtml);
+    const confirmed = window.confirm(
+      minified
+        ? "检测到该 HTML 可能经过压缩/混淆，AI 接入效果可能不佳，仍要继续吗？\n（改造会作为新版本入栈，可随时撤销还原）"
+        : "AI 将把页面中的分数/关卡/作答状态变量接入提交采集，不改变任何视觉与交互。\n（改造会作为新版本入栈，可随时撤销还原）"
+    );
+    if (!confirmed) return;
+
+    const adapted = await adaptHtmlWithAi(explorationHtml);
+    if (!adapted) {
+      MessagePlugin.warning("⚠️ AI 采集接入未成功，当前仅采集基础数据（时长/操作/滚动），分数/关卡/作答暂无法上报");
+      return;
+    }
+    // 改造结果入版本栈（备份/撤销天然可用）
+    const baseVersions = htmlVersions.slice(0, versionIndex + 1);
+    const newIndex = baseVersions.length;
+    setHtmlVersions([...baseVersions, adapted]);
+    setVersionIndex(newIndex);
+    setExplorationHtml(adapted);
+    setExplorationPreview(adapted);
+    setChatMessages((prev) => [
+      ...prev,
+      { role: "ai", content: "🔌 已完成提交采集接入（AI 插桩），建议预览试玩验证，可撤销还原" },
+    ]);
+    MessagePlugin.success("AI 接入采集完成，建议预览试玩验证（可撤销）");
   };
 
   // 自动生成提示词（流式：提示词编辑区已有输入时优化已有提示词，否则从零设计）
@@ -1337,7 +1363,12 @@ export default function TeacherTasksPage() {
     } catch {}
     const safeName = (s: string) => s.replace(/[\\/:*?"<>|，。、？！：；【】（）""''\s]/g, "_");
     const filename = [safeName(taskTitle), safeName(taskGrade), safeName(taskSubject), safeName(explorationTitle)].join("_") + ".html";
-    const blob = new Blob([explorationHtml], { type: "text/html;charset=utf-8" });
+    // 导出纯净稿：剥掉平台注入的提交通道（提交按钮/追踪脚本/探究记录面板）与 AI 伴学残留，
+    // 保留页面本身。AI 契约桩（__gameState__ / typeof updateScore 防御式调用）保留——它们属于页面逻辑、
+    // 脱离平台后是 no-op 无害，且无起止标记包裹无法安全剥离。
+    // 🔗 RELATED 与后端 PUT 的 removeSubmitFunctionality 同源；改这里要一起看 src/lib/prompts/exploration-submit.ts。
+    const cleanHtml = stripAiCompanionCode(removeSubmitFunctionality(explorationHtml));
+    const blob = new Blob([cleanHtml], { type: "text/html;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -5196,16 +5227,16 @@ export default function TeacherTasksPage() {
                     <Button theme="default" variant="text" size="small" icon={<FileIcon />} onClick={handleExportHtml}>
                       导出
                     </Button>
-                    {explorationHtml.trim() && detectInstrumentation(explorationHtml).needsAdaptation ? (
-                      <Tooltip content="该页面未接入提交采集（分数/关卡不会上报），点击让 AI 一键接入，可撤销">
-                        <Button theme="warning" variant="dashed" size="small" loading={adapting} onClick={handleAdaptInstrumentation}>
-                          AI 接入采集
-                        </Button>
-                      </Tooltip>
-                    ) : explorationHtml.trim() ? (
-                      <Tooltip content="该页面已接入提交采集，学生得分/进度可正常上报">
-                        <span className="text-xs text-green-600 px-1">✓ 已接入采集</span>
-                      </Tooltip>
+                    {explorationHtml.trim() ? (
+                      detectInstrumentation(explorationHtml).needsAdaptation ? (
+                        <Tooltip content="该页面未接入提交采集，开启「启用提交」时将自动接入">
+                          <span className="text-xs text-gray-400 px-1">△ 未接入采集</span>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip content="该页面已接入提交采集，学生得分/进度可正常上报">
+                          <span className="text-xs text-green-600 px-1">✓ 已接入采集</span>
+                        </Tooltip>
+                      )
                     ) : null}
                     {explorationPreview && (
                       <Button theme="default" variant="text" size="small" onClick={() => openPreview(explorationPreview)}>
@@ -5328,9 +5359,18 @@ export default function TeacherTasksPage() {
                 />
               </div>
               {confirmedInjection ? (
-                <div className="text-xs text-green-600 bg-green-50 rounded p-2">
-                  ✓ 已确认注入提交功能，点击保存即可生效。
-                </div>
+                detectInstrumentation(explorationHtml).needsAdaptation ? (
+                  <div className="text-xs text-amber-600 bg-amber-50 rounded p-2 flex items-center justify-between gap-2">
+                    <span>⚠️ 提交已启用，但采集接入未成功——仅采集基础数据（时长/操作/滚动），分数/关卡/作答暂无法上报。</span>
+                    <Button size="small" variant="text" theme="warning" loading={adapting} onClick={handleAdaptInstrumentation}>
+                      重试接入
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="text-xs text-green-600 bg-green-50 rounded p-2">
+                    ✓ 已启用提交并接入采集，分数/关卡/作答可正常上报，点击保存生效。
+                  </div>
+                )
               ) : explorationEnableSubmission ? (
                 <div className="text-xs text-amber-600 bg-amber-50 rounded p-2">
                   为互动探究的HTML注入提交功能，采集学生互动探究过程的数据用于分析，这是测试功能，未必成功。
@@ -5427,6 +5467,7 @@ export default function TeacherTasksPage() {
           header="提交功能预览"
           visible={injectionPreviewVisible}
           onClose={() => {
+            if (adapting) return; // AI 接入进行中，禁止关闭，避免与后台返回产生竞态
             setInjectionPreviewVisible(false);
             // 用 ref 读取真实值，避免 React 闭包捕获到旧 state
             if (confirmedInjectionRef.current) {
@@ -5450,6 +5491,7 @@ export default function TeacherTasksPage() {
           footer={
             <div className="flex justify-end gap-2">
               <Button
+                disabled={adapting}
                 onClick={() => {
                   setInjectionPreviewVisible(false);
                   // 取消注入，恢复原始 HTML
@@ -5467,22 +5509,47 @@ export default function TeacherTasksPage() {
               </Button>
               <Button
                 theme="primary"
-                onClick={() => {
-                  // 确认注入 → 调用注入函数修改 HTML
-                  const result = injectSubmitFunctionality(explorationHtml, {
+                loading={adapting}
+                onClick={async () => {
+                  if (adapting) return;
+                  // ① 先自动尝试 AI 接入采集（非阻断：失败仅降级为基础采集，不影响提交）
+                  let baseHtml = explorationHtml;
+                  const detection = detectInstrumentation(baseHtml);
+                  let adaptedOk = !detection.needsAdaptation; // 已接桩视为采集就绪，跳过 AI
+                  if (detection.needsAdaptation) {
+                    const adapted = await adaptHtmlWithAi(baseHtml);
+                    if (adapted) {
+                      baseHtml = adapted;
+                      adaptedOk = true;
+                    }
+                  }
+                  // ② 再注入提交功能（确定性，必成）
+                  const result = injectSubmitFunctionality(baseHtml, {
                     explorationId: explorationEditId || "",
                     taskTitle: "",
                   });
                   // 暂时跳过自动评分脚本注入，先用基础跟踪和提交功能
-                  let finalHtml = result.html;
+                  const finalHtml = result.html;
+                  // 注入结果入版本栈（备份/撤销天然可用）：撤销一步即回到「注入前」的原始 HTML，
+                  // 彻底清掉 AI 契约桩与提交通道。否则「确认注入」自动接入的桩不在栈里，
+                  // 关闭提交留桩后无撤销出口（只能手动删 script 或重生成）。
+                  // 🔗 RELATED 手动重试路径 handleAdaptInstrumentation 亦入栈，两者语义一致（入的都是当前最终 HTML）。
+                  const baseVersions = htmlVersions.slice(0, versionIndex + 1);
+                  const newIndex = baseVersions.length;
+                  setHtmlVersions([...baseVersions, finalHtml]);
+                  setVersionIndex(newIndex);
                   setExplorationHtml(finalHtml);
                   setExplorationPreview(finalHtml);
                   setExplorationEnableSubmission(true);
                   syncConfirmedInjection(true);
                   if (result.warnings.length > 0) {
                     result.warnings.forEach((w: string) => MessagePlugin.warning(w));
+                  }
+                  // ③ 结果反馈：成功 / 降级
+                  if (adaptedOk) {
+                    MessagePlugin.success("✅ 已启用提交并接入采集，分数/关卡/作答结果可正常上报");
                   } else {
-                    MessagePlugin.success("提交功能已注入");
+                    MessagePlugin.warning("⚠️ 提交已启用，但 AI 采集接入未成功——目前仅采集基础数据（时长/操作/滚动），分数/关卡/作答暂无法上报");
                   }
                   setInjectionPreviewVisible(false);
                   setPreviewAnalysis(null);
@@ -5777,8 +5844,10 @@ export default function TeacherTasksPage() {
                   <div className="text-xs text-blue-500">已提交</div>
                 </div>
                 <div className="bg-green-50 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-green-700">{analysisData.averageScore || 0}</div>
-                  <div className="text-xs text-green-500">平均分</div>
+                  <div className="text-2xl font-bold text-green-700">
+                    {analysisData.hasScoring ? (analysisData.averageScore ?? 0) : "—"}
+                  </div>
+                  <div className="text-xs text-green-500">{analysisData.hasScoring ? "平均分" : "不评分"}</div>
                 </div>
                 <div className="bg-orange-50 rounded-lg p-3 text-center">
                   <div className="text-2xl font-bold text-orange-700">{analysisData.totalStudents || 0}</div>
@@ -5848,7 +5917,9 @@ export default function TeacherTasksPage() {
                           <span className="text-gray-400">{new Date(record.submittedAt).toLocaleString()}</span>
                         </div>
                         <div className="flex gap-4 text-gray-500">
-                          <span>得分：<span className="text-orange-600 font-medium">{record.score}/{record.maxScore}</span></span>
+                          {analysisData.hasScoring && (
+                            <span>得分：<span className="text-orange-600 font-medium">{record.score}/{record.maxScore}</span></span>
+                          )}
                           <span>停留：<span className="text-gray-600">{record.timeSpent}秒</span></span>
                           <span>互动：<span className="text-gray-600">{record.interactions}次</span></span>
                           <span>操作：<span className="text-gray-600">{record.actionCount}条</span></span>
@@ -6029,13 +6100,12 @@ export default function TeacherTasksPage() {
             </div>
             <div>
               <label className="text-sm text-[#333]">文件大小限制（MB，默认 10）</label>
-              <Input
-                type="number"
+              <InputNumber
                 value={projForm.fileSizeLimit}
+                min={1}
                 onChange={(v) =>
                   setProjForm({ ...projForm, fileSizeLimit: Number(v) || 10 })
                 }
-                min={1}
               />
             </div>
           </div>

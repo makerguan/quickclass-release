@@ -4,6 +4,7 @@ import { verifyToken } from "@/lib/auth";
 import { getAIConfig } from "@/lib/ai";
 import { getReportTime } from "@/lib/prompts/insight";
 import { processChartBlocks } from "@/lib/report-charts";
+import { buildQfAnswersText } from "@/lib/exploration/qf-report";
 
 // GET: 获取探究 AI 分析报告的所有版本
 export async function GET(
@@ -198,6 +199,12 @@ export async function POST(
 
     const aiConfig = await getAIConfig();
 
+    // 学生填写的探究答案（QF 采集）聚成文本，供报告数据段与模板变量使用。
+    // ⚠️ GOTCHA：双轨采集下行为数据进 ExplorationSubmission，学生答案进 QfRecord；
+    //   早先报告只喂行为数据，导致「老师在大屏看得到答案、AI 报告里看不到」。
+    //   这里把答案一并拼进数据段，消除数据割裂。
+    const qfAnswersText = await buildQfAnswersText(exploration.qfTaskId);
+
     // 构建 prompt
     const dataSection = [
       "## 基本信息",
@@ -217,6 +224,9 @@ export async function POST(
       "",
       "## 提交详情",
       submissionDetails || "暂无提交记录",
+      "",
+      "## 学生作答内容",
+      qfAnswersText || "暂无作答",
     ].join("\n");
 
     const systemFrame = `你是一位资深学科教师，请根据以下互动探究的学生提交数据，生成一份专业的研学分析报告。
@@ -241,6 +251,7 @@ export async function POST(
       "actionTypeStats": actionTypeStatsText,
       "avgTimeSpent": `${avgTimeSpent}秒`,
       "avgInteractions": `${avgInteractions}次`,
+      "qfAnswers": qfAnswersText || "无",
       "reportTime": getReportTime(),
     };
 

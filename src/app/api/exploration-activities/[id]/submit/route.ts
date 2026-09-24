@@ -39,7 +39,10 @@ export async function POST(
       canvasSnapshots, storageSnapshot, textSnapshot,
     } = body;
 
-    const finalScore = typeof score === "number" ? score : 0;
+    // 无评分页面（采集类别 hasScoring=false）注入脚本上报 score=null，这里原样存 null，
+    // 老师端按 collectProfile 隐藏分数维度，不再把「无评分」误记为 0 分。
+    // ⛔ DO NOT REVERT：不要退回 `: 0`，否则无评分探究会被记为 0 分并进入平均分统计。
+    const finalScore = typeof score === "number" ? score : null;
     const finalMaxScore = typeof maxScore === "number" ? maxScore : 100;
 
     // 行为数据汇总（存 JSON，不含 actionLog）
@@ -69,14 +72,19 @@ export async function POST(
       textSnapshot: typeof textSnapshot === "string" ? textSnapshot.slice(0, 10000) : "",
     };
 
-    // actionLog 明细写入独立表
+    // actionLog 明细写入独立表。
+    // ⚠️ GOTCHA：canvas/textSnapshot 注入端与这里都有上限，唯独 actionLog 曾是无上限全量写入，
+    //   恶意/异常提交可撑爆 ExplorationActionLog 表 → 服务端兜底截断到最近 500 条（轨迹足够用）。
+    // ⛔ DO NOT REVERT：不要去掉 slice(0, 500)，否则回到「日志条数无上限」的数据膨胀风险。
     const logs = Array.isArray(actionLog)
-      ? actionLog.map((log: { type?: string; target?: string; value?: string; timestamp?: number }) => ({
-          type: log.type ?? "click",
-          target: log.target ?? "",
-          value: log.value ?? "",
-          timestamp: log.timestamp ?? Date.now(),
-        }))
+      ? actionLog
+          .slice(0, 500)
+          .map((log: { type?: string; target?: string; value?: string; timestamp?: number }) => ({
+            type: log.type ?? "click",
+            target: log.target ?? "",
+            value: log.value ?? "",
+            timestamp: log.timestamp ?? Date.now(),
+          }))
       : [];
 
     // 事务：创建/更新提交记录 + 写入操作日志
@@ -88,7 +96,10 @@ export async function POST(
 
       let sub;
       if (existing) {
-        // 更新已有提交
+        // 更新已有提交。
+        // ⚠️ GOTCHA：重提交时 submittedAt 必须刷新，否则老师端与 QF 记录（删旧写新、时间是新的）
+        //   时间戳会不一致，学生改完重交后老师看到的仍是首次提交时间。
+        // ⛔ DO NOT REVERT：不要去掉 submittedAt，否则重提交时间戳不更新。
         sub = await tx.explorationSubmission.update({
           where: { id: existing.id },
           data: {
@@ -96,6 +107,7 @@ export async function POST(
             totalScore: finalMaxScore,
             status: "graded",
             gradedAt: new Date(),
+            submittedAt: new Date(),
             answers: JSON.stringify(extraData),
           },
         });

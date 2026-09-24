@@ -96,8 +96,8 @@ export class QuickFormCore {
     return rowToTaskInfo(row);
   }
 
-  /** 写入一条数据。任务不存在/已关闭/校验失败抛 QfError */
-  async submit(taskId: string, data: RecordData, meta?: SubmitMeta): Promise<QfRecord> {
+  /** 校验任务状态与数据，构造待写入的 RecordRow（submit / replaceRecord 共用，消除重复校验） */
+  private async buildRecord(taskId: string, data: RecordData, meta?: SubmitMeta): Promise<RecordRow> {
     const task = await this.store.getTask(taskId);
     if (!task) throw new QfError(QfErrorCode.TASK_NOT_FOUND, `任务不存在: ${taskId}`);
     if (task.status !== "open") {
@@ -109,14 +109,29 @@ export class QuickFormCore {
     const fields = JSON.parse(task.fieldsJson) as FieldDef[];
     if (fields.length > 0) validateAgainstSchema(fields, data);
 
-    const row: RecordRow = {
+    return {
       id: generateRecordId(),
       taskId: task.id,
       dataJson: JSON.stringify({ ...data, ...(meta?.ip ? { [RESERVED_KEYS.ip]: meta.ip } : {}) }),
       studentId: meta?.studentId || null,
       submittedAt: nowIso(),
     };
+  }
+
+  /** 写入一条数据。任务不存在/已关闭/校验失败抛 QfError */
+  async submit(taskId: string, data: RecordData, meta?: SubmitMeta): Promise<QfRecord> {
+    const row = await this.buildRecord(taskId, data, meta);
     await this.store.saveRecord(row);
+    return rowToRecord(row);
+  }
+
+  /**
+   * 重提交：删旧记录 + 写新记录必须原子（adapter 的 replaceRecord 保证）。
+   * ⚠️ GOTCHA：不要在这里拆成「delete + submit」两步——两步之间进程崩溃会丢答案。
+   */
+  async replaceRecord(taskId: string, oldRecordId: string, data: RecordData, meta?: SubmitMeta): Promise<QfRecord> {
+    const row = await this.buildRecord(taskId, data, meta);
+    await this.store.replaceRecord(taskId, oldRecordId, row);
     return rowToRecord(row);
   }
 

@@ -163,6 +163,10 @@ export default function ExplorationAnalysisPage() {
   // （列表接口已剥离 canvasSnapshots / textSnapshot 等大字段，只留 canvasCount）
   const [detailCache, setDetailCache] = useState<Record<string, Record<string, any>>>({});
 
+  // 提交详情页签的双视图切换：绑定 QF 任务时「收集数据」与「行为数据」并列，
+  // 默认「收集数据」保持既有习惯，老师可切到「行为数据」看作品快照 / 操作日志
+  const [submissionView, setSubmissionView] = useState<"qf" | "behavior">("qf");
+
   // 删除版本
   const [deleteVisible, setDeleteVisible] = useState(false);
   const [deleteVersion, setDeleteVersion] = useState<{ id: string; version: number } | null>(null);
@@ -690,16 +694,12 @@ export default function ExplorationAnalysisPage() {
     );
   };
 
-  const renderSubmissions = () => {
-    if (loading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
-
-    // 双轨：探究绑定了 QuickForm 收集任务 → 展示收集数据明细；
-    // 否则回退原有的行为数据（ExplorationSubmission）展示，不影响既有探究
-    if (qfTaskId) {
-      if (qfLoading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
-      return <QuickFormRecordList records={qfRecords} total={qfTotal} />;
-    }
-
+  // 行为数据视图：原有 ExplorationSubmission 展示（作品快照 / 操作日志 / 页面状态等）。
+  // ⚠️ GOTCHA：双轨探究里这些数据与 QF 收集答案并存，早先「提交详情」在有 qfTaskId 时
+  //   只显示 QF 名单表，canvas 作品快照 / 操作日志完全无入口，老师看不到学生作品。
+  //   这里抽成独立函数，供下方「收集数据 / 行为数据」切换复用，避免行为轨丢失。
+  // ⛔ DO NOT REVERT：不要把行为数据视图从双轨探究里摘掉——那会退回「作品快照无入口」。
+  const renderBehaviorSubmissions = () => {
     if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交记录</div>;
 
     const toggleExpand = (id: string, studentId: string, canvasCount: number) => {
@@ -879,6 +879,41 @@ export default function ExplorationAnalysisPage() {
         })}
       </div>
     );
+  };
+
+  const renderSubmissions = () => {
+    if (loading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+
+    // 双轨：探究绑定了 QuickForm 收集任务 → 「收集数据 / 行为数据」两个视图切换；
+    // 否则只有行为数据（ExplorationSubmission），不影响既有探究。
+    if (qfTaskId) {
+      if (qfLoading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+      return (
+        <div className="space-y-3">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setSubmissionView("qf")}
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "qf" ? "bg-blue-50 text-blue-600 border-blue-200" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+            >
+              收集数据（{qfTotal || qfRecords.length}）
+            </button>
+            <button
+              onClick={() => setSubmissionView("behavior")}
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "behavior" ? "bg-blue-50 text-blue-600 border-blue-200" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+            >
+              行为数据（{submissions.length}）
+            </button>
+          </div>
+          {submissionView === "qf" ? (
+            <QuickFormRecordList records={qfRecords} total={qfTotal} />
+          ) : (
+            renderBehaviorSubmissions()
+          )}
+        </div>
+      );
+    }
+
+    return renderBehaviorSubmissions();
   };
 
   const renderAiReport = () => (

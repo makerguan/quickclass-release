@@ -101,6 +101,12 @@ export interface StorageAdapter {
   /** 必须级联删除该任务全部记录 */
   deleteTask(taskId: string): Promise<void>;
   saveRecord(record: RecordRow): Promise<void>;
+  /**
+   * 原子替换：删旧 recordId 的同时写新 record。
+   * ⚠️ GOTCHA：重提交若拆成「先 deleteRecord 再 saveRecord」两步，两步之间有崩溃窗口，
+   *   进程恰在此间中断会丢答案（旧记录已删、新记录没写）。实现方必须保证原子性。
+   */
+  replaceRecord(taskId: string, oldRecordId: string, record: RecordRow): Promise<void>;
   getRecord(taskId: string, recordId: string): Promise<RecordRow | null>;
   /** filter 为 data 字段等值匹配；无 filter 返回该任务全部记录 */
   queryRecords(taskId: string, filter?: Record<string, unknown>): Promise<RecordRow[]>;

@@ -5,6 +5,12 @@ import { injectSubmitFunctionality, removeSubmitFunctionality } from "@/lib/prom
 import type { SubmitContext } from "@/lib/prompts/exploration-submit";
 import { removeAiCompanion, upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
 import { ensureQfTaskForExploration } from "@/lib/exploration/qf-binding";
+import {
+  analyzeCollectProfileWithAi,
+  detectCollectProfile,
+  parseCollectProfile,
+  stringifyCollectProfile,
+} from "@/lib/exploration/collect-profile";
 
 // GET: 获取单个探究详情（含 aiCompanionPrompt）
 export async function GET(
@@ -136,12 +142,24 @@ export async function PUT(
           updateData.qfTaskId = qf.taskId;
         }
 
-        // ② 注入提交功能 + 采集块
+        // ② 采集类别分析：AI 判断页面有没有评分环节，决定采哪些数据。
+        //    只有 HTML 变了 / 首次启用（无 collectProfile）才重新分析，避免每次保存都调 AI。
+        //    ⚠️ GOTCHA：必须在「注入前」的 HTML 上分析——注入的追踪脚本自带 `score: 0`，
+        //    会干扰 hasScoring 的正则兜底；故先 removeSubmitFunctionality 还原（纯净稿是 no-op）。
+        let profile = parseCollectProfile(item.collectProfile ?? null);
+        if (htmlContentChanged || !profile) {
+          const cleanBaseHtml = removeSubmitFunctionality(baseHtml);
+          const aiProfile = await analyzeCollectProfileWithAi(cleanBaseHtml);
+          profile = aiProfile ?? detectCollectProfile(cleanBaseHtml);
+          updateData.collectProfile = stringifyCollectProfile(profile);
+        }
+
+        // ③ 注入提交功能 + 采集块（按采集类别裁剪）
         const context: SubmitContext = {
           explorationId: id,
           taskTitle: item.SubProject.task.title || "",
         };
-        const result = injectSubmitFunctionality(baseHtml, context);
+        const result = injectSubmitFunctionality(baseHtml, context, profile ?? undefined);
         updateData.htmlContent = result.html;
         injectWarnings = result.warnings;
         updateData.enableSubmission = true;

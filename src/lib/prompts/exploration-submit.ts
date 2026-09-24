@@ -123,20 +123,31 @@ if (!window.__ACTION_HOOK_BOUND__) {
 function submitResults() {
   var data = window.__explorationData__ || {};
   var gs = window.__gameState__ || {};
+  // --- 采集配置：系统在注入时按「AI 分析 HTML 的采集类别」写入 ---
+  //     hasScoring=false 不采分数（score 记 null）；hasFormControls=false 不扫描控件；hasCanvas=false 不采画布快照。
+  //     默认值偏保守（hasScoring=true），兜底旧注入脚本无此配置时的行为。
+  var profile = window.__COLLECT_PROFILE__ || { hasScoring: true, hasFormControls: true, hasCanvas: true };
   var answers = {};
-  // QuickForm 采集块存在时，把学生填写的内容一起带上；
-  // 采集块缺失 / 采集异常都不影响原有行为数据的提交。
-  try {
-    if (typeof qfCollectAnswers === "function") answers = qfCollectAnswers() || {};
-  } catch (e) { answers = {}; }
+  // 扫描页面原有控件（面板已移除）；无控件 / 配置关闭时跳过，不影响行为数据提交。
+  if (profile.hasFormControls !== false) {
+    try {
+      if (typeof qfCollectAnswers === "function") answers = qfCollectAnswers() || {};
+    } catch (e) { answers = {}; }
+  }
 
-  // --- score：契约轨有真实分数取契约轨，否则取函数调用轨写入值 ---
-  var gsScore = (typeof gs.score === "number" && gs.score > 0) ? gs.score : 0;
-  var sysScore = (typeof data.score === "number" && data.score > 0) ? data.score : 0;
-  var finalScore = gsScore > 0 ? gsScore : sysScore;
+  // --- score：hasScoring=false（纯探索/模拟页）时记 null，老师端按 collectProfile 隐藏分数维度 ---
+  var finalScore = null;
+  var inferred = false;
+  if (profile.hasScoring !== false) {
+    var gsScore = (typeof gs.score === "number" && gs.score > 0) ? gs.score : 0;
+    var sysScore = (typeof data.score === "number" && data.score > 0) ? data.score : 0;
+    finalScore = gsScore > 0 ? gsScore : sysScore;
+  }
 
-  // --- maxScore：AI 设计的真实满分优先 ---
-  var finalMaxScore = (typeof gs.maxScore === "number" && gs.maxScore > 0) ? gs.maxScore : (data.maxScore || 100);
+  // --- maxScore：AI 设计的真实满分优先（无评分页恒为 null）---
+  var finalMaxScore = profile.hasScoring === false
+    ? null
+    : ((typeof gs.maxScore === "number" && gs.maxScore > 0) ? gs.maxScore : (data.maxScore || 100));
 
   // --- gameLevel：取较大值 ---
   var gsLevel = (typeof gs.gameLevel === "number" && gs.gameLevel >= 1) ? gs.gameLevel : 1;
@@ -157,9 +168,8 @@ function submitResults() {
     }
   }
 
-  // --- 兜底：分数正则（仅两轨都无分数时，从页面文本推测，取最后一次匹配）---
-  var inferred = false;
-  if (finalScore === 0) {
+  // --- 兜底：分数正则（仅评分页且两轨都无分数时，从页面文本推测）---
+  if (profile.hasScoring !== false && finalScore === 0) {
     try {
       var text = document.body ? (document.body.innerText || "") : "";
       var mScore = text.match(/(?:得分|分数|成绩|积分)\\s*[:：]?\\s*(\\d+)/g);
@@ -167,17 +177,25 @@ function submitResults() {
         var lastS = mScore[mScore.length - 1].match(/(\\d+)/);
         if (lastS && parseInt(lastS[1], 10) > 0) { finalScore = parseInt(lastS[1], 10); inferred = true; }
       }
-      var mLevel = text.match(/第\\s*(\\d+)\\s*关/g);
-      if (mLevel && mLevel.length) {
-        var lastL = mLevel[mLevel.length - 1].match(/(\\d+)/);
-        if (lastL) finalLevel = Math.max(finalLevel, parseInt(lastL[1], 10) || 1);
-      }
     } catch (e) { /* 文本推测失败不影响提交 */ }
   }
+  // --- 兜底：关卡正则（通用，无评分页也可能有关卡）---
+  try {
+    var bodyText = document.body ? (document.body.innerText || "") : "";
+    var mLevel = bodyText.match(/第\\s*(\\d+)\\s*关/g);
+    if (mLevel && mLevel.length) {
+      var lastL = mLevel[mLevel.length - 1].match(/(\\d+)/);
+      if (lastL) finalLevel = Math.max(finalLevel, parseInt(lastL[1], 10) || 1);
+    }
+  } catch (e) { /* 文本推测失败不影响提交 */ }
+  // 评分页但最终未采到分数（两轨+正则都无）→ 记 null，与「无评分页」一致，避免老师端误读为"0分"
+  if (profile.hasScoring !== false && finalScore === 0) finalScore = null;
 
-  // --- 兜底：canvas 快照 / localStorage 白名单 / 文本快照 ---
+  // --- 兜底：canvas 快照 / localStorage 白名单 / 文本快照（canvas 按采集配置裁剪）---
   var canvasSnapshots = [];
-  try { if (typeof qfCollectCanvas === "function") canvasSnapshots = qfCollectCanvas(); } catch (e) {}
+  if (profile.hasCanvas !== false) {
+    try { if (typeof qfCollectCanvas === "function") canvasSnapshots = qfCollectCanvas(); } catch (e) {}
+  }
   var storageSnapshot = {};
   try { if (typeof qfCollectStorage === "function") storageSnapshot = qfCollectStorage(); } catch (e) {}
   var textSnapshot = "";
@@ -269,41 +287,51 @@ document.addEventListener("click", function() {
 });
 
 // ===== 供外部调用的函数 =====
+// 全部采用「防御式定义」：页面脚本若已定义同名全局函数则跳过，
+// 避免注入覆盖页面自有逻辑（如旧系统的滑杆/游戏交互），破坏页面交互效果。
 
 // 更新得分
-function updateScore(score) {
-  if (window.__explorationData__) {
-    var d = window.__explorationData__;
-    if (typeof score === "number" && score >= 0) {
-      // 分数超过当前满分时自动提升满分（兼容非百分制游戏，如 300 分制）
-      if (score > d.maxScore) d.maxScore = score;
-      d.score = Math.max(0, Math.min(score, d.maxScore));
+if (typeof window.updateScore !== "function") {
+  window.updateScore = function(score) {
+    if (window.__explorationData__) {
+      var d = window.__explorationData__;
+      if (typeof score === "number" && score >= 0) {
+        // 分数超过当前满分时自动提升满分（兼容非百分制游戏，如 300 分制）
+        if (score > d.maxScore) d.maxScore = score;
+        d.score = Math.max(0, Math.min(score, d.maxScore));
+      }
     }
-  }
+  };
 }
 
 // 完成环节
-function completeSection(name) {
-  if (window.__explorationData__ && name) {
-    var sections = window.__explorationData__.completedSections;
-    if (sections.indexOf(name) === -1) {
-      sections.push(name);
+if (typeof window.completeSection !== "function") {
+  window.completeSection = function(name) {
+    if (window.__explorationData__ && name) {
+      var sections = window.__explorationData__.completedSections;
+      if (sections.indexOf(name) === -1) {
+        sections.push(name);
+      }
     }
-  }
+  };
 }
 
 // 设置游戏级别
-function setGameLevel(level) {
-  if (window.__explorationData__ && level) {
-    window.__explorationData__.gameLevel = Math.max(1, level);
-  }
+if (typeof window.setGameLevel !== "function") {
+  window.setGameLevel = function(level) {
+    if (window.__explorationData__ && level) {
+      window.__explorationData__.gameLevel = Math.max(1, level);
+    }
+  };
 }
 
 // 增加尝试次数
-function addAttempt() {
-  if (window.__explorationData__) {
-    window.__explorationData__.attempts++;
-  }
+if (typeof window.addAttempt !== "function") {
+  window.addAttempt = function() {
+    if (window.__explorationData__) {
+      window.__explorationData__.attempts++;
+    }
+  };
 }
 
 /**
@@ -312,16 +340,18 @@ function addAttempt() {
  * @param {string} target - 操作的元素描述，如"第1题选项B"、"填空框2"
  * @param {string} value  - 用户操作的值内容，如"B"、"3.14"、"正确"
  */
-function recordAction(type, target, value) {
-  if (window.__explorationData__ && type && target) {
-    window.__explorationData__.actionLog.push({
-      type: type,
-      target: target,
-      value: value || "",
-      timestamp: Date.now()
-    });
-    window.__explorationData__.interactions++;
-  }
+if (typeof window.recordAction !== "function") {
+  window.recordAction = function(type, target, value) {
+    if (window.__explorationData__ && type && target) {
+      window.__explorationData__.actionLog.push({
+        type: type,
+        target: target,
+        value: value || "",
+        timestamp: Date.now()
+      });
+      window.__explorationData__.interactions++;
+    }
+  };
 }
 `.trim();
 
@@ -350,71 +380,6 @@ export const submitButtonHTML = `<div id="quickclass-submit-root"><button id="su
 export const QF_BLOCK_BEGIN = "<!--QUICKCLASS-QF-BEGIN-->";
 export const QF_BLOCK_END = "<!--QUICKCLASS-QF-END-->";
 
-export const qfCollectCSS = `
-#quickclass-qf-panel {
-  max-width: 720px;
-  margin: 32px auto 120px;
-  padding: 20px 22px;
-  border: 1px solid #E3E6EB;
-  border-radius: 12px;
-  background: #FAFBFC;
-  color: #1A1A1A;
-  text-align: left;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-}
-#quickclass-qf-panel .qf-title { font-size: 16px; font-weight: 600; margin: 0 0 4px; }
-#quickclass-qf-panel .qf-hint { font-size: 12px; color: #8A9099; line-height: 1.7; margin-bottom: 14px; }
-#quickclass-qf-panel .qf-field { display: block; margin-bottom: 12px; }
-#quickclass-qf-panel .qf-label { display: block; font-size: 13px; color: #4A5058; margin-bottom: 6px; }
-#quickclass-qf-panel .qf-label em { font-style: normal; font-size: 12px; color: #A0A6AE; }
-#quickclass-qf-panel input[type="text"],
-#quickclass-qf-panel textarea {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 9px 11px;
-  border: 1px solid #DDE1E6;
-  border-radius: 8px;
-  background: #FFFFFF;
-  color: #1A1A1A;
-  font-family: inherit;
-  font-size: 14px;
-  line-height: 1.6;
-  resize: vertical;
-}
-#quickclass-qf-panel input[type="text"]:focus,
-#quickclass-qf-panel textarea:focus {
-  outline: none;
-  border-color: #4C8DFF;
-  box-shadow: 0 0 0 3px rgba(76,141,255,0.12);
-}
-#quickclass-qf-panel .qf-auto { margin-top: 4px; padding-top: 10px; border-top: 1px dashed #E3E6EB; }
-#quickclass-qf-panel .qf-auto summary { font-size: 12px; color: #8A9099; cursor: pointer; }
-#quickclass-qf-panel .qf-auto ul { margin: 8px 0 0; padding-left: 18px; }
-#quickclass-qf-panel .qf-auto li { font-size: 12px; color: #4A5058; line-height: 1.9; }
-#quickclass-qf-panel .qf-auto li b { color: #1A1A1A; font-weight: 600; }
-#quickclass-qf-panel .qf-auto li.qf-empty { list-style: none; margin-left: -18px; color: #A0A6AE; }
-`.trim();
-
-/** 通用「探究记录」面板：任何页面都追加，兜底保证有东西可采 */
-export const qfCollectPanelHTML = `
-<div id="quickclass-qf-panel" data-qf-panel>
-  <div class="qf-title">探究记录</div>
-  <div class="qf-hint">这里填写的内容，会随页面左下角的「提交」一起发送给老师；页面上已有的选择、填空、滑块等也会一并自动记录。</div>
-  <label class="qf-field">
-    <span class="qf-label">姓名 <em>（可不填，默认使用你的账号姓名）</em></span>
-    <input id="qf-student-name" type="text" placeholder="请输入姓名" autocomplete="off" />
-  </label>
-  <label class="qf-field">
-    <span class="qf-label">我的发现 / 结论</span>
-    <textarea id="qf-findings" rows="3" placeholder="写下你在这次探究中的发现、结论或疑问"></textarea>
-  </label>
-  <details class="qf-auto">
-    <summary>本次会一并记录的观察数据：<span id="qf-auto-count">0</span> 项</summary>
-    <ul id="qf-auto-list"></ul>
-  </details>
-</div>
-`.trim();
-
 export const qfCollectScript = `
 // ===== QuickForm 探究记录采集（自动扫描 + 通用面板）=====
 // 全部用 ES5 写法：这段脚本直接注入 HTML 运行，不经过任何编译
@@ -422,15 +387,7 @@ function qfNorm(s) {
   return String(s == null ? "" : s).replace(/\\s+/g, " ").trim();
 }
 
-function qfEsc(s) {
-  return String(s)
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;");
-}
-
-/** 跳过：隐藏/按钮类控件、禁用控件、显式标记、以及我们自己的面板与提交按钮 */
+/** 跳过：隐藏/按钮类控件、禁用控件、显式标记、以及我们自己的提交按钮 */
 function qfSkip(el) {
   var tag = el.tagName.toLowerCase();
   var type = (el.getAttribute("type") || "text").toLowerCase();
@@ -440,7 +397,7 @@ function qfSkip(el) {
   }
   if (el.disabled) return true;
   if (el.getAttribute("data-qf-skip") !== null) return true;
-  if (el.closest && (el.closest("#quickclass-qf-panel") || el.closest("#quickclass-submit-root"))) return true;
+  if (el.closest && el.closest("#quickclass-submit-root")) return true;
   return false;
 }
 
@@ -559,12 +516,7 @@ function qfCollectAnswers() {
     out[k] = v;
   }
 
-  // 通用面板（固定键名，老师改文案也不影响）
-  var nameEl = document.getElementById("qf-student-name");
-  if (nameEl && qfNorm(nameEl.value)) put("学生姓名", qfNorm(nameEl.value));
-  var findEl = document.getElementById("qf-findings");
-  if (findEl && qfNorm(findEl.value)) put("我的发现", qfNorm(findEl.value));
-
+  // 只扫描页面原有控件（「探究记录」面板已按产品要求移除，不再兜底注入固定姓名/发现字段）
   var nodes = document.querySelectorAll("input, select, textarea");
   var groupKeys = [], groups = {};
 
@@ -605,43 +557,6 @@ function qfCollectAnswers() {
   return out;
 }
 
-/** 刷新面板里的「观察数据」预览，让学生看得见会被记录什么 */
-function qfRefreshAutoSummary() {
-  try {
-    var a = qfCollectAnswers(), keys = [], k;
-    for (k in a) {
-      if (Object.prototype.hasOwnProperty.call(a, k)) keys.push(k);
-    }
-    var cnt = document.getElementById("qf-auto-count");
-    if (cnt) cnt.textContent = String(keys.length);
-    var list = document.getElementById("qf-auto-list");
-    if (list) {
-      var html = "";
-      for (var i = 0; i < keys.length; i++) {
-        var v = String(a[keys[i]]);
-        if (v.length > 60) v = v.slice(0, 60) + "…";
-        html += "<li><b>" + qfEsc(keys[i]) + "</b>：" + qfEsc(v) + "</li>";
-      }
-      list.innerHTML = html || "<li class=\\"qf-empty\\">还没有可记录的内容，填写或调整页面上的选项后会自动出现。</li>";
-    }
-  } catch (e) { /* 采集异常不影响页面本身 */ }
-}
-
-if (!window.__QF_COLLECT_BOUND__) {
-  window.__QF_COLLECT_BOUND__ = 1;
-  (function () {
-    function refresh() { qfRefreshAutoSummary(); }
-    document.addEventListener("input", refresh, true);
-    document.addEventListener("change", refresh, true);
-    if (document.readyState === "loading") {
-      document.addEventListener("DOMContentLoaded", function () { setTimeout(refresh, 50); });
-    } else {
-      setTimeout(refresh, 50);
-    }
-    // 页面可能延迟渲染控件（图表 / 滑块初始化），再补一次
-    setTimeout(refresh, 1200);
-  })();
-}
 `.trim();
 
 /**
@@ -663,12 +578,13 @@ export function removeQfCollectBlock(html: string): string {
   return out;
 }
 
-/** 组装完整采集块（CSS + 面板 + 脚本，包在一对标记里） */
+/** 组装采集块（只注入「扫描原有控件」脚本，包在一对标记里）。
+ *  ⛔ DO NOT REVERT：「探究记录」面板（姓名+我的发现）已按产品要求移除——它会把整块 UI
+ *  硬塞进页面底部，改变原始 HTML 外观与滚动高度。答案只靠扫描页面原有控件 + AI 上报的
+ *  __gameState__.answers，页面无控件时只采行为数据。 */
 export function buildQfCollectBlock(): string {
   return (
     QF_BLOCK_BEGIN +
-    "<style>" + qfCollectCSS + "</style>" +
-    qfCollectPanelHTML +
     "<script>" + qfCollectScript + "</script>" +
     QF_BLOCK_END
   );
@@ -713,11 +629,17 @@ export function detectInstrumentation(html: string): {
 /**
  * 注入提交功能到 HTML
  *
- * @param html 原始 HTML
+ * @param html 原始 HTML（注入前的原始 / 契约桩改造后 HTML）
  * @param context 上下文信息
+ * @param profile 采集类别清单（AI 分析 HTML 得出），决定注入哪些采集逻辑。
+ *                缺省时按保守默认（hasScoring=true）注入，兼容旧调用方。
  * @returns 改造后的 HTML 和警告信息
  */
-export function injectSubmitFunctionality(html: string, context: SubmitContext): InjectResult {
+export function injectSubmitFunctionality(
+  html: string,
+  context: SubmitContext,
+  profile?: { hasScoring?: boolean; hasFormControls?: boolean; hasCanvas?: boolean }
+): InjectResult {
   const warnings: string[] = [];
   let modified = html;
 
@@ -791,6 +713,19 @@ export function injectSubmitFunctionality(html: string, context: SubmitContext):
     }
   }
 
+  // 4.5 注入采集类别配置（AI 分析 HTML 的结果）。submitResults 运行时读取
+  //     window.__COLLECT_PROFILE__ 决定是否采分数 / 控件答案 / 画布快照。
+  //     未传 profile 时注入保守默认，保证与旧逻辑一致（都采）。
+  const hasScoring = profile?.hasScoring !== false;
+  const hasFormControls = profile?.hasFormControls !== false;
+  const hasCanvas = profile?.hasCanvas !== false;
+  const profileScript = "window.__COLLECT_PROFILE__ = " + JSON.stringify({ hasScoring, hasFormControls, hasCanvas }) + ";";
+  if (modified.includes("</body>")) {
+    modified = modified.replace("</body>", "<script>" + profileScript + "</script></body>");
+  } else {
+    modified = modified + "<script>" + profileScript + "</script>";
+  }
+
   // 5. 检查是否已有提交函数（使用 postMessage 通信）
   var finalSubmitFn = suffix ? submitMessageScript.replace(/submitResults/g, "submitResults" + suffix) : submitMessageScript;
   if (!modified.includes("submitResults")) {
@@ -823,9 +758,9 @@ export function injectSubmitFunctionality(html: string, context: SubmitContext):
     warnings.push("HTML 缺少 </body>，QuickForm 采集面板已添加到页面末尾");
   }
 
-  // 静态提示：页面本身没有可填控件时，学生只能靠通用面板填写
+  // 静态提示：页面没有标准控件时，结构化答案只能靠 AI 契约轨（__gameState__.answers）上报
   if (!/<input|<select|<textarea/i.test(removeQfCollectBlock(html))) {
-    warnings.push("页面中没有可填写的控件，学生仅能通过底部「探究记录」面板填写姓名与发现");
+    warnings.push("页面中没有可填写的控件，结构化答案将依赖 AI 自动上报（页面本身不上报则为空）");
   }
 
   return {
@@ -865,6 +800,10 @@ export function removeSubmitFunctionality(html: string): string {
 
   // 移除基础追踪脚本
   modified = modified.replace(/<script>\s*\/\/ ===== 基础追踪脚本[\s\S]*?<\/script>/gi, "");
+
+  // 移除采集类别配置脚本（injectSubmitFunctionality 第 4.5 步注入），
+  // 保证 removeSubmitFunctionality 能完整还原到「注入前」状态，供采集类别分析复用。
+  modified = modified.replace(/<script>\s*window\.__COLLECT_PROFILE__\s*=[\s\S]*?<\/script>/gi, "");
 
   return modified;
 }

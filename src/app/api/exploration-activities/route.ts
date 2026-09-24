@@ -2,9 +2,14 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
-import { injectSubmitFunctionality } from "@/lib/prompts/exploration-submit";
+import { injectSubmitFunctionality, removeSubmitFunctionality } from "@/lib/prompts/exploration-submit";
 import type { SubmitContext } from "@/lib/prompts/exploration-submit";
 import { ensureQfTaskForExploration } from "@/lib/exploration/qf-binding";
+import {
+  analyzeCollectProfileWithAi,
+  detectCollectProfile,
+  stringifyCollectProfile,
+} from "@/lib/exploration/collect-profile";
 
 export async function GET(req: NextRequest) {
   try {
@@ -113,10 +118,19 @@ export async function POST(req: NextRequest) {
         explorationId: item.id,
         taskTitle: sp.task.title || "",
       };
-      const result = injectSubmitFunctionality(item.htmlContent || "", context);
+
+      // 采集类别分析：AI 判断有没有评分环节（新建即开提交，HTML 必为新稿，直接分析）
+      const cleanHtml = removeSubmitFunctionality(item.htmlContent || "");
+      const aiProfile = await analyzeCollectProfileWithAi(cleanHtml);
+      const profile = aiProfile ?? detectCollectProfile(cleanHtml);
+
+      const result = injectSubmitFunctionality(item.htmlContent || "", context, profile);
       injectWarnings = result.warnings;
 
-      const postUpdate: Record<string, unknown> = { htmlContent: result.html };
+      const postUpdate: Record<string, unknown> = {
+        htmlContent: result.html,
+        collectProfile: stringifyCollectProfile(profile),
+      };
       if (qf.taskId) postUpdate.qfTaskId = qf.taskId;
 
       savedItem = await prisma.explorationActivity.update({
