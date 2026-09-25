@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
-import { getAIConfig } from "@/lib/ai";
+import { getAIConfig, chatCompletionsFetch } from "@/lib/ai";
 import { buildQuizGeneratePrompt, parseQuestionsFromAIResponse } from "@/lib/prompts/quiz";
 
 /**
@@ -70,16 +70,11 @@ export async function POST(req: NextRequest) {
     });
 
     const aiConfig = await getAIConfig();
-    const aiResponse = await fetch(`${aiConfig.baseURL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${aiConfig.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: aiConfig.model,
-        messages: [{ role: "user", content: prompt }],
-      }),
+    // ⛔ DO NOT REVERT：不要改回裸 fetch——统一走 src/lib/ai.ts 的
+    // chatCompletionsFetch（超时+网络级重试+友好错误），防网络抖动直透前端。
+    const aiResponse = await chatCompletionsFetch(aiConfig, {
+      model: aiConfig.model,
+      messages: [{ role: "user", content: prompt }],
     });
 
     let aiData;

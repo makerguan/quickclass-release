@@ -49,3 +49,66 @@ export async function createDashScopeClient() {
     reasoningEnabled: config.reasoningEnabled,
   };
 }
+
+/**
+ * 直连 chat/completions 的统一 fetch：超时上限 + 网络级错误自动重试 + 友好错误信息。
+ *
+ * 为什么要有这个函数：
+ * 🧪 MEASURED 2026-09-25：老师生成探究 AI 报告时 api.deepseek.com 瞬时不可达，
+ *   两次请求各 ~13s 后以 undici「fetch failed」告终（500 原样透传，老师只看到
+ *   「生成失败: fetch failed」）；约 40 分钟后同一请求 14.9s 成功——纯网络抖动，
+ *   但当时无超时、无重试、错误信息不可读，一次抖动直接变成用户可见故障。
+ *
+ * ⚠️ GOTCHA：只重试「网络级」失败（fetch reject：连接被拒/DNS 失败/本函数的超时），
+ *   不重试 HTTP 4xx/5xx——401 是 key 无效、400 是请求体问题，重试无意义且拖慢报错。
+ *
+ * 🔗 RELATED（新增直连 chat/completions 时必须改用本函数，不要再裸写 fetch）：
+ *   - src/lib/ai-grading.ts（gradeByAI / generateTeachingAdvice）
+ *   - src/app/api/exploration-activities/[id]/analysis/generate/route.ts
+ *   - src/app/api/quiz-activities/[id]/report/generate/route.ts
+ *   - src/app/api/quiz-activities/generate-preview/route.ts
+ *   - src/app/api/quiz-activities/route.ts
+ *   - src/app/api/system-config/test/route.ts 是连通性诊断工具，故意保留裸 fetch（重试会掩盖真实断网）
+ */
+const AI_FETCH_TIMEOUT_MS = 120_000; // 全班报告实测可达 ~60s，留足余量；两轮重试最坏 ~241s，仍在浏览器 ~300s 放弃线内
+const AI_FETCH_RETRIES = 1; // 网络级失败自动重试 1 次（共 2 次尝试）
+
+export async function chatCompletionsFetch(
+  aiConfig: { baseURL: string; apiKey: string },
+  body: Record<string, unknown>
+): Promise<Response> {
+  const url = `${aiConfig.baseURL.replace(/\/+$/, "")}/chat/completions`;
+  const payload = JSON.stringify(body);
+
+  let lastErr: unknown = null;
+  for (let attempt = 0; attempt <= AI_FETCH_RETRIES; attempt++) {
+    if (attempt > 0) {
+      // 短暂等待，给瞬时网络抖动一点恢复时间
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+    try {
+      return await fetch(url, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${aiConfig.apiKey}`,
+        },
+        body: payload,
+        signal: AbortSignal.timeout(AI_FETCH_TIMEOUT_MS),
+      });
+    } catch (err) {
+      lastErr = err;
+      // 把 undici 隐藏在 cause 里的真实原因（ENOTFOUND/ECONNREFUSED/超时）打出来，便于排查
+      const cause = (err as { cause?: unknown })?.cause;
+      console.error(
+        `[chatCompletionsFetch] 第 ${attempt + 1}/${AI_FETCH_RETRIES + 1} 次尝试网络级失败:`,
+        err instanceof Error ? `${err.name}: ${err.message}` : String(err),
+        cause instanceof Error ? `（cause: ${cause.message}）` : ""
+      );
+    }
+  }
+  console.error("[chatCompletionsFetch] 重试耗尽，最后错误:", lastErr);
+  throw new Error(
+    `AI 服务连接失败（网络波动或服务不可达，已自动重试 ${AI_FETCH_RETRIES} 次），请检查网络后稍候重试`
+  );
+}

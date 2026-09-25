@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
-import { getAIConfig } from "@/lib/ai";
+import { getAIConfig, chatCompletionsFetch } from "@/lib/ai";
 import { getReportTime } from "@/lib/prompts/insight";
-import { processChartBlocks } from "@/lib/report-charts";
+import { cleanInsightContent } from "@/lib/insight-clean";
 import { buildQfAnswersText } from "@/lib/exploration/qf-report";
+import { parseCollectProfile, detectCollectProfile } from "@/lib/exploration/collect-profile";
+import { removeSubmitFunctionality } from "@/lib/prompts/exploration-submit";
 
 // GET: 获取探究 AI 分析报告的所有版本
 export async function GET(
@@ -38,7 +40,8 @@ export async function GET(
 
     const versions = allInsights.map((i) => ({
       id: i.id,
-      content: i.content,
+      // 展示层统一清理：历史脏数据入库时未剥说明文字/围栏，返回前截取 HTML 主体（幂等，库数据不动）
+      content: cleanInsightContent(i.content || ""),
       version: i.version,
       createdAt: i.createdAt.toISOString(),
     }));
@@ -104,10 +107,15 @@ export async function POST(
     const submittedCount = submissions.length;
     const totalStudents = students.length || submittedCount;
 
-    // 分数统计
+    // 是否评分探究：collectProfile 由启用提交时 AI 分析得出；旧数据在去除注入脚本的 HTML 上正则兜底
+    const profile = parseCollectProfile(exploration.collectProfile) ??
+      detectCollectProfile(removeSubmitFunctionality(exploration.htmlContent));
+    const hasScoring = profile.hasScoring !== false;
+
+    // 分数统计（无评分探究不统计分数）
     let classAvgScore = 0;
     let scoreDistributionText = "";
-    if (submittedCount > 0) {
+    if (hasScoring && submittedCount > 0) {
       const totalScore = submissions.reduce((sum, s) => sum + (s.score || 0), 0);
       classAvgScore = Math.round(totalScore / submittedCount);
       const buckets = { "0-59": 0, "60-79": 0, "80-89": 0, "90-100": 0 };
@@ -157,7 +165,7 @@ export async function POST(
       try { answers = JSON.parse(s.answers || "{}"); } catch { /* ignore */ }
       const name = studentNameMap.get(s.studentId) || s.studentId;
       const fields = [
-        `得分：${s.score || 0}/${s.totalScore || 100}`,
+        hasScoring ? `得分：${s.score || 0}/${s.totalScore || 100}` : "",
         answers.timeSpent ? `停留：${answers.timeSpent}秒` : "",
         answers.interactions ? `互动：${answers.interactions}次` : "",
         answers.completedSections ? `完成环节：${Array.isArray(answers.completedSections) ? answers.completedSections.join("、") : answers.completedSections}` : "",
@@ -206,19 +214,21 @@ export async function POST(
     const qfAnswersText = await buildQfAnswersText(exploration.qfTaskId);
 
     // 构建 prompt
+    // 无评分探究不输出「平均得分/分数分布」，让 AI 无从编造分数
+    const scoreLines = hasScoring
+      ? [`平均得分：${classAvgScore}分`, "", "## 分数分布", scoreDistributionText || "暂无数据", ""]
+      : [];
+
     const dataSection = [
       "## 基本信息",
       `探究标题：${exploration.title}`,
       `探究描述：${exploration.description || "无"}`,
       `班级：${className}`,
       `已提交：${submittedCount}/${totalStudents}人`,
-      `平均得分：${classAvgScore}分`,
       `平均停留：${avgTimeSpent}秒`,
       `平均互动：${avgInteractions}次`,
       "",
-      "## 分数分布",
-      scoreDistributionText || "暂无数据",
-      "",
+      ...scoreLines,
       "## 操作类型统计",
       actionTypeStatsText,
       "",
@@ -245,8 +255,8 @@ export async function POST(
       "className": className,
       "submittedCount": String(submittedCount),
       "totalStudents": String(totalStudents),
-      "classAvgScore": `${classAvgScore}分`,
-      "scoreDistribution": scoreDistributionText || "无",
+      "classAvgScore": hasScoring ? `${classAvgScore}分` : "本探究无评分环节",
+      "scoreDistribution": hasScoring ? (scoreDistributionText || "无") : "本探究无评分环节，无分数分布",
       "submissionDetails": submissionDetails || "无",
       "actionTypeStats": actionTypeStatsText,
       "avgTimeSpent": `${avgTimeSpent}秒`,
@@ -261,9 +271,12 @@ export async function POST(
 
     const wordLimit = isHtmlOutput ? undefined : (aiConfig.classWordLimit ?? 2000);
     const wordLimitText = wordLimit ? `整篇报告总字数控制在${wordLimit}字以内。` : "";
+    // 星级评分（「评分：★★★★★★」）是否输出，只由模板 content / 探究 analysisPrompt 决定，route 不再硬编码。
+    // ⛔ DO NOT REVERT：不要把「评分：★★★★★★」写回这里——否则无论探究有没有评分环节、
+    //   教师模板写没写，报告末尾都会被强加一行星级，绕过模板控制。
     const outputFormat = isHtmlOutput
       ? "\n\n## 输出格式\n直接输出完整的HTML内容，所有图表用纯 SVG 内联绘制，禁止引入任何外部 JS 图表库或 CDN 资源，保存为 .html 后离线可完整打开。"
-      : "\n\n## 字数限制\n" + wordLimitText + "\n\n## 输出格式\n直接输出分析内容（Markdown格式），末尾另起一行输出综合评分：\n评分：★★★★★★";
+      : "\n\n## 字数限制\n" + wordLimitText + "\n\n## 输出格式\n直接输出分析内容（Markdown格式）";
 
     const prompt = `${systemFrame}\n\n${dataSection}${templateSection}${outputFormat}`;
 
@@ -272,14 +285,10 @@ export async function POST(
       messages: [{ role: "user", content: prompt }],
     };
 
-    const aiResponse = await fetch(`${aiConfig.baseURL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${aiConfig.apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
+    // ⛔ DO NOT REVERT：不要改回裸 fetch。2026-09-25 网络抖动让本路由以
+    // 「生成失败: fetch failed」直透前端（无超时/无重试/错误不可读），
+    // 统一走 src/lib/ai.ts 的 chatCompletionsFetch（超时+网络级重试+友好错误）。
+    const aiResponse = await chatCompletionsFetch(aiConfig, requestBody);
 
     if (!aiResponse.ok) {
       const errText = await aiResponse.text().catch(() => "未知错误");
@@ -288,14 +297,8 @@ export async function POST(
     }
 
     const aiData = await aiResponse.json();
-    // 先渲染 chart 数据块为确定性 SVG（须在剥 ```html 围栏之前；无块时原样返回，失败降级表格）
-    let content = processChartBlocks(aiData.choices?.[0]?.message?.content || "");
-
-    // 清理 content 中的 ```html 和 ``` 标记
-    if (content.startsWith("```html")) content = content.slice(7);
-    else if (content.startsWith("```")) content = content.slice(3);
-    if (content.endsWith("```")) content = content.slice(0, -3);
-    content = content.trim();
+    // 统一清理：chart 数据块渲染 + 剥 markdown 围栏 + 截取 HTML 文档主体（丢弃前后说明文字）
+    let content = cleanInsightContent(aiData.choices?.[0]?.message?.content || "");
 
     // 保存到 AIInsight
     const saveClassId = classId;

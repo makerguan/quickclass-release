@@ -117,3 +117,47 @@ export async function writeCollectedAnswers(
     return { error: errText(e) };
   }
 }
+
+/**
+ * 删除探究时，连带清理其绑定的 QF 任务及全部收集记录。
+ *
+ * - 为什么：`ExplorationActivity.qfTaskId` 只是普通字符串字段（schema 无 @relation），
+ *   删探究不会级联删 QF；若不清，`qf_tasks` / `qf_records` 会残留成孤儿。
+ * - 现状/约束：`deleteTask` 在 prisma-adapter 内先删 records 再删 task（同一事务），
+ *   删了 task 后 records 必定清空，不依赖 SQLite 外键级联开关。
+ * - ⛔ 清理失败不阻断：探究删除是主操作，QF 清理是附带；残留可后续手动清，勿因 QF 出错回滚探究删除。
+ * - 🔗 RELATED：调用方 `src/app/api/exploration-activities/[id]/route.ts` 的 DELETE。
+ */
+export async function deleteQfTaskForExploration(
+  qfTaskId: string | null | undefined
+): Promise<void> {
+  if (!qfTaskId) return;
+  try {
+    const core = getQfCore();
+    await core.deleteTask(qfTaskId);
+  } catch (e) {
+    console.error("[deleteQfTaskForExploration] 清理 QF 任务失败:", errText(e));
+  }
+}
+
+/**
+ * 清除某探究对应的 QuickForm 收集答案，但**保留任务本身**。
+ *
+ * - 场景：老师「清除提交」后要改内容重新发布；收集任务还得继续用，
+ *   所以只清 qf_records，不删 qf_task（区别于上面的 deleteQfTaskForExploration）。
+ * - 为什么：`clearRecords` 在 SDK 层会先 getTaskOrThrow（任务不存在会抛错），
+ *   所以这里 try-catch 兜底——清答案失败不阻断主流程（行为数据才是主数据）。
+ * - ⛔ 清理失败不阻断：与 deleteQfTaskForExploration 同口径，残留可后续手动清。
+ * - 🔗 RELATED：调用方 `src/app/api/exploration-activities/[id]/clear-submissions/route.ts`。
+ */
+export async function clearQfRecordsForExploration(
+  qfTaskId: string | null | undefined
+): Promise<void> {
+  if (!qfTaskId) return;
+  try {
+    const core = getQfCore();
+    await core.clearRecords(qfTaskId);
+  } catch (e) {
+    console.error("[clearQfRecordsForExploration] 清理 QF 记录失败:", errText(e));
+  }
+}

@@ -57,9 +57,14 @@ export async function POST(
     // 汇总提交数据
     const submissions = exploration.ExplorationSubmission;
     const submittedCount = submissions.length;
-    const avgScore = submittedCount > 0
+    // 无评分探究（collectProfile.hasScoring=false）不统计分数，教学建议里不出现得分
+    const profile = parseCollectProfile(exploration.collectProfile) ??
+      detectCollectProfile(removeSubmitFunctionality(exploration.htmlContent));
+    const hasScoring = profile.hasScoring !== false;
+    const avgScore = hasScoring && submittedCount > 0
       ? Math.round(submissions.reduce((s, sub) => s + (sub.score || 0), 0) / submittedCount)
       : 0;
+    const scoreLine = hasScoring ? `平均得分：${avgScore}/100` : "平均得分：本探究无评分环节";
     const actionSummary = Object.entries(
       submissions.flatMap(s => s.ExplorationActionLog).reduce((acc, log) => {
         acc[log.type] = (acc[log.type] || 0) + 1;
@@ -82,7 +87,7 @@ export async function POST(
         "explorationDescription": exploration.description || "无",
         "exploration.description": exploration.description || "无",
         "submittedCount": String(submittedCount),
-        "avgScore": `${avgScore}/100`,
+        "avgScore": hasScoring ? `${avgScore}/100` : "本探究无评分环节",
         "actionSummary": actionSummary || "无",
         "qfAnswers": qfAnswersText || "无",
       };
@@ -92,7 +97,7 @@ export async function POST(
       }
       // 不存在变量占位符时，追加数据段
       if (!effectivePrompt.includes("{") && !effectivePrompt.includes("}")) {
-        prompt = `${effectivePrompt}\n\n## 数据\n探究标题：${exploration.title}\n描述：${exploration.description || "无"}\n已提交人数：${submittedCount}\n平均得分：${avgScore}/100\n操作类型统计：${actionSummary || "无"}\n\n## 学生作答内容\n${qfAnswersText || "暂无作答"}\n\n请生成教学改进建议。`;
+        prompt = `${effectivePrompt}\n\n## 数据\n探究标题：${exploration.title}\n描述：${exploration.description || "无"}\n已提交人数：${submittedCount}\n${scoreLine}\n操作类型统计：${actionSummary || "无"}\n\n## 学生作答内容\n${qfAnswersText || "暂无作答"}\n\n请生成教学改进建议。`;
       } else {
         prompt = filledPrompt;
       }
@@ -103,7 +108,7 @@ export async function POST(
 探究标题：${exploration.title}
 描述：${exploration.description || "无"}
 已提交人数：${submittedCount}
-平均得分：${avgScore}/100
+${scoreLine}
 操作类型统计：${actionSummary || "无"}
 
 ## 学生作答内容

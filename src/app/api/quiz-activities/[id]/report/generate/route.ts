@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
-import { getAIConfig } from "@/lib/ai";
+import { getAIConfig, chatCompletionsFetch } from "@/lib/ai";
 import { getReportTime } from "@/lib/prompts/insight";
 import { cleanInsightContent } from "@/lib/insight-clean";
 
@@ -204,14 +204,9 @@ export async function POST(
       messages: [{ role: "user", content: prompt }],
     };
 
-    const aiResponse = await fetch(`${aiConfig.baseURL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${aiConfig.apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
+    // ⛔ DO NOT REVERT：不要改回裸 fetch——与探究报告同款故障面（网络抖动→fetch failed
+    //   直透前端），统一走 src/lib/ai.ts 的 chatCompletionsFetch（超时+网络级重试）。
+    const aiResponse = await chatCompletionsFetch(aiConfig, requestBody);
 
     if (!aiResponse.ok) {
       return NextResponse.json({ error: "AI 分析失败" }, { status: 500 });

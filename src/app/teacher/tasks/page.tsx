@@ -45,7 +45,9 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   PieChart, Pie, Legend, ResponsiveContainer,
 } from "recharts";
-import { injectSubmitFunctionality, removeSubmitFunctionality, detectInstrumentation } from "@/lib/prompts/exploration-submit";
+import { removeSubmitFunctionality, detectInstrumentation } from "@/lib/prompts/exploration-submit";
+import { renderExplorationHtml } from "@/lib/exploration/render";
+import { parseCollectProfile } from "@/lib/exploration/collect-profile";
 import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 import ViewFrame from "./ViewFrame";
 
@@ -875,6 +877,7 @@ export default function TeacherTasksPage() {
   const [explorations, setExplorations] = useState<any[]>([]);
   const [operatingExplorationId, setOperatingExplorationId] = useState<string | null>(null);
   const [togglingExplorationId, setTogglingExplorationId] = useState<string | null>(null);
+  const [clearingSubmissionsExplorationId, setClearingSubmissionsExplorationId] = useState<string | null>(null);
 
   // 新建/编辑探究弹窗
   const [explorationModalVisible, setExplorationModalVisible] = useState(false);
@@ -925,6 +928,29 @@ export default function TeacherTasksPage() {
   };
   // 原始 HTML（启用提交前保存，用于取消时恢复）
   const [originalHtmlForInjection, setOriginalHtmlForInjection] = useState("");
+  // 采集类别（本地渲染预览用，与学生端读取注入保持一致；回显/保存后同步）
+  const [explorationCollectProfile, setExplorationCollectProfile] = useState<any>(null);
+
+  // 桩丢失「变化提醒」：采集桩从有→无的翻转瞬间，弹一次性 toast 抓注意力。
+  // 为什么：常驻黄条（5383 行 detectInstrumentation 实时算）是「静态状态」，老师专注编辑时
+  //   可能没注意到绿条→黄条的翻转；toast 是「变化事件」，明确告知「刚才发生了什么」。
+  // 现状/约束：只在 needsAdaptation 从 false→true 翻转、且「启用提交 + 已确认注入」时弹一次；
+  //   持续处于无桩态继续编辑不重复弹。开关关闭（confirmedInjection=false）时静默更新基线，不弹。
+  // 🔗 RELATED：检测函数 src/lib/prompts/exploration-submit.ts detectInstrumentation；
+  //   黄条渲染同文件 5382-5403 行，改判定口径两处要一致。
+  const prevNeedsAdaptationRef = useRef<boolean>(false);
+  useEffect(() => {
+    const needsAdaptation = detectInstrumentation(explorationHtml).needsAdaptation;
+    if (
+      explorationEnableSubmission &&
+      confirmedInjection &&
+      needsAdaptation &&
+      !prevNeedsAdaptationRef.current
+    ) {
+      MessagePlugin.warning("⚠️ 采集桩已丢失，分数/关卡将无法上报，可点「重试接入」恢复");
+    }
+    prevNeedsAdaptationRef.current = needsAdaptation;
+  }, [explorationHtml, explorationEnableSubmission, confirmedInjection]);
 
   // 去除 AI 伴学注入代码（用于源码编辑器保持纯净稿）
   // 注入结构见 injectAiCompanion：<style>#ai-companion-root…</style> 入 </head> 前，
@@ -948,6 +974,23 @@ export default function TeacherTasksPage() {
       }
     }
     return s;
+  };
+
+  // 本地渲染预览：把「纯净稿 + 开关」渲染成注入版（提交 + 伴学），供预览 iframe 使用。
+  // 与后端读取路径 renderExplorationHtml 同源，保证预览与学生端看到的一致。
+  // ⛔ 不再依赖 GET 详情返回注入版（GET 详情现在返回纯净稿）；预览统一本地渲染。
+  const renderLocalPreview = (
+    html: string,
+    opts?: { enableSubmission?: boolean; enableAiCompanion?: boolean; collectProfile?: any; explorationId?: string }
+  ) => {
+    return renderExplorationHtml({
+      htmlContent: html,
+      explorationId: opts?.explorationId ?? explorationEditId ?? "",
+      taskTitle: "",
+      enableSubmission: opts?.enableSubmission ?? explorationEnableSubmission,
+      enableAiCompanion: opts?.enableAiCompanion ?? explorationEnableAiCompanion,
+      collectProfile: opts?.collectProfile !== undefined ? opts.collectProfile : (explorationCollectProfile ?? undefined),
+    }).html;
   };
 
   // 打开探究面板（数据已随课堂列表加载，直接从 subProjects 读取，无异步加载）
@@ -978,6 +1021,7 @@ export default function TeacherTasksPage() {
     setExplorationHtml("");
     setExplorationPreview("");
     setExplorationEnableSubmission(false);
+    setExplorationHasSubmissions(false);
     syncConfirmedInjection(false);
     setOriginalHtmlForInjection("");
     setExplorationEnableAiCompanion(false);
@@ -1087,7 +1131,7 @@ export default function TeacherTasksPage() {
       setHtmlVersions([...baseVersions, text]);
       setVersionIndex(newIndex);
       setExplorationHtml(text);
-      setExplorationPreview(text);
+      setExplorationPreview(renderLocalPreview(text));
       setChatMessages((prev) => [...prev, { role: "ai", content: "📄 已导入外部 HTML，可继续用对话修改" }]);
       MessagePlugin.success("HTML 文件已加载，可继续用对话修改");
     };
@@ -1175,7 +1219,7 @@ export default function TeacherTasksPage() {
     setHtmlVersions([...baseVersions, adapted]);
     setVersionIndex(newIndex);
     setExplorationHtml(adapted);
-    setExplorationPreview(adapted);
+    setExplorationPreview(renderLocalPreview(adapted));
     setChatMessages((prev) => [
       ...prev,
       { role: "ai", content: "🔌 已完成提交采集接入（AI 插桩），建议预览试玩验证，可撤销还原" },
@@ -1314,7 +1358,7 @@ export default function TeacherTasksPage() {
       setHtmlVersions([...baseVersions, clean]);
       setVersionIndex(newIndex);
       setExplorationHtml(clean);
-      setExplorationPreview(clean);
+      setExplorationPreview(renderLocalPreview(clean));
       setChatMessages((prev) => [...prev, { role: "ai", content: `✓ 已生成第 ${newIndex + 1} 版` }]);
       MessagePlugin.success("网页已更新");
     } catch {
@@ -1332,7 +1376,7 @@ export default function TeacherTasksPage() {
     const idx = versionIndex - 1;
     setVersionIndex(idx);
     setExplorationHtml(htmlVersions[idx]);
-    setExplorationPreview(htmlVersions[idx]);
+    setExplorationPreview(renderLocalPreview(htmlVersions[idx]));
   };
 
   // 重做到下一版本
@@ -1341,7 +1385,7 @@ export default function TeacherTasksPage() {
     const idx = versionIndex + 1;
     setVersionIndex(idx);
     setExplorationHtml(htmlVersions[idx]);
-    setExplorationPreview(htmlVersions[idx]);
+    setExplorationPreview(renderLocalPreview(htmlVersions[idx]));
   };
 
   // 导出 HTML 文件
@@ -1427,14 +1471,16 @@ export default function TeacherTasksPage() {
         if (saved.aiCompanionPrompt) {
           setAiCompanionPromptText(saved.aiCompanionPrompt);
         }
-        // 若启用了 AI 伴学，预览需要用注入版本（GET 自愈），源码区保持纯净
-        if (saved.enableAiCompanion && saved.id) {
-          fetch(`/api/exploration-activities/${saved.id}`, { headers: { Authorization: `Bearer ${token}` } })
-            .then(r => r.json())
-            .then(d => { if (d.htmlContent) setExplorationPreview(d.htmlContent); })
-            .catch(() => {});
-        } else {
-          setExplorationPreview(explorationHtml);
+        // 保存后预览：本地渲染注入版（提交 + 伴学），源码区恒为纯净稿。
+        // ⛔ 不再依赖 GET 详情返回注入版（GET 详情现在返回纯净稿）。
+        setExplorationPreview(renderLocalPreview(saved.htmlContent ?? explorationHtml, {
+          enableSubmission: saved.enableSubmission,
+          enableAiCompanion: saved.enableAiCompanion,
+          collectProfile: saved.collectProfile ? parseCollectProfile(saved.collectProfile) : null,
+          explorationId: saved.id,
+        }));
+        if (saved.collectProfile) {
+          setExplorationCollectProfile(parseCollectProfile(saved.collectProfile));
         }
         MessagePlugin.success("探究已保存");
         if (saved._injectWarnings && saved._injectWarnings.length > 0) {
@@ -1513,13 +1559,14 @@ export default function TeacherTasksPage() {
           const saved = await res.json();
           setExplorationEditId(saved.id);
           setExplorations((prev) => [saved, ...prev]);
-          // 同步预览
-          if (saved.enableAiCompanion && saved.id) {
-            fetch(`/api/exploration-activities/${saved.id}`, { headers: { Authorization: `Bearer ${token}` } })
-              .then(r => r.json())
-              .then(d => { if (d.htmlContent) setExplorationPreview(d.htmlContent); })
-              .catch(() => {});
-          }
+          // 同步预览（本地渲染注入版）
+          setExplorationPreview(renderLocalPreview(saved.htmlContent ?? explorationHtml, {
+            enableSubmission: saved.enableSubmission,
+            enableAiCompanion: true,
+            collectProfile: saved.collectProfile ? parseCollectProfile(saved.collectProfile) : null,
+            explorationId: saved.id,
+          }));
+          if (saved.collectProfile) setExplorationCollectProfile(parseCollectProfile(saved.collectProfile));
 
           // 生成伴学提示词
           setAiCompanionStatus("analyzing");
@@ -1579,15 +1626,16 @@ export default function TeacherTasksPage() {
         const saved = await res.json();
         setExplorations((prev) => prev.map((e) => e.id === saved.id ? saved : e));
 
-        // 同步更新预览和源代码编辑区
-        // saved.htmlContent 是纯净稿（PUT 不再持久化注入），预览需要注入版本
+        // 同步更新预览和源代码编辑区（源码区纯净稿，预览本地渲染注入版）
         if (saved.htmlContent) {
           setExplorationHtml(saved.htmlContent); // 源码区：纯净版
-          // 额外 GET 拿自愈注入版本用于预览 iframe
-          fetch(`/api/exploration-activities/${explorationEditId}`, { headers: { Authorization: `Bearer ${token}` } })
-            .then(r => r.json())
-            .then(d => { if (d.htmlContent) setExplorationPreview(d.htmlContent); })
-            .catch(() => setExplorationPreview(saved.htmlContent));
+          setExplorationPreview(renderLocalPreview(saved.htmlContent, {
+            enableSubmission: saved.enableSubmission,
+            enableAiCompanion: true,
+            collectProfile: saved.collectProfile ? parseCollectProfile(saved.collectProfile) : null,
+            explorationId: saved.id,
+          }));
+          if (saved.collectProfile) setExplorationCollectProfile(parseCollectProfile(saved.collectProfile));
         }
 
         // 3. 如果已有提示词 → 秒开，否则生成
@@ -1617,10 +1665,16 @@ export default function TeacherTasksPage() {
         if (res.ok) {
           const saved = await res.json();
           setExplorations((prev) => prev.map((e) => e.id === saved.id ? saved : e));
-          // 同步更新预览和源代码编辑区（移除AI伴学代码）
+          // 同步更新预览和源代码编辑区（源码区纯净稿；关闭伴学后预览仍按提交开关本地渲染）
           if (saved.htmlContent) {
             setExplorationHtml(saved.htmlContent);
-            setExplorationPreview(saved.htmlContent);
+            setExplorationPreview(renderLocalPreview(saved.htmlContent, {
+              enableSubmission: saved.enableSubmission,
+              enableAiCompanion: false,
+              collectProfile: saved.collectProfile ? parseCollectProfile(saved.collectProfile) : null,
+              explorationId: saved.id,
+            }));
+            if (saved.collectProfile) setExplorationCollectProfile(parseCollectProfile(saved.collectProfile));
           }
           MessagePlugin.success("AI伴学已关闭（提示词已保留，再次启用秒开）");
         }
@@ -1676,58 +1730,10 @@ export default function TeacherTasksPage() {
       return;
     }
 
-    // 未启用提交 → 直接保存
-    if (!explorationEnableSubmission) {
-      await doSaveExploration();
-      return;
-    }
-
-    // 已确认注入（用户在预览中点了确认）→ HTML 已改造，直接保存
-    if (confirmedInjection) {
-      await doSaveExploration();
-      return;
-    }
-
-    // 启用提交但未确认 → 先调 AI 预览（原始流程）
-    setPreviewLoading(true);
-    setPreviewError(null);
-    setPreviewAnalysis(null);
-    setAutoScoreScript(null);
-    setPreviewStatus("正在向 AI 发送 HTML 代码...");
-    setInjectionPreviewVisible(true);
-    try {
-      const token = localStorage.getItem("token") || "";
-      const res = await fetch("/api/exploration-activities/preview-injection", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          htmlContent: explorationHtml,
-          explorationId: explorationEditId || undefined,
-          subProjectId: explorationPanelSpId,
-        }),
-      });
-      let data;
-      try {
-        data = await res.json();
-      } catch (parseErr) {
-        setPreviewError("服务器返回格式错误：" + String(parseErr));
-        setPreviewLoading(false);
-        return;
-      }
-      if (data.success) {
-        setPreviewAnalysis(data.analysis);
-        setAutoScoreScript(data.autoScoreScript || null);
-      } else {
-        setPreviewError(data.error || "分析失败");
-        if (data.fallback) {
-          setPreviewAnalysis(data.fallback);
-        }
-      }
-    } catch (e: any) {
-      setPreviewError(e.message || "预览失败");
-    } finally {
-      setPreviewLoading(false);
-    }
+    // 新架构：提交/伴学注入由读取路径 renderExplorationHtml 内存渲染，保存只落纯净稿 + 开关。
+    // ⛔ DO NOT REVERT：保存前不再走「AI 预览确认注入」流程（提交 UI 不再于保存时注入落库）。
+    //    采集桩（AI 插桩）在「启用提交」开关切换时完成；未接桩仅降级为基础采集（UI 已黄条提示）。
+    await doSaveExploration();
   };
 
   // 删除探究
@@ -1789,6 +1795,37 @@ export default function TeacherTasksPage() {
     }
   };
 
+  // 清除探究的学生提交（失效后、改内容前的逃生口）
+  const handleClearExplorationSubmissions = async (explorationId: string) => {
+    if (!confirm("确定要清除本探究的全部学生提交吗？\n\nQuickForm 收集的答案将一并清空。\n\n此操作不可撤销！")) return;
+    setClearingSubmissionsExplorationId(explorationId);
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/exploration-activities/${explorationId}/clear-submissions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // 重新拉取列表（_count 归零后，编辑锁定自然解除）
+        if (explorationPanelSpId) {
+          const refreshRes = await fetch(`/api/exploration-activities?subProjectId=${explorationPanelSpId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const refreshData = await refreshRes.json();
+          setExplorations(Array.isArray(refreshData) ? refreshData : []);
+        }
+        MessagePlugin.success(`已清除 ${data.deletedCount ?? 0} 条提交`);
+      } else {
+        MessagePlugin.error(data.error || "清除失败");
+      }
+    } catch {
+      MessagePlugin.error("请求失败");
+    } finally {
+      setClearingSubmissionsExplorationId(null);
+    }
+  };
+
   // 探究排序
   const handleExplorationReorder = async (expId: string, direction: "up" | "down") => {
     if (!explorationPanelSpId) return;
@@ -1816,6 +1853,19 @@ export default function TeacherTasksPage() {
 
   // 编辑已有探究
   const openEditExploration = (e: any) => {
+    // ⛔ DO NOT REVERT：有学生提交时禁止进入编辑（2026-09-25 用户拍板）。
+    //   旧设计是「编辑器照开、HTML 锁定、标题/提示词仍可改」，但用户明确要求入口拦截并提示
+    //   「已有学生提交，请清除后编辑！」。清除路径：先失效（开关）→「清除提交」→ 再编辑。
+    //   _count 来自列表接口（/api/exploration-activities?subProjectId= 的 include _count），
+    //   清除提交成功后会重拉列表归零（见 handleClearExplorationSubmissions），拦截自然解除。
+    // 🔗 RELATED：清除提交按钮（本文件，仅 !enabled 且有提交时显示）；
+    //   编辑器内 explorationHasSubmissions 锁定与服务端 PUT 字段锁
+    //   （[id]/route.ts existingSubs>0 分支）都保留作兜底——防列表数据滞后
+    //   （老师开着面板期间学生刚提交）时漏拦。
+    if ((e._count?.ExplorationSubmission ?? 0) > 0) {
+      MessagePlugin.warning("已有学生提交，请清除后编辑！");
+      return;
+    }
     setExplorationEditId(e.id);
     setExplorationTitle(e.title);
     setInitialPrompt(e.designPrompt || ""); // 首轮设计意图（保存的 designPrompt）
@@ -1872,15 +1922,34 @@ export default function TeacherTasksPage() {
         }
         const detail = await detailRes.json();
         if (detail.htmlContent) {
-          const clean = e.enableAiCompanion ? stripAiCompanionCode(detail.htmlContent) : detail.htmlContent;
+          // GET 详情现在返回纯净稿（不含提交/伴学注入），源码区直接用；
+          // 预览区本地渲染注入版（按 detail 的开关 + collectProfile，与学生端一致）。
+          const clean = detail.htmlContent;
           setExplorationHtml(clean);          // 源码编辑区：纯净稿
-          setExplorationPreview(detail.htmlContent); // 预览区：注入版
+          setExplorationPreview(renderLocalPreview(clean, {
+            enableSubmission: detail.enableSubmission,
+            enableAiCompanion: detail.enableAiCompanion,
+            collectProfile: detail.collectProfile ? parseCollectProfile(detail.collectProfile) : null,
+            explorationId: detail.id,
+          }));
+          if (detail.collectProfile) {
+            setExplorationCollectProfile(parseCollectProfile(detail.collectProfile));
+          }
           setOriginalHtmlForInjection(clean);
           // 详情是权威完整版，重建版本栈 v0
           setHtmlVersions([clean]);
           setVersionIndex(0);
+          // 编辑回显：按「是否开启提交 + 采集是否已接桩」恢复 confirmedInjection。
+          // ⛔ 别始终 false —— 否则编辑一个已开启提交（且已接桩）的探究时，
+          //    会被误判成「未确认注入」，保存/开关切换时又弹 AI 预览（回归）。
+          syncConfirmedInjection(!!detail.enableSubmission && !detectInstrumentation(clean).needsAdaptation);
         }
-        if (detail.aiCompanionPrompt && detail.aiCompanionPrompt.length > 50) {
+        // 已有提交数：列表接口不下发 _count，以详情为准更新（决定是否锁定 HTML 编辑）。
+        // ⛔ 别漏这步 —— 否则 explorationHasSubmissions 恒为 false，锁定编辑/关闭提交拦截全部失效。
+        setExplorationHasSubmissions((detail._count?.ExplorationSubmission ?? 0) > 0);
+        // 提示词回显：详情是权威来源，无条件回填。
+        // ⛔ 别再按长度过滤（原 length > 50 会把短提示词误判成空，导致「编辑时提示词不显示」）
+        if (detail.aiCompanionPrompt) {
           setAiCompanionPromptText(detail.aiCompanionPrompt);
           setAiCompanionStatus("ready");
         }
@@ -1889,6 +1958,12 @@ export default function TeacherTasksPage() {
         //    用户一保存就把库里的内容清掉（契约见 fetchTaskDetailLite 上方说明）。
         if (detail.designPrompt !== undefined) setInitialPrompt(detail.designPrompt || "");
         if (detail.analysisPrompt !== undefined) setExplorationPrompt(detail.analysisPrompt || "");
+        // 回显「生成 HTML 的提示词」（首轮设计意图）到对话流：
+        // ⛔ 别再只回填 initialPrompt 而不展示——对话流被清空后，用户看不到当初的设计意图
+        //    （反馈：「编辑时 html 提示词仍没显示」）。这里显式回显成首条用户消息。
+        if (detail.designPrompt) {
+          setChatMessages([{ role: "user", content: detail.designPrompt }]);
+        }
         // 数据已到齐，此刻才允许进入编辑态
         setExplorationModalVisible(true);
       } catch {
@@ -2268,6 +2343,14 @@ export default function TeacherTasksPage() {
 
   // Step 1: 编辑已有作业（从列表进入设计模式）
   const startEditQuiz = (q: any) => {
+    // ⛔ DO NOT REVERT：有答题记录时禁止快编 —— 服务端 PUT /api/quiz-activities/[id]
+    //   对 attemptCount>0 一律 403（所有字段都改不了），这里不拦的话老师改半天、
+    //   保存时才报错。与探究「编辑」入口拦截（openEditExploration）口径一致。
+    //   清除路径：失效 →「清除答题」→ 再编辑；「题目管理」页仍可进入查看（自带只读横幅）。
+    if ((q._count?.attempts ?? 0) > 0) {
+      MessagePlugin.warning("已有学生提交，请清除后编辑！");
+      return;
+    }
     const tpl = templates.find((t: any) => t.type === "QUIZ_DESIGN");
     setQuizDesignId(q.id); // 编辑已有
     setQuizDesignTitle(q.title);
@@ -3935,18 +4018,23 @@ export default function TeacherTasksPage() {
                                           <Button theme="primary" variant="text" size="small"
                                             icon={<BrowseIcon />}
                                             onClick={async () => {
-                                              {
-                                                const token = localStorage.getItem("token") || "";
-                                                const res = await fetch(`/api/exploration-activities/${e.id}`, {
-                                                  headers: { Authorization: `Bearer ${token}` },
-                                                });
-                                                if (res.ok) {
-                                                  const detail = await res.json();
-                                                  openPreview(detail.htmlContent || e.htmlContent);
-                                                  return;
-                                                }
+                                              const token = localStorage.getItem("token") || "";
+                                              const res = await fetch(`/api/exploration-activities/${e.id}`, {
+                                                headers: { Authorization: `Bearer ${token}` },
+                                              });
+                                              if (res.ok) {
+                                                const detail = await res.json();
+                                                // 详情返回纯净稿，本地渲染注入版（提交 + 伴学），与学生端一致。
+                                                openPreview(renderLocalPreview(detail.htmlContent || e.htmlContent || "", {
+                                                  enableSubmission: detail.enableSubmission,
+                                                  enableAiCompanion: detail.enableAiCompanion,
+                                                  collectProfile: detail.collectProfile ? parseCollectProfile(detail.collectProfile) : null,
+                                                  explorationId: detail.id,
+                                                }));
+                                                return;
                                               }
-                                              openPreview(e.htmlContent);
+                                              // 详情拉取失败：列表 htmlContent 已是渲染版，直接预览。
+                                              openPreview(e.htmlContent || "");
                                             }}>预览</Button>
                                           {e.enableSubmission && (
                                             <Button theme="success" variant="text" size="small"
@@ -3960,6 +4048,13 @@ export default function TeacherTasksPage() {
                                             icon={<DeleteIcon />}
                                             loading={operatingExplorationId === e.id}
                                             onClick={() => handleDeleteExploration(e.id)}>删除</Button>
+                                          {/* 清除提交：仅在失效且有人提交时显示（与课堂作业「清除答题」口径一致） */}
+                                          {!e.enabled && (e._count?.ExplorationSubmission ?? 0) > 0 && (
+                                            <Button theme="warning" variant="text" size="small"
+                                              icon={<DeleteIcon />}
+                                              loading={clearingSubmissionsExplorationId === e.id}
+                                              onClick={() => handleClearExplorationSubmissions(e.id)}>清除提交</Button>
+                                          )}
                                           <Switch value={e.enabled} size="small"
                                             onChange={(val: boolean) => handleExplorationToggle(e, val)}
                                             disabled={togglingExplorationId === e.id} />
@@ -3979,8 +4074,11 @@ export default function TeacherTasksPage() {
                                           )}
                                         </div>
                                       </div>
-                                      {e.description && (
-                                        <div className="text-xs text-gray-400">{e.description}</div>
+                                      {/* 名称下方：描述 + 提交人数（开启提交才显示人数，与课堂作业「N人已答」对齐） */}
+                                      {(e.description || e.enableSubmission) && (
+                                        <div className="text-xs text-gray-400">
+                                          {[e.description || "", e.enableSubmission ? `${e._count?.ExplorationSubmission ?? 0}人已提交` : ""].filter(Boolean).join(" · ")}
+                                        </div>
                                       )}
                                     </div>
                                   ))}
@@ -4290,9 +4388,6 @@ export default function TeacherTasksPage() {
                                               <>
                                                 <Button theme="success" variant="text" size="small" icon={<ChartBarIcon />} onClick={() => goTo(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/report`)}>查看报告</Button>
                                                 <Button theme="default" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openQuizPreview(q)}>预览</Button>
-                                                {(q._count?.attempts ?? 0) > 0 && (
-                                                  <Button theme="warning" variant="text" size="small" icon={<DeleteIcon />} loading={clearingAttemptsQuizId === q.id} onClick={() => handleClearAttempts(q.id)}>清除答题</Button>
-                                                )}
                                               </>
                                             )}
                                             <Switch
@@ -5151,6 +5246,12 @@ export default function TeacherTasksPage() {
               placeholder="探究标题"
             />
 
+            {explorationHasSubmissions && (
+              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
+                ⚠️ 已有学生提交，HTML 内容已锁定，无法编辑或重新生成（可修改标题、设计意图、分析提示词）。如需改内容，请新建探究。
+              </div>
+            )}
+
             {/* 主区域：左对话流 + 右预览/源码 */}
             <div className="flex gap-3" style={{ minHeight: 340 }}>
               {/* 左栏：对话流 + 输入条 */}
@@ -5183,13 +5284,15 @@ export default function TeacherTasksPage() {
                   <Textarea
                     value={draftInput}
                     onChange={(v) => setDraftInput(v)}
-                    placeholder={htmlVersions.length === 0 ? "描述你想要的互动网页…" : "输入修改要求，如：把背景改成蓝色"}
+                    disabled={explorationHasSubmissions}
+                    placeholder={explorationHasSubmissions ? "已有学生提交，内容已锁定" : (htmlVersions.length === 0 ? "描述你想要的互动网页…" : "输入修改要求，如：把背景改成蓝色")}
                     rows={3}
                   />
                   <div className="flex gap-2">
                     <Button
                       theme="default" variant="outline" size="small"
                       loading={generatingPrompt}
+                      disabled={explorationHasSubmissions}
                       onClick={autoGeneratePrompt}
                     >
                       AI 帮我写
@@ -5198,7 +5301,7 @@ export default function TeacherTasksPage() {
                       theme="primary" size="small"
                       loading={generating}
                       onClick={handleSend}
-                      disabled={!draftInput.trim()}
+                      disabled={explorationHasSubmissions || !draftInput.trim()}
                       className="flex-1"
                     >
                       发送
@@ -5215,13 +5318,13 @@ export default function TeacherTasksPage() {
                     {htmlVersions.length > 0 ? `第 ${versionIndex + 1} 版` : "预览"}
                   </span>
                   <div className="flex items-center gap-0.5">
-                    <Button theme="default" variant="text" size="small" onClick={handleUndo} disabled={versionIndex <= 0}>
+                    <Button theme="default" variant="text" size="small" onClick={handleUndo} disabled={explorationHasSubmissions || versionIndex <= 0}>
                       撤销
                     </Button>
-                    <Button theme="default" variant="text" size="small" onClick={handleRedo} disabled={versionIndex >= htmlVersions.length - 1}>
+                    <Button theme="default" variant="text" size="small" onClick={handleRedo} disabled={explorationHasSubmissions || versionIndex >= htmlVersions.length - 1}>
                       重做
                     </Button>
-                    <Button theme="default" variant="text" size="small" icon={<FileIcon />} onClick={handleUploadHtml}>
+                    <Button theme="default" variant="text" size="small" icon={<FileIcon />} onClick={handleUploadHtml} disabled={explorationHasSubmissions}>
                       上传
                     </Button>
                     <Button theme="default" variant="text" size="small" icon={<FileIcon />} onClick={handleExportHtml}>
@@ -5275,7 +5378,8 @@ export default function TeacherTasksPage() {
                   ) : (
                     <Textarea
                       value={explorationHtml}
-                      onChange={(v) => { setExplorationHtml(v); setExplorationPreview(v); }}
+                      onChange={(v) => { setExplorationHtml(v); setExplorationPreview(renderLocalPreview(v)); }}
+                      disabled={explorationHasSubmissions}
                       onBlur={() => {
                         // 手动编辑失焦时纳入版本栈，使手动改也能被撤销/重做
                         const trimmed = explorationHtml.trim();
@@ -5289,7 +5393,7 @@ export default function TeacherTasksPage() {
                           setChatMessages((prev) => [...prev, { role: "ai", content: `✎ 已记录源码编辑（第 ${newIndex + 1} 版）` }]);
                         }
                       }}
-                      placeholder="HTML 源代码，可在此直接修改（修改即时同步到预览）"
+                      placeholder={explorationHasSubmissions ? "已有学生提交，HTML 内容已锁定，无法编辑" : "HTML 源代码，可在此直接修改（修改即时同步到预览）"}
                       rows={12}
                       className="font-mono text-xs"
                       style={{ minHeight: 300 }}
@@ -5308,7 +5412,18 @@ export default function TeacherTasksPage() {
                   size="small"
                   onChange={async (val: boolean) => {
                     if (val) {
-                      // 开启 → 保存当前 HTML → 立即弹出预览
+                      // 开启提交：先判断采集是否已接桩。
+                      // 新架构下提交通道由读取路径 renderExplorationHtml 渲染，不需要「确认注入」；
+                      // 仅当采集桩（改纯净稿本身）缺失时才需 AI 预览接入。
+                      const detection = detectInstrumentation(explorationHtml);
+                      if (!detection.needsAdaptation) {
+                        // 已接桩 → 直接开启，本地渲染预览（含提交注入），不再弹 AI 预览
+                        setExplorationEnableSubmission(true);
+                        syncConfirmedInjection(true);
+                        setExplorationPreview(renderLocalPreview(explorationHtml, { enableSubmission: true }));
+                        return;
+                      }
+                      // 未接桩 → 弹 AI 预览接入采集（确认注入）
                       setOriginalHtmlForInjection(explorationHtml);
                       syncConfirmedInjection(false);
                       // 立即调用预览 API 并弹出对话框
@@ -5349,9 +5464,9 @@ export default function TeacherTasksPage() {
                         MessagePlugin.warning("已有学生提交，无法关闭启用提交");
                         return;
                       }
-                      const cleanedHtml = removeSubmitFunctionality(explorationHtml);
-                      setExplorationHtml(cleanedHtml);
-                      setExplorationPreview(cleanedHtml);
+                      // 关闭提交：explorationHtml 恒为纯净稿，无需 remove；预览本地渲染（关提交）
+                      setExplorationHtml(explorationHtml);
+                      setExplorationPreview(renderLocalPreview(explorationHtml, { enableSubmission: false }));
                       setExplorationEnableSubmission(false);
                       syncConfirmedInjection(false);
                     }
@@ -5476,12 +5591,12 @@ export default function TeacherTasksPage() {
               setAutoScoreScript(null);
               return;
             }
-            // 关闭时恢复原始状态
+            // 关闭时恢复原始状态（纯净稿）
             setExplorationEnableSubmission(false);
             syncConfirmedInjection(false);
             if (originalHtmlForInjection) {
               setExplorationHtml(originalHtmlForInjection);
-              setExplorationPreview(originalHtmlForInjection);
+              setExplorationPreview(renderLocalPreview(originalHtmlForInjection, { enableSubmission: false }));
             }
             setPreviewAnalysis(null);
             setPreviewError(null);
@@ -5494,12 +5609,12 @@ export default function TeacherTasksPage() {
                 disabled={adapting}
                 onClick={() => {
                   setInjectionPreviewVisible(false);
-                  // 取消注入，恢复原始 HTML
+                  // 取消注入，恢复原始 HTML（纯净稿）
                   setExplorationEnableSubmission(false);
                   syncConfirmedInjection(false);
                   if (originalHtmlForInjection) {
                     setExplorationHtml(originalHtmlForInjection);
-                    setExplorationPreview(originalHtmlForInjection);
+                    setExplorationPreview(renderLocalPreview(originalHtmlForInjection, { enableSubmission: false }));
                   }
                   setPreviewAnalysis(null);
                   setPreviewError(null);
@@ -5513,6 +5628,8 @@ export default function TeacherTasksPage() {
                 onClick={async () => {
                   if (adapting) return;
                   // ① 先自动尝试 AI 接入采集（非阻断：失败仅降级为基础采集，不影响提交）
+                  //    插桩改的是「纯净稿本身」（老师的 HTML），属内容改造；
+                  //    ⛔ 提交通道不再在此注入落库——提交/伴学统一由读取路径 renderExplorationHtml 渲染。
                   let baseHtml = explorationHtml;
                   const detection = detectInstrumentation(baseHtml);
                   let adaptedOk = !detection.needsAdaptation; // 已接桩视为采集就绪，跳过 AI
@@ -5523,28 +5640,17 @@ export default function TeacherTasksPage() {
                       adaptedOk = true;
                     }
                   }
-                  // ② 再注入提交功能（确定性，必成）
-                  const result = injectSubmitFunctionality(baseHtml, {
-                    explorationId: explorationEditId || "",
-                    taskTitle: "",
-                  });
-                  // 暂时跳过自动评分脚本注入，先用基础跟踪和提交功能
-                  const finalHtml = result.html;
-                  // 注入结果入版本栈（备份/撤销天然可用）：撤销一步即回到「注入前」的原始 HTML，
-                  // 彻底清掉 AI 契约桩与提交通道。否则「确认注入」自动接入的桩不在栈里，
-                  // 关闭提交留桩后无撤销出口（只能手动删 script 或重生成）。
-                  // 🔗 RELATED 手动重试路径 handleAdaptInstrumentation 亦入栈，两者语义一致（入的都是当前最终 HTML）。
+                  // ② 插桩后的纯净稿入版本栈（撤销一步即回到「插桩前」的原始 HTML）
+                  const finalHtml = baseHtml;
                   const baseVersions = htmlVersions.slice(0, versionIndex + 1);
                   const newIndex = baseVersions.length;
                   setHtmlVersions([...baseVersions, finalHtml]);
                   setVersionIndex(newIndex);
                   setExplorationHtml(finalHtml);
-                  setExplorationPreview(finalHtml);
+                  // ③ 预览：本地渲染注入版（提交 = true，伴学沿用当前开关）
+                  setExplorationPreview(renderLocalPreview(finalHtml, { enableSubmission: true }));
                   setExplorationEnableSubmission(true);
                   syncConfirmedInjection(true);
-                  if (result.warnings.length > 0) {
-                    result.warnings.forEach((w: string) => MessagePlugin.warning(w));
-                  }
                   // ③ 结果反馈：成功 / 降级
                   if (adaptedOk) {
                     MessagePlugin.success("✅ 已启用提交并接入采集，分数/关卡/作答结果可正常上报");

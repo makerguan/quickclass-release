@@ -39,6 +39,8 @@ npm-debug.log*
 **/dev.db-shm
 # 数据库备份（含真实账户数据，绝不入库）
 **/dev.db.bak*
+# 根目录 backups/：开发期手工备份的整库文件（dev_日期_用途.db），同样含真实数据
+/backups/
 
 # test artifacts
 .playwright-cli/

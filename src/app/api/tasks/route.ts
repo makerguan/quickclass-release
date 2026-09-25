@@ -89,8 +89,8 @@ export async function GET(req: NextRequest) {
             classInsightTemplate: { select: { id: true, name: true, type: true } },
             studentInsightTemplate: { select: { id: true, name: true, type: true } },
             PresetConversation: { select: { id: true, title: true, description: true, sortOrder: true, enabled: true, studentInsightTemplateId: true, classInsightTemplateId: true }, orderBy: [{ sortOrder: "asc" }] },
-            QuizActivity: { select: { id: true, subProjectId: true, title: true, description: true, status: true, sortOrder: true, analysisPrompt: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
-            ExplorationActivity: { select: { id: true, title: true, description: true, enableSubmission: true, enableAiCompanion: true, sortOrder: true, enabled: true }, orderBy: [{ sortOrder: "asc" }] },
+            QuizActivity: { select: { id: true, subProjectId: true, title: true, description: true, status: true, sortOrder: true, analysisPrompt: true, _count: { select: { QuizAttempt: true } }, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
+            ExplorationActivity: { select: { id: true, title: true, description: true, enableSubmission: true, enableAiCompanion: true, sortOrder: true, enabled: true, _count: { select: { ExplorationSubmission: true } } }, orderBy: [{ sortOrder: "asc" }] },
             ProjectSubmission: { orderBy: { sortOrder: "asc" } },
           },
           orderBy: { sortOrder: "asc" },
@@ -107,8 +107,13 @@ export async function GET(req: NextRequest) {
         ...rest,
         presetConversations: PresetConversation,
         quizActivities: (QuizActivity as Array<Record<string, unknown>>)?.map((qa) => {
-          const { Question, ...qaRest } = qa;
-          return { ...qaRest, questions: Question };
+          const { Question, _count, ...qaRest } = qa;
+          return {
+            ...qaRest,
+            questions: Question,
+            // Prisma _count 字段名是 QuizAttempt，前端约定读 attempts，这里做字段名映射
+            _count: { attempts: (_count as { QuizAttempt?: number } | undefined)?.QuizAttempt ?? 0 },
+          };
         }),
         explorationActivities: ExplorationActivity,
         projectSubmissions: ProjectSubmission,
@@ -284,8 +289,8 @@ export async function POST(req: NextRequest) {
             classInsightTemplate: { select: { id: true, name: true, type: true } },
             studentInsightTemplate: { select: { id: true, name: true, type: true } },
             PresetConversation: { select: { id: true, title: true, description: true, sortOrder: true, enabled: true, studentInsightTemplateId: true, classInsightTemplateId: true }, orderBy: [{ sortOrder: "asc" }] },
-            QuizActivity: { select: { id: true, subProjectId: true, title: true, description: true, status: true, sortOrder: true, analysisPrompt: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
-            ExplorationActivity: { select: { id: true, title: true, description: true, enableSubmission: true, enableAiCompanion: true, sortOrder: true, enabled: true }, orderBy: [{ sortOrder: "asc" }] },
+            QuizActivity: { select: { id: true, subProjectId: true, title: true, description: true, status: true, sortOrder: true, analysisPrompt: true, _count: { select: { QuizAttempt: true } }, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
+            ExplorationActivity: { select: { id: true, title: true, description: true, enableSubmission: true, enableAiCompanion: true, sortOrder: true, enabled: true, _count: { select: { ExplorationSubmission: true } } }, orderBy: [{ sortOrder: "asc" }] },
             ProjectSubmission: { orderBy: { sortOrder: "asc" } },
           },
         },
