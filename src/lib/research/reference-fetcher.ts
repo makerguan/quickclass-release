@@ -11,6 +11,14 @@
  * - 失败兜底：网络/Crossref 异常时返回空数组，不阻塞生成
  * - GB/T 7714 格式输出
  * - 优先 journal-article，过滤 has-doi
+ * - 学科注入：subjectHints 的学科英文词置入检索词最前（Crossref 英文库为主），
+ *   返回前按学科相关性排序（学科相关候选排前，AI 优先引用小编号）
+ *
+ * ⛔ DO NOT REVERT: 学科注入是文献学科相关性 ≥80% 的治本环节——
+ * 不注入学科词时 Crossref 检索天然偏向通用教育学文献，候选列表学科性低，
+ * 提示词"优先使用候选"条款会被通用文献绑架（2026-09 实测确认）。
+ * 🔗 RELATED: quality-check.ts DISCIPLINE_WORDS（检测端词表）、
+ * data-collector.ts subjectKeywords（17 学科来源）、document-generator.ts 三处学科条款。
  */
 
 import { createHash } from "crypto";
@@ -43,10 +51,68 @@ interface CacheEntry {
 const cache = new Map<string, CacheEntry>();
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 小时
 
-function buildCacheKey(title: string, keywords: string, count: number): string {
-  const raw = `${title}|${keywords}|${count}`;
+function buildCacheKey(title: string, keywords: string, count: number, subjectHints: string[] = []): string {
+  // ⚠️ 学科词必须入 key：不同学科的相同标题若共享缓存会互相污染候选列表
+  const raw = `${title}|${keywords}|${count}|${subjectHints.join(",")}`;
   return createHash("md5").update(raw).digest("hex");
 }
+
+/**
+ * 学科 → Crossref 英文检索词映射。
+ * 🔗 RELATED: key 与 data-collector.ts subjectKeywords / quality-check.ts DISCIPLINE_WORDS
+ * 的学科取值保持一致，修改任一处必须同步三处。
+ * ⚠️ GOTCHA: Crossref 以英文文献为主，中文学科名检索命中率极低，必须映射为英文词。
+ * ⚠️ GOTCHA: "信息技术"是旧课名兼容键（2022 课标改名"信息科技"，旧快照 subjectHints
+ * 可能仍存旧词），两个 key 指向同一检索词，删旧键会让旧数据学科注入静默失效。
+ */
+const SUBJECT_QUERY_TERMS: Record<string, string> = {
+  数学: "mathematics education",
+  语文: "Chinese language education",
+  英语: "English language teaching",
+  物理: "physics education",
+  化学: "chemistry education",
+  生物: "biology education",
+  历史: "history education",
+  地理: "geography education",
+  政治: "civic education",
+  科学: "science education",
+  信息科技: "computer science education",
+  信息技术: "computer science education",
+  美术: "art education",
+  音乐: "music education",
+  体育: "physical education",
+  心理: "mental health education",
+  道德: "moral education",
+  法治: "legal education",
+};
+
+/**
+ * 学科 → 候选文献标题/期刊名匹配正则（学科相关性排序用）。
+ * ⚠️ GOTCHA: 英文必须用完整词组避免子串误匹配（如裸 art 会命中 start/partner）；
+ * 中文直接用学科名（≥2 字无误匹配风险）。期刊名一并匹配——
+ * 如 Physics Education 期刊上的文献标题可能不含学科词。
+ * ⚠️ GOTCHA: "信息技术"是旧课名兼容键，与"信息科技"同值（见 SUBJECT_QUERY_TERMS 注释）。
+ */
+const SUBJECT_TITLE_RE: Record<string, RegExp> = {
+  数学: /mathemat|数学/i,
+  语文: /Chinese language|reading instruction|writing instruction|literacy|语文|阅读教学|写作教学/i,
+  英语: /English|ELT|EFL|ESL|外语|英语/i,
+  物理: /physics|物理/i,
+  化学: /chemis|化学/i,
+  生物: /biolog|生物/i,
+  历史: /histor|历史/i,
+  地理: /geograph|地理/i,
+  政治: /civic|politic|思政|政治/i,
+  科学: /science education|science teaching|science learning|science instruct|科学/i,
+  信息科技: /computer|computing|informat|algorithm|编程|信息科技|计算思维/i,
+  信息技术: /computer|computing|informat|algorithm|编程|信息科技|计算思维/i,
+  美术: /art education|visual art|fine art|aesthetic|美术|绘画/i,
+  音乐: /music|音乐/i,
+  体育: /physical education|sports education|体育/i,
+  心理: /psycholog|mental health|心理/i,
+  道德: /moral|德育|道德/i,
+  法治: /legal education|law education|法治|法律/i,
+};
 
 /**
  * 从 Crossref 检索真实文献候选
@@ -60,10 +126,11 @@ export async function fetchCandidateReferences(
   title: string,
   keywords: string,
   count: number = 15,
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; subjectHints?: string[] },
 ): Promise<RealReferenceCandidate[]> {
   const timeoutMs = options?.timeoutMs ?? 8000;
-  const cacheKey = buildCacheKey(title || "", keywords || "", count);
+  const subjectHints = options?.subjectHints || [];
+  const cacheKey = buildCacheKey(title || "", keywords || "", count, subjectHints);
 
   // 命中缓存
   const cached = cache.get(cacheKey);
@@ -80,8 +147,11 @@ export async function fetchCandidateReferences(
   try {
     const url = new URL("https://api.crossref.org/works");
     // 用 bibliographic 查询同时匹配标题/作者/摘要
-    // 追加中文教育关键词，提高中文期刊匹配率
-    const enrichedQuery = [query, "教育", "教学", "课堂", "学生", "教师", "课程"]
+    // 学科英文词置前（提高相关性权重），再拼标题/关键词 + 中文教育通用词
+    const subjectTerms = subjectHints
+      .map((s) => SUBJECT_QUERY_TERMS[s])
+      .filter(Boolean);
+    const enrichedQuery = [...subjectTerms, query, "教育", "教学", "课堂", "学生", "教师", "课程"]
       .filter(Boolean)
       .join(" ");
     url.searchParams.set("query.bibliographic", enrichedQuery.slice(0, 300));
@@ -126,6 +196,17 @@ export async function fetchCandidateReferences(
           ? (item["container-title"][0] || "").trim()
           : "",
       });
+    }
+
+    // 学科相关性排序：学科相关的候选排前（编号靠前，AI 优先引用）
+    // ⚠️ 只排序不过滤——过滤会导致候选不足，排序已足以让学科相关文献占据优先位
+    const subjectRes = subjectHints
+      .map((s) => SUBJECT_TITLE_RE[s])
+      .filter(Boolean);
+    if (subjectRes.length > 0) {
+      const isRelevant = (c: RealReferenceCandidate) =>
+        subjectRes.some((re) => re.test(c.title) || re.test(c.journal || ""));
+      candidates.sort((a, b) => Number(isRelevant(b)) - Number(isRelevant(a)));
     }
 
     cache.set(cacheKey, { candidates, ts: Date.now() });

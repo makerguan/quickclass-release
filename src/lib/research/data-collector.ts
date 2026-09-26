@@ -193,15 +193,21 @@ export async function collectResearchData(
   const studentIds = [...allStudents.keys()];
 
   // 提取学科 hints（从任务标题和教师关键字）
+  // ⚠️ GOTCHA: "信息技术"与"信息科技"都收录——2022 版课标改名后新旧课名并存于历史任务标题，
+  // 只收一个会漏提取；提取后统一归并为规范名"信息科技"（见下方 ALIAS 归并）。
+  // 🔗 RELATED: 归并后的规范名被 reference-fetcher.ts SUBJECT_QUERY_TERMS/SUBJECT_TITLE_RE、
+  // quality-check.ts DISCIPLINE_WORDS 按 key 消费，三处词表必须与本列表同步。
   const subjectKeywords = [
     "数学", "语文", "英语", "物理", "化学", "生物",
-    "历史", "地理", "政治", "科学", "信息技术", "美术", "音乐",
+    "历史", "地理", "政治", "科学", "信息技术", "信息科技", "美术", "音乐",
     "体育", "心理", "道德", "法治",
   ];
+  // 旧课名 → 规范名（2022 版义务教育课程方案：信息技术 → 信息科技）
+  const SUBJECT_ALIAS: Record<string, string> = { 信息技术: "信息科技" };
   const subjectHints = new Set<string>();
   for (const t of tasks) {
     for (const subj of subjectKeywords) {
-      if (t.title && t.title.includes(subj)) subjectHints.add(subj);
+      if (t.title && t.title.includes(subj)) subjectHints.add(SUBJECT_ALIAS[subj] || subj);
     }
   }
 
