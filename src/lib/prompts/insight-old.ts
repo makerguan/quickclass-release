@@ -57,6 +57,8 @@ export interface BuildTaskClassParams {
   classDialogAnalysisReport?: string;
   /** 全班作业数据 */
   classQuizStats?: string;
+  /** 全班探究学情数据 */
+  classExplorationStats?: string;
   rawData?: {
     students: { name: string; convCount: number; msgCount: number; completedPresets: number; totalPresets: number }[];
     recentQuestions: string;
@@ -81,6 +83,8 @@ export interface BuildTaskStudentParams {
   quizStats?: string;
   /** 全班作业统计数据（用于对比） */
   classQuizStats?: string;
+  /** 个人探究学情数据 */
+  personalExplorationStats?: string;
   pcClassInsights?: { pcTitle: string; content: string }[];
   taskInfo?: { taskTitle: string; taskObjectives?: string; grade?: string; subject?: string };
   config: InsightConfig;

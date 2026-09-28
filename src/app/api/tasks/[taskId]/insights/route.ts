@@ -11,6 +11,10 @@ import {
   buildTaskStudentPrompt,
 } from "@/lib/prompts";
 import { cleanInsightContent } from "@/lib/insight-clean";
+import {
+  buildClassExplorationStats,
+  buildPersonalExplorationStats,
+} from "@/lib/exploration/stats-aggregator";
 
 // ============================================================
 // 批量分析短期缓存：批量分析时多个学生请求会重复查询相同的
@@ -631,6 +635,7 @@ async function generateTaskClassInsight(
         ? pcClassInsights.map((p) => `【${p.pcTitle}】\n${p.content}`).join("\n\n")
         : "",
       classQuizStats: await buildClassQuizStats(task.id, classId),
+      classExplorationStats: await cached(`exp:class:${task.id}:${classId}`, () => buildClassExplorationStats(task.id, classId)),
       taskInfo: { taskTitle: task.title, taskObjectives: task.objectives, grade: task.grade ?? undefined, subject: task.subject ?? undefined },
       config,
     });
@@ -714,6 +719,7 @@ async function generateTaskClassInsight(
     personalDialogAnalysisReport: "",
     classDialogAnalysisReport: "",
     classQuizStats: await buildClassQuizStats(task.id, classId),
+    classExplorationStats: await cached(`exp:class:${task.id}:${classId}`, () => buildClassExplorationStats(task.id, classId)),
     rawData: {
       students: Array.from(studentStats.values()).map((s) => ({
         name: s.name,
@@ -821,6 +827,7 @@ const prompt = buildTaskStudentPrompt({
   useSubInsights: true,
   quizStats: await buildPersonalQuizStats(task.id, classId, studentId),
   classQuizStats: await buildClassQuizStats(task.id, classId),
+  personalExplorationStats: await buildPersonalExplorationStats(task.id, classId, studentId),
   taskInfo: { taskTitle: task.title, taskObjectives: task.objectives, grade: task.grade ?? undefined, subject: task.subject ?? undefined },
   config,
 });
@@ -874,6 +881,7 @@ const prompt = buildTaskStudentPrompt({
   useSubInsights: false,
   quizStats: await buildPersonalQuizStats(task.id, classId, studentId),
   classQuizStats: await buildClassQuizStats(task.id, classId),
+  personalExplorationStats: await buildPersonalExplorationStats(task.id, classId, studentId),
   taskInfo: { taskTitle: task.title, taskObjectives: task.objectives, grade: task.grade ?? undefined, subject: task.subject ?? undefined },
   config,
 });
@@ -1028,6 +1036,7 @@ async function generateTaskClassInsightWithTemplate(
       ? pcClassInsights.map((p) => `【${p.pcTitle}】\n${p.content}`).join("\n\n")
       : "",
     classQuizStats: await buildClassQuizStats(task.id, classId),
+    classExplorationStats: await cached(`exp:class:${task.id}:${classId}`, () => buildClassExplorationStats(task.id, classId)),
     rawData: useSubInsights ? undefined : {
       students: Array.from(studentStats.values()).map((s) => ({
         name: s.name,
@@ -1171,6 +1180,7 @@ const prompt = buildTaskStudentPrompt({
   useSubInsights,
   quizStats: await buildPersonalQuizStats(task.id, classId, studentId),
   classQuizStats: await buildClassQuizStats(task.id, classId),
+  personalExplorationStats: await buildPersonalExplorationStats(task.id, classId, studentId),
   taskInfo: { taskTitle: task.title, taskObjectives: task.objectives, grade: task.grade ?? undefined, subject: task.subject ?? undefined },
   config,
 });

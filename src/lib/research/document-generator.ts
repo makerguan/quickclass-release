@@ -111,13 +111,14 @@ export async function* streamProposalGeneration(
 
 // ── 数据节构建（全量直发，不再抽象 mode 降级） ──
 function buildDataSections(data: ResearchDataSnapshot): string {
-  const { scope, quizData, conversationData, quizReports, conversationReports, dataQuality } = data;
+  const { scope, quizData, conversationData, quizReports, conversationReports, explorationData, explorationReports, dataQuality } = data;
   const parts: string[] = [];
 
   // ── 范围信息（不受 mode 影响） ──
   const typeLabels: Record<string, string> = {
     quiz: "作业数据", conversation: "对话数据",
     quizReport: "作业报告", conversationReport: "对话报告",
+    exploration: "交互探究数据", explorationReport: "探究报告",
   };
   parts.push(`## 数据来源范围
 - 选中的课堂：${scope.classNames.join("、") || "（无）"}
@@ -210,6 +211,28 @@ function buildDataSections(data: ResearchDataSnapshot): string {
     for (const r of conversationReports) {
       lines.push(`### ${r.taskTitle} — ${r.presetTitle}（版本 ${r.version}，生成于 ${r.createdAt}）`);
       lines.push(`- 相关对话数：${r.conversationCount}`);
+      lines.push(`#### 报告正文`);
+      lines.push(r.content);
+      lines.push(``);
+    }
+    parts.push(lines.join("\n"));
+  }
+
+  // ── 交互探究数据 ──
+  if (explorationData && explorationData.summaryText) {
+    const lines: string[] = [`## 交互探究数据`];
+    lines.push(``);
+    lines.push(`### 探究活动总数：${explorationData.totalActivities}`);
+    lines.push(explorationData.summaryText);
+    parts.push(lines.join("\n"));
+  }
+
+  // ── 探究分析报告 ──
+  if (explorationReports && explorationReports.length > 0) {
+    const lines: string[] = [`## 探究分析报告（AI 班级分析报告）`];
+    lines.push(``);
+    for (const r of explorationReports) {
+      lines.push(`### ${r.taskTitle} — ${r.explorationTitle}`);
       lines.push(`#### 报告正文`);
       lines.push(r.content);
       lines.push(``);

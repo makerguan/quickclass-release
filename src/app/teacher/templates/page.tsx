@@ -370,6 +370,7 @@ export default function TemplateSettingsPage() {
         ...userInputs,
         { name: "personalDialogContents", desc: "个人对话记录" },
         { name: "personalQuizStats", desc: "个人作业数据" },
+        { name: "personalExplorationStats", desc: "个人探究数据（用时/关卡/操作路径/作答结论）" },
         { name: "reportTime", desc: "报告生成时间（服务器真实时间）" },
       ];
     } else {
@@ -384,6 +385,7 @@ export default function TemplateSettingsPage() {
         { name: "personalDialogAnalysisReport", desc: "个人对话分析报告" },
         { name: "classDialogAnalysisReport", desc: "班级对话分析报告" },
         { name: "classQuizStats", desc: "全班作业数据" },
+        { name: "classExplorationStats", desc: "全班探究数据（完成率/探索用时/操作特征/结论摘要）" },
         { name: "reportTime", desc: "报告生成时间（服务器真实时间）" },
       ];
     }
