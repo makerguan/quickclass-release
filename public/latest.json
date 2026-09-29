@@ -1,6 +1,6 @@
 {
-  "version": "v2026.09.25",
+  "version": "v2026.09.29",
   "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
-  "changelog": "互动探究数据采集升级：提交数据全量上报、AI 自动生成采集清单、表单收集与可视化数据大屏；AI 调用稳定性增强（超时保护+自动重试）；有学生提交时禁止编辑探究/作业（先清除再编辑）；课堂列表加载提速；作业提交后显示解题思路",
-  "releaseDate": "2026-09-25"
+  "changelog": "交互探究数据接入课堂级学情分析与教研科研：课堂全班/个人分析报告纳入探究参与度、探索时长、操作特征与探究结论；新增 {classExplorationStats}/{personalExplorationStats} 两个模板变量（老模板自动兜底追加）；论文与课题申报新增「交互探究数据」「探究报告」两类数据源，实证章节可引用真实探究过程数据",
+  "releaseDate": "2026-09-29"
 }
