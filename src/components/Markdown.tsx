@@ -61,10 +61,30 @@ function MermaidBlock({ code }: { code: string }) {
           securityLevel: "loose",
           fontFamily: "inherit",
         });
+        // ⚠️ GOTCHA（mermaid 12.0.0 实测，2026-09）：
+        // 1) parse 成功返回的是对象（{diagramType,...}）而非 true，与官方文档不符 ——
+        //    所以只能用 === false 判定失败；若写 === true / if (!ok)，图表会永远静默回退成源码。
+        // 2) parse 失败（suppressErrors:true）零 DOM 副作用；而 render 失败会在 document.body
+        //    末尾挂一张「Syntax error in text / mermaid version」错误图残留（约 4KB）。
+        //    流式输出期间 code 是半成品，直接 render 必然反复失败、反复挂错误图 ——
+        //    这就是学生看到 "Syntax error in text" 的根因。parse 预检把 99% 的失败挡在
+        //    render 之前（半成品语法不完整 → parse 返回 false → 走源码回退，零副作用）。
+        if ((await mermaid.parse(code, { suppressErrors: true })) === false) {
+          if (!cancelled) setFailed(true);
+          return;
+        }
         const { svg } = await mermaid.render(idRef.current, code);
         if (!cancelled) setSvg(svg);
       } catch {
         if (!cancelled) setFailed(true);
+      } finally {
+        // ⛔ DO NOT REVERT：无论成败、无论是否 cancelled 都要执行 ——
+        // mermaid render 失败时挂在 document.body 末尾的错误图残留（<div id="d{renderId}">）
+        // 是全局 DOM 污染，不随组件卸载消失；cancelled 场景（流式期间 code 变化触发重渲染，
+        // 旧 effect 的迟到失败 render）若不清理会永久残留。成功渲染时 mermaid 自身会清掉
+        // 残留，此处 remove 是幂等 no-op。parse 预检挡不住的低频失败（布局/SVG 阶段报错）
+        // 也由这里兜底。
+        document.getElementById(`d${idRef.current}`)?.remove();
       }
     })();
     return () => {
