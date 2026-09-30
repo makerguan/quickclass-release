@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
-import { upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
+import { purifyExplorationHtml } from "@/lib/exploration/render";
 
 // GET: 导出课堂完整结构（不含教师/学生/班级数据）
 export async function GET(
@@ -129,10 +129,12 @@ export async function GET(
         explorations: (sp?.ExplorationActivity || []).map((e) => ({
           title: e.title,
           description: e.description || "",
-          htmlContent: (() => {
-            if (!e.enableAiCompanion) return e.htmlContent || "";
-            return upgradeAiCompanionIfNeeded(e.htmlContent, { explorationId: e.id }).html;
-          })(),
+          // 导出纯净稿（📐 CONTRACT 与库存储口径一致）：不含伴学/提交注入，
+          // 导入方读取时由 renderExplorationHtml 自行注入当前版。
+          // ⚠️ GOTCHA：必须过 purifyExplorationHtml —— 库里可能存有历史「保存时注入落库」
+          // 时代的注入版 HTML（2026-09 实测：dev 库 2/2 条均为注入版），
+          // 直接导库里原样会把旧版伴学脚本带给导入方。purify 对纯净稿是 no-op。
+          htmlContent: purifyExplorationHtml(e.htmlContent),
           designPrompt: e.designPrompt || "",
           analysisPrompt: e.analysisPrompt || "",
           enableSubmission: e.enableSubmission ?? false,

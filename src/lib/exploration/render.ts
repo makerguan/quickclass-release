@@ -3,8 +3,8 @@ import {
   removeSubmitFunctionality,
 } from "@/lib/prompts/exploration-submit";
 import {
+  injectAiCompanion,
   removeAiCompanion,
-  upgradeAiCompanionIfNeeded,
 } from "@/lib/prompts/ai-companion";
 import type { CollectProfile } from "@/lib/exploration/collect-profile";
 
@@ -73,11 +73,13 @@ export function renderExplorationHtml(params: {
   }
 
   if (params.enableAiCompanion) {
-    const upgrade = upgradeAiCompanionIfNeeded(html, { explorationId: params.explorationId });
-    if (upgrade.changed) {
-      html = upgrade.html;
-      warnings.push(...upgrade.warnings);
-    }
+    // 无条件注入当前版：入口 purifyExplorationHtml 已剥净（对纯净稿 no-op、对存量注入版剥旧），
+    // 这里永远注入「当前代码」的伴学实现，代码侧修复即时对全部数据生效。
+    // ⛔ DO NOT REVERT 回「版本号判断 + 快速路径放行」（2026-09 随版本号机制退役）：
+    // 那条路径会放行库里存量的旧注入代码，伴学修复对存量数据永远不生效。
+    const result = injectAiCompanion(html, { explorationId: params.explorationId });
+    html = result.html;
+    warnings.push(...result.warnings);
   }
 
   return { html, warnings };

@@ -39,7 +39,10 @@ function loadKatexAssets(): { js: string; css: string; available: boolean } {
 // 模块加载时执行一次（Next.js 路由在 Node.js 环境中运行）
 const katexAssets = loadKatexAssets();
 
-export const AI_COMPANION_VERSION = "image-renderer-v8";
+// （历史机制退役 2026-09）曾用 AI_COMPANION_VERSION 版本号识别库里 HTML 的伴学注入新旧，
+// 读取时「版本一致直接放行、不一致剥旧注新」。现读取路径（renderExplorationHtml）入口
+// 无条件 purify 后永远注入当前版，不存在「放行库里旧注入」的路径，版本号随之退役。
+// ⛔ DO NOT RE-ADD 版本号 / 升级判断：那会让代码侧的伴学修复（CSS/脚本）对存量数据失效。
 
 /**
 * AI伴学浮动对话框CSS样式
@@ -171,6 +174,20 @@ export const aiCompanionCSS = `
 @keyframes acBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 #ai-companion-root .ac-speak-err { display: none; font-size: 11px; color: #9ca3af; }
 #ai-companion-root .ac-speak-err.show { display: inline; }
+
+/* ===== 防御声明（2026-09 修复 1）=====
+   ⚠️ GOTCHA：探究页自身的 CSS 可能用宽泛选择器（button/div/* 的 reset、带 !important 的覆盖）
+   冲掉伴学面板的存在性样式 —— 典型症状：浮动按钮消失、面板被探究内容盖住、消息区塌陷。
+   以下 !important 只锁「面板能否出现 / 定位 / 滚动」的骨架属性，不锁美观属性。
+   panel 的 display 两条都带 !important：靠 .open 的更高特异性实现收起/展开切换。
+   ⛔ DO NOT REVERT：别只删其中一条 —— 删 none 那条会让收起状态被探究页的 div 规则强制显示；
+   删 .open 那条会让面板永远打不开。 */
+#ai-companion-root { display: block !important; }
+#ai-companion-root #ai-companion-trigger { position: fixed !important; display: flex !important; z-index: 10001 !important; }
+#ai-companion-root #ai-companion-panel { position: fixed !important; display: none !important; z-index: 10001 !important; }
+#ai-companion-root #ai-companion-panel.open { display: flex !important; }
+#ai-companion-root #ac-messages { display: flex !important; flex-direction: column !important; flex: 1 !important; overflow-y: auto !important; }
+#ai-companion-root #ac-input-area { display: flex !important; }
 `.trim();
 
 /**
@@ -217,7 +234,6 @@ export const aiCompanionScript = String.raw`
 (function() {
   if (window.__AI_COMPANION_INJECTED__) return;
   window.__AI_COMPANION_INJECTED__ = true;
-  window.__AI_COMPANION_VERSION__ = '${AI_COMPANION_VERSION}';
 
   var trigger = document.getElementById('ai-companion-trigger');
   var panel = document.getElementById('ai-companion-panel');
@@ -1025,38 +1041,12 @@ export interface AiCompanionInjectResult {
   html: string;
 }
 
-/**
- * 检测 HTML 中 AI 伴学注入是否包含当前版本（无版本 → 缺注入；有注入但版本号不一致 → 需升级）
- */
-export function isAiCompanionUpToDate(html: string | null | undefined): boolean {
-  if (!html) return true; // 没有 HTML 视为最新，避免空内容触发升级循环
-  // 缺少 AI 伴学注入标记则视为需要注入（教师已启用但尚未注入）
-  if (!html.includes("__AI_COMPANION_INJECTED__") && !html.includes("ai-companion-root")) {
-    return false;
-  }
-  return html.includes(AI_COMPANION_VERSION);
-}
-
-/**
- * 惰性升级：把数据库里旧的 AI 伴学 HTML（任意旧版本）替换为当前版本
- * - 若 HTML 中无 AI 伴学标记，原样返回 { changed: false }
- * - 若 HTML 中已包含当前版本标记，原样返回 { changed: false }
- * - 否则先 removeAiCompanion 清干净，再 injectAiCompanion 重新注入
- * 供学生读路径等"无法触发教师保存"的接口使用，保证学生总能看到当前版本的伴学脚本
- */
-export function upgradeAiCompanionIfNeeded(
-  html: string | null | undefined,
-  context: AiCompanionContext
-): { html: string; changed: boolean; warnings: string[] } {
-  if (!html) return { html: "", changed: false, warnings: [] };
-  if (isAiCompanionUpToDate(html)) {
-    return { html, changed: false, warnings: [] };
-  }
-  const warnings: string[] = [`检测到旧版 AI 伴学注入，已自动升级到 ${AI_COMPANION_VERSION}`];
-  const cleaned = removeAiCompanion(html);
-  const result = injectAiCompanion(cleaned, context);
-  return { html: result.html, changed: true, warnings: [...warnings, ...result.warnings] };
-}
+// （历史函数已删 2026-09）isAiCompanionUpToDate / upgradeAiCompanionIfNeeded 是版本号机制的
+// 配套函数，随 AI_COMPANION_VERSION 一并退役（见文件头部退役说明）。
+// 现在需要「确保 HTML 带当前版伴学」的唯一正确姿势：
+//   import { injectAiCompanion, removeAiCompanion } from "@/lib/prompts/ai-companion";
+//   injectAiCompanion(removeAiCompanion(html), context)  // 剥旧 + 注当前版，对纯净稿幂等
+// 或直接走 renderExplorationHtml（内部已做同样的事）。
 
 /**
  * 注入AI伴学功能到HTML
