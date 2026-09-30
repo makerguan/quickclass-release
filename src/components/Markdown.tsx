@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  memo,
   useEffect,
   useRef,
   useState,
@@ -159,7 +160,67 @@ function extractText(node: ReactNode): string {
   return "";
 }
 
-export default function Markdown({
+/**
+ * ⚠️ GOTCHA —— 本函数 MUST STAY AT MODULE TOP LEVEL，禁止改回内联箭头函数或挪进 Markdown 组件体内：
+ * react-markdown 10.x（经 hast-util-to-jsx-runtime）把 components[tag] 直接作为 React 元素的 type，
+ * React 按 type 引用相等判断是否复用组件实例。内联箭头函数每次渲染都是新引用 → React 判定
+ * "组件类型变了" → 卸载重挂整个 pre 子树 → MermaidBlock 的 svg state 丢失 → 先显示
+ * "图表生成中..."占位再异步 mermaid.render 重画 —— 这就是"学生在输入框打一个字，流程图闪一下"
+ * 的根因（2026-09-30 playwright 实测复现：按键后 250ms 原 DOM 节点 document.contains=false，
+ * svg id 从 mmd-gohv70sv 变为 mmd-ugjcuzrv，mermaid.render 整个重跑了一遍）。
+ * 同型坑先例：src/app/student/chat/page.tsx 的 ExplorationPanelRender 护栏注释（内联组件定义
+ * 导致 iframe 整页重载）。
+ *
+ * 🔗 RELATED：改这里要同步看 —— MermaidBlock（本文件，useEffect 依赖 [code]，code 不变则不重渲染）；
+ * src/app/student/chat/page.tsx:951（学生聊天页调用点）。
+ * ⛔ DO NOT REVERT：不要为了"就近取用组件体变量"把它挪回函数体内 —— 那正是闪烁 bug 的根源。
+ */
+function MarkdownPre({ children }: { children?: ReactNode }) {
+  // mermaid 代码块：整块交给 MermaidBlock 渲染（pre 内不能嵌 div，故在此拦截）
+  const child = Array.isArray(children) ? children[0] : children;
+  if (
+    isValidElement<{ className?: string; children?: ReactNode }>(child) &&
+    /^language-mermaid/.test(String(child.props.className || ""))
+  ) {
+    return <MermaidBlock code={extractText(child.props.children)} />;
+  }
+  return <pre>{children}</pre>;
+}
+
+/** 行内模式的 <p> 渲染：剥掉块级 <p> 只留内容（题目选项/评语等单行片段用）。同样必须留在模块顶层 */
+function InlineParagraph({ children }: { children?: ReactNode }) {
+  return <>{children}</>;
+}
+
+/**
+ * 插件数组与 components 对象必须是模块级常量（引用恒定）：
+ * react-markdown 10.x 的同步 Markdown 组件每次渲染都完整重跑 parse + runSync（无内部 memo），
+ * 组件体内新建的字面量除了引发子树 remount，还会让父组件每敲一个字都重新解析全部 markdown。
+ */
+const REMARK_PLUGINS = [remarkGfm, remarkMath];
+const REHYPE_PLUGINS = [rehypeKatex];
+
+/** 块级模式：mermaid 拦截（pre）+ 图片增强（img） */
+const BLOCK_COMPONENTS = { img: MarkdownImg, pre: MarkdownPre };
+
+/**
+ * 行内模式：p 剥块级包装。
+ * ⚠️ GOTCHA：不能写 `pre: undefined` —— hast-util-to-jsx-runtime 用 hasOwnProperty 判断
+ * components 里是否注册了某 tag，显式的 undefined 值会被当作"已注册"然后把 undefined 传给
+ * jsx() 导致渲染崩溃；直接不写这个键则安全回退为原生 <pre>。
+ */
+const INLINE_COMPONENTS = { p: InlineParagraph, img: MarkdownImg };
+
+/**
+ * 📐 CONTRACT —— 本组件被 React.memo 包装，调用方约定：
+ * props 只有 children(string) 与 inline(boolean)，全是原始类型，浅比较即可精确判断内容是否变化。
+ * 学生聊天页（src/app/student/chat/page.tsx）输入框每敲一个字符 setInput → 整页重渲染，
+ * 若无 memo，页面上每条历史消息的 markdown 都会被完整重新解析（react-markdown 无内部缓存），
+ * 且 mermaid 图表因 components.pre 引用变化被卸载重挂（闪烁）。
+ * ⛔ DO NOT REVERT：不要移除 memo；也不要给本组件新增对象/函数类型的 props（会破坏浅比较
+ * 语义，确需新增时必须同时提供自定义 arePropsEqual 并回归本注释场景）。
+ */
+const Markdown = memo(function Markdown({
   children,
   inline,
 }: {
@@ -172,27 +233,13 @@ export default function Markdown({
 }) {
   return (
     <ReactMarkdown
-      remarkPlugins={[remarkGfm, remarkMath]}
-      rehypePlugins={[rehypeKatex]}
-      components={{
-        ...(inline ? { p: ({ children }) => <>{children}</> } : {}),
-        img: MarkdownImg,
-        pre: inline
-          ? undefined
-          : ({ children }) => {
-              // mermaid 代码块：整块交给 MermaidBlock 渲染（pre 内不能嵌 div，故在此拦截）
-              const child = Array.isArray(children) ? children[0] : children;
-              if (
-                isValidElement<{ className?: string; children?: ReactNode }>(child) &&
-                /^language-mermaid/.test(String(child.props.className || ""))
-              ) {
-                return <MermaidBlock code={extractText(child.props.children)} />;
-              }
-              return <pre>{children}</pre>;
-            },
-      }}
+      remarkPlugins={REMARK_PLUGINS}
+      rehypePlugins={REHYPE_PLUGINS}
+      components={inline ? INLINE_COMPONENTS : BLOCK_COMPONENTS}
     >
       {normalizeMathDelimiters(children)}
     </ReactMarkdown>
   );
-}
+});
+
+export default Markdown;
