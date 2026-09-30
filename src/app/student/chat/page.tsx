@@ -141,6 +141,52 @@ function toApiMessages(messages: Message[]) {
   });
 }
 
+/**
+ * 渲染探索面板（避免在 JSX 中直接用 IIFE）。
+ *
+ * ⚠️ GOTCHA —— 本组件 MUST STAY AT MODULE TOP LEVEL，禁止移回 StudentChatPage 函数体内：
+ * 若定义在父组件函数体内，父组件每次渲染（任何 state 变化：收起/展开侧边栏、收到新消息、切换输入……）
+ * 都会产生一个「新的组件类型」，React 会卸载并重挂整个子树 —— ExplorationPanel 内的 iframe 随之销毁重建，
+ * 探究页面状态被重置、AI 伴学对话记录全部丢失。定义在模块顶层后组件类型恒定，父组件重渲染只引起
+ * 普通 re-render，不再 remount。
+ *
+ * 📐 CONTRACT：props 全部显式传入（explorationId / tasks / onBack），不引用任何父组件闭包变量；
+ * 探究 HTML 由本组件自行 fetch（/api/student/explorations/[id]）并持有为内部 state，
+ * 与父组件的对话消息流互不干扰。
+ *
+ * 🔗 RELATED：./ExplorationPanel（真正渲染 iframe 的组件）；调用点在本文件
+ *   「activeType === "exploration"」分支（搜索 ExplorationPanelRender）。
+ * ⛔ DO NOT REVERT：不要为了「就近取用父组件变量」把它挪回函数体内 —— 那正是 iframe 重载、
+ *   伴学对话丢失 bug 的根源（2026-09 实测：折叠侧边栏即触发 iframe 整页重载）。
+ */
+function ExplorationPanelRender({ explorationId, tasks, onBack }: { explorationId: string; tasks: LearningTask[]; onBack: () => void }) {
+  const exp = tasks
+    .flatMap(t => t.subProjects.flatMap(sp => sp.explorations || []))
+    .find(e => e.id === explorationId);
+  const [html, setHtml] = useState<string>("");
+  useEffect(() => {
+    let cancelled = false;
+    setHtml("");
+    const tk = localStorage.getItem("token");
+    if (!tk) return;
+    fetch(`/api/student/explorations/${explorationId}`, { headers: { Authorization: `Bearer ${tk}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d && typeof d.htmlContent === "string") setHtml(d.htmlContent); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [explorationId]);
+  if (!exp) return null;
+  return (
+    <ExplorationPanel
+      explorationId={exp.id}
+      htmlContent={html}
+      enableSubmissionEnabled={exp.enableSubmission}
+      enableAiCompanion={exp.enableAiCompanion}
+      onBack={onBack}
+    />
+  );
+}
+
 export default function StudentChatPage() {
   const [tasks, setTasks] = useState<LearningTask[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -383,35 +429,6 @@ export default function StudentChatPage() {
     setLoading(false);
     stopSpeaking();
   };
-
-  // 渲染探索面板（避免在 JSX 中直接用 IIFE）
-  function ExplorationPanelRender({ explorationId, tasks, onBack }: { explorationId: string; tasks: LearningTask[]; onBack: () => void }) {
-    const exp = tasks
-      .flatMap(t => t.subProjects.flatMap(sp => sp.explorations || []))
-      .find(e => e.id === explorationId);
-    const [html, setHtml] = useState<string>("");
-    useEffect(() => {
-      let cancelled = false;
-      setHtml("");
-      const tk = localStorage.getItem("token");
-      if (!tk) return;
-      fetch(`/api/student/explorations/${explorationId}`, { headers: { Authorization: `Bearer ${tk}` } })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { if (!cancelled && d && typeof d.htmlContent === "string") setHtml(d.htmlContent); })
-        .catch(() => {});
-      return () => { cancelled = true; };
-    }, [explorationId]);
-    if (!exp) return null;
-    return (
-      <ExplorationPanel
-        explorationId={exp.id}
-        htmlContent={html}
-        enableSubmissionEnabled={exp.enableSubmission}
-        enableAiCompanion={exp.enableAiCompanion}
-        onBack={onBack}
-      />
-    );
-  }
 
   // 找到当前对话活动的描述
   const getCurrentPresetInfo = () => {
