@@ -1,15 +1,16 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { Button, Tag, Select, MessagePlugin, Dialog } from "tdesign-react";
+import { Button, Tag, Select, MessagePlugin, Dialog, Switch, InputNumber } from "tdesign-react";
 import { ArrowLeftIcon, ChartBarIcon, RefreshIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
-import QuickFormDashboard, { type QfRecordItem } from "@/components/exploration/QuickFormDashboard";
+import QuickFormDashboard, { type QfRecordItem, analyzeFields } from "@/components/exploration/QuickFormDashboard";
 import QuickFormRecordList from "@/components/exploration/QuickFormRecordList";
 import QuickFormAiDashboard from "@/components/exploration/QuickFormAiDashboard";
-import type { AiDashboardConfig } from "@/lib/prompts/dashboard-config";
+import DashboardEditor from "@/components/exploration/DashboardEditor";
+import { SUBMITTED_AT_FIELD, type AiDashboardConfig, type AiDashboardChart, type AiDashboardKpi } from "@/lib/prompts/dashboard-config";
 import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 
 interface StudentRecord {
@@ -121,6 +122,46 @@ function parseDashboardConfig(raw: unknown): AiDashboardConfig | null {
   }
 }
 
+/** 把「默认大屏」的自动分析结果转成可编辑的 AI 配置。
+ *  ⚠️ GOTCHA：默认大屏（QuickFormDashboard）是纯前端自动分析、没有落库 config；
+ *  老师点「编辑」时用本函数把分析结果「转正」成 AiDashboardConfig，
+ *  保存后即走 QuickFormAiDashboard 渲染（从此不再是默认大屏）。
+ *  ⛔ DO NOT REVERT：默认大屏也要能编辑，是本需求（2026-10-05）的核心诉求。 */
+function buildDefaultConfig(records: QfRecordItem[]): AiDashboardConfig {
+  const fields = analyzeFields(records);
+  const charts: AiDashboardChart[] = [];
+  const kpis: AiDashboardKpi[] = [{ label: "已提交", field: null, agg: "count" }];
+
+  for (const f of fields) {
+    if (f.kind === "identifier") {
+      charts.push({ title: f.key, field: f.key, type: "roster" });
+    } else if (f.kind === "numeric") {
+      charts.push({ title: f.key, field: f.key, type: "bar", limit: 8 });
+      kpis.push({ label: `${f.key}平均`, field: f.key, agg: "avg" });
+    } else if (f.kind === "low-cardinality") {
+      charts.push({
+        title: f.key,
+        field: f.key,
+        type: f.uniqueCount <= 4 ? "pie" : "hbar",
+        limit: 8,
+      });
+    } else if (f.kind === "array") {
+      charts.push({ title: f.key, field: f.key, type: "hbar", limit: 8 });
+    } else {
+      charts.push({ title: f.key, field: f.key, type: "wordcloud", limit: 12 });
+    }
+  }
+
+  return {
+    title: "数据大屏",
+    subtitle: "",
+    theme: "blue",
+    gridCols: 2,
+    kpis,
+    charts,
+  };
+}
+
 export default function ExplorationAnalysisPage() {
   const router = useRouter();
   const params = useParams();
@@ -146,6 +187,16 @@ export default function ExplorationAnalysisPage() {
   const [aiDashLoading, setAiDashLoading] = useState(false);
   const [aiDashError, setAiDashError] = useState("");
   const [aiDashInstruction, setAiDashInstruction] = useState("");
+
+  // 手动微调编辑器（AI 初稿 + 手动微调）
+  const [editing, setEditing] = useState(false);
+  // 记录「进入编辑前是否原本是默认大屏」，用于「放弃」时正确回退到默认大屏
+  const editingFromDefaultRef = useRef(false);
+
+  // 自动刷新轮询：默认开、间隔秒数页面可控
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [refreshSeconds, setRefreshSeconds] = useState(15);
+  const refreshLiveDataRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   // 实时刷新（页签切换 / 手动刷新）
   const [refreshing, setRefreshing] = useState(false);
@@ -341,6 +392,40 @@ export default function ExplorationAnalysisPage() {
     }
   };
 
+  // 始终指向最新的 refreshLiveData，避免定时器闭包捕获旧班级/任务
+  refreshLiveDataRef.current = refreshLiveData;
+
+  // 自动刷新轮询：默认开，间隔 refreshSeconds 秒（5~300 clamp）
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const secs = Math.max(5, Math.min(300, refreshSeconds));
+    const timer = setInterval(() => refreshLiveDataRef.current(), secs * 1000);
+    return () => clearInterval(timer);
+  }, [autoRefresh, refreshSeconds]);
+
+  /**
+   * 「编辑」入口：AI 大屏直接编辑；默认大屏先把自动分析结果「转正」成可编辑配置再进入。
+   * ⛔ DO NOT REVERT：默认大屏也要能直接编辑，是本需求（2026-10-05）的核心诉求。
+   */
+  const handleEditDashboard = () => {
+    if (!aiDashConfig) {
+      editingFromDefaultRef.current = true;
+      setAiDashConfig(buildDefaultConfig(qfRecords));
+    } else {
+      editingFromDefaultRef.current = false;
+    }
+    setEditing(true);
+  };
+
+  /** 放弃编辑：若原本是默认大屏，则回退到默认大屏（不保留临时「转正」配置） */
+  const handleCancelEdit = () => {
+    if (editingFromDefaultRef.current) {
+      editingFromDefaultRef.current = false;
+      setAiDashConfig(null);
+    }
+    setEditing(false);
+  };
+
   /**
    * 「AI 重排大屏」：把字段摘要交给 AI，产出**图表配置 JSON** 并落库缓存；
    * 前端只按配置渲染图表（AI 不产出 HTML，避免 XSS）。老师手动触发、低频。
@@ -388,6 +473,39 @@ export default function ExplorationAnalysisPage() {
     } finally {
       setAiDashConfig(null);
       setAiDashError("");
+      setAiDashLoading(false);
+      // ⚠️ GOTCHA：若在「编辑态」点恢复默认，必须退出编辑态并清掉「转正」标记，
+      // 否则 editing 卡在 true → 工具栏「编辑」按钮被 `!editing` 条件隐藏、再也点不回来（历史 bug）。
+      setEditing(false);
+      editingFromDefaultRef.current = false;
+    }
+  };
+
+  /** 保存老师手动微调后的配置（PUT 落库，返回 sanitize 后的合法配置） */
+  const handleSaveDashboard = async (config: AiDashboardConfig) => {
+    setAiDashLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/exploration-activities/${explorationId}/dashboard-config`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ config }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.config) {
+        MessagePlugin.error(data?.message || "保存失败，请重试。");
+        return;
+      }
+      setAiDashConfig(data.config as AiDashboardConfig);
+      editingFromDefaultRef.current = false; // 已保存落库 = 转正成功，不再是默认大屏
+      setEditing(false);
+      MessagePlugin.success("大屏已更新");
+    } catch {
+      MessagePlugin.error("网络异常，保存失败。");
+    } finally {
       setAiDashLoading(false);
     }
   };
@@ -490,7 +608,17 @@ export default function ExplorationAnalysisPage() {
         );
       }
 
-      // 工具栏：AI 重排 / 自定义要求 / 恢复默认
+      // 手动微调编辑器的字段下拉来源：从当前收集记录提取字段名（去重）。
+      // ⚠️ GOTCHA：剔除 `_` 保留字段（_record_id/_submitted_at 等内部字段，选了也会被保存端 sanitize 丢弃），
+      // 并显式加入「提交时间」这个元数据字段（其值在 record.submittedAt，不在 data 里）。
+      const dashboardFields = [
+        ...Array.from(
+          new Set(qfRecords.flatMap((r) => Object.keys(r.data || {})))
+        ).filter((k) => !k.startsWith("_")),
+        SUBMITTED_AT_FIELD,
+      ].sort();
+
+      // 工具栏：AI 重排 / 自定义要求 / 编辑 / 恢复默认
       const toolbar = (
         <div className="flex items-center gap-2 flex-wrap mb-3">
           <Button
@@ -507,6 +635,16 @@ export default function ExplorationAnalysisPage() {
             placeholder="可选：描述风格或重点（如「深色科技风，突出年龄分布」「清新绿色」）"
             className="flex-1 min-w-[220px] h-8 px-3 text-xs border border-gray-200 rounded-md focus:outline-none focus:border-blue-400"
           />
+          {!editing && (
+            <Button
+              size="small"
+              variant="outline"
+              disabled={aiDashLoading}
+              onClick={handleEditDashboard}
+            >
+              编辑
+            </Button>
+          )}
           {aiDashConfig && (
             <Button
               size="small"
@@ -528,7 +666,14 @@ export default function ExplorationAnalysisPage() {
               {aiDashError}
             </div>
           )}
-          {aiDashConfig ? (
+          {editing && aiDashConfig ? (
+            <DashboardEditor
+              config={aiDashConfig}
+              fields={dashboardFields}
+              onSave={handleSaveDashboard}
+              onCancel={handleCancelEdit}
+            />
+          ) : aiDashConfig ? (
             <QuickFormAiDashboard records={qfRecords} total={qfTotal} config={aiDashConfig} />
           ) : (
             <QuickFormDashboard records={qfRecords} total={qfTotal} />
@@ -1049,6 +1194,24 @@ export default function ExplorationAnalysisPage() {
             {lastUpdated && (
               <span className="text-xs text-gray-400">最后更新 {lastUpdated}</span>
             )}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">自动刷新</span>
+              <Switch size="small" value={autoRefresh} onChange={(v) => setAutoRefresh(!!v)} />
+              {/* ⚠️ GOTCHA：默认 theme 是左右加减号（row），width 64 时两个按钮各占约 30px，
+                  数字「15」被挤到只剩几像素、根本看不清；改用上下加减号（column）+ 加宽到 72 才能正常显示秒数。 */}
+              <InputNumber
+                size="small"
+                theme="column"
+                value={refreshSeconds}
+                min={5}
+                max={300}
+                step={5}
+                disabled={!autoRefresh}
+                onChange={(v) => setRefreshSeconds(Number(v) || 15)}
+                style={{ width: 72 }}
+              />
+              <span className="text-xs text-gray-400">秒</span>
+            </div>
             <Button
               theme="default"
               variant="outline"

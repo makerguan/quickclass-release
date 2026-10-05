@@ -23,9 +23,12 @@ import {
   Pie,
   PieChart,
   ResponsiveContainer,
+  Scatter,
+  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
+  ZAxis,
 } from "recharts";
 
 export type Entry = [string, number];
@@ -198,6 +201,90 @@ export function ChartLine({
           activeDot={{ r: 5 }}
         />
       </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** 散点图（两个数值字段的相关性）：recharts ScatterChart，hover 显示标签 */
+export function ChartScatter({
+  points,
+  color = BRAND_BLUE,
+  xLabel,
+  yLabel,
+  height = 220,
+}: {
+  points: { x: number; y: number; label?: string }[];
+  color?: string;
+  xLabel?: string;
+  yLabel?: string;
+  height?: number;
+}) {
+  const data = points.map((p) => ({ x: p.x, y: p.y, label: p.label }));
+  // recharts v3 的 Tooltip content 类型较复杂，这里用宽松类型只做读取
+  const renderTooltip = (props: any) => {
+    const { active, payload } = props;
+    if (!active || !payload || !payload.length) return null;
+    const p = payload[0].payload;
+    return (
+      <div
+        style={{
+          background: "#fff",
+          border: "1px solid #e5e7eb",
+          borderRadius: 12,
+          boxShadow: "0 6px 20px rgba(15,40,80,0.10)",
+          fontSize: 12,
+          padding: "6px 10px",
+        }}
+      >
+        {p?.label && (
+          <div style={{ fontWeight: 600, color: "#374151", marginBottom: 2 }}>{p.label}</div>
+        )}
+        <div style={{ color: "#6b7280" }}>
+          {xLabel || "x"}：{p?.x}
+        </div>
+        <div style={{ color: "#6b7280" }}>
+          {yLabel || "y"}：{p?.y}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <ResponsiveContainer width="100%" height={height}>
+      <ScatterChart margin={{ top: 8, right: 16, left: 0, bottom: 12 }}>
+        <CartesianGrid strokeDasharray="3 3" stroke="#eef1f6" />
+        <XAxis
+          type="number"
+          dataKey="x"
+          name={xLabel || "x"}
+          tick={AXIS_TICK}
+          tickLine={false}
+          axisLine={{ stroke: "#e5e9f0" }}
+          domain={["auto", "auto"]}
+          label={
+            xLabel
+              ? { value: xLabel, position: "insideBottom", offset: -6, fontSize: 11, fill: "#8a97a8" }
+              : undefined
+          }
+        />
+        <YAxis
+          type="number"
+          dataKey="y"
+          name={yLabel || "y"}
+          tick={AXIS_TICK}
+          tickLine={false}
+          axisLine={false}
+          domain={["auto", "auto"]}
+          label={
+            yLabel
+              ? { value: yLabel, position: "insideLeft", angle: -90, fontSize: 11, fill: "#8a97a8" }
+              : undefined
+          }
+        />
+        <ZAxis range={[80, 80]} />
+        <Tooltip content={renderTooltip} cursor={{ strokeDasharray: "3 3" }} />
+        <Scatter data={data} fill={color} />
+      </ScatterChart>
     </ResponsiveContainer>
   );
 }

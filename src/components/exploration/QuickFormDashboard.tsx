@@ -34,9 +34,9 @@ interface DashboardProps {
   total: number;
 }
 
-type FieldKind = "identifier" | "numeric" | "low-cardinality" | "array" | "high-cardinality";
+export type FieldKind = "identifier" | "numeric" | "low-cardinality" | "array" | "high-cardinality";
 
-interface FieldAnalysis {
+export interface FieldAnalysis {
   key: string;
   values: unknown[];
   kind: FieldKind;
@@ -69,7 +69,7 @@ function isIdentifier(key: string, values: unknown[]): boolean {
 }
 
 /** 分析所有字段：从 records 的 data 里自动发现字段并归类 */
-function analyzeFields(records: QfRecordItem[]): FieldAnalysis[] {
+export function analyzeFields(records: QfRecordItem[]): FieldAnalysis[] {
   const fieldMap = new Map<string, unknown[]>();
   for (const r of records) {
     const data = r.data || {};
