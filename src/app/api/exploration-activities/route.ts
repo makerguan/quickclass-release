@@ -65,7 +65,7 @@ export async function POST(req: NextRequest) {
     if (!payload) return new Response("登录已过期", { status: 401 });
 
     const body = await req.json();
-    const { subProjectId, title, description, htmlContent, enableSubmission, enableAiCompanion, aiCompanionPrompt, designPrompt, analysisPrompt } = body;
+    const { subProjectId, title, description, htmlContent, enableSubmission, enableAiCompanion, aiCompanionPrompt, designPrompt, analysisPrompt, chatHistory } = body;
 
     if (!subProjectId || !title?.trim()) {
       return new Response("缺少必填字段", { status: 400 });
@@ -98,6 +98,9 @@ export async function POST(req: NextRequest) {
         aiCompanionPrompt: aiCompanionPrompt || null,
         designPrompt: designPrompt || null,
         analysisPrompt: analysisPrompt || null,
+        chatHistoryJson: Array.isArray(chatHistory) && chatHistory.length > 0
+          ? JSON.stringify(chatHistory)
+          : null,
       },
     });
 

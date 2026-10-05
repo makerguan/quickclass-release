@@ -171,6 +171,11 @@ model ExplorationActivity {
   teachingAdvice        String?
   analysisPrompt        String?
   designPrompt          String?
+  /// 教师端「交互探究」编辑器的多轮对话历史（JSON 字符串，数组元素 { role: "user"|"ai", content }）。
+  /// 设计意图 designPrompt 只存首轮；第二轮起的用户指令与 AI 状态此前只在内存 chatMessages，
+  /// 保存后丢失 —— 本字段持久化完整对话流，编辑回显时原样还原。
+  /// 为空 = 尚未进行多轮对话（仅首轮设计意图，或纯导入 HTML）。
+  chatHistoryJson       String?
   /// QuickForm 收集任务 id（qf_tasks.id）。开启提交时创建并绑定，之后每次保存复用；
   /// 探究改名只同步任务名，不换 id，保证历史数据连续。为空 = 尚未接入 QF 收集。
   qfTaskId              String?

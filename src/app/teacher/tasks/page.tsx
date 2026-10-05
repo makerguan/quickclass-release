@@ -1440,6 +1440,7 @@ export default function TeacherTasksPage() {
             aiCompanionPrompt: aiCompanionPromptText || undefined,
             designPrompt: initialPrompt,
             analysisPrompt: explorationPrompt,
+            chatHistory: chatMessages,
           }),
         });
       } else {
@@ -1454,6 +1455,7 @@ export default function TeacherTasksPage() {
             enableAiCompanion: explorationEnableAiCompanion,
             designPrompt: initialPrompt,
             analysisPrompt: explorationPrompt,
+            chatHistory: chatMessages,
           }),
         });
       }
@@ -1553,6 +1555,7 @@ export default function TeacherTasksPage() {
               enableAiCompanion: true,
               designPrompt: initialPrompt,
               analysisPrompt: explorationPrompt,
+              chatHistory: chatMessages,
             }),
           });
           if (!res.ok) throw new Error("创建失败");
@@ -1958,10 +1961,13 @@ export default function TeacherTasksPage() {
         //    用户一保存就把库里的内容清掉（契约见 fetchTaskDetailLite 上方说明）。
         if (detail.designPrompt !== undefined) setInitialPrompt(detail.designPrompt || "");
         if (detail.analysisPrompt !== undefined) setExplorationPrompt(detail.analysisPrompt || "");
-        // 回显「生成 HTML 的提示词」（首轮设计意图）到对话流：
-        // ⛔ 别再只回填 initialPrompt 而不展示——对话流被清空后，用户看不到当初的设计意图
-        //    （反馈：「编辑时 html 提示词仍没显示」）。这里显式回显成首条用户消息。
-        if (detail.designPrompt) {
+        // 回显多轮对话历史到对话流：
+        // ⛔ 优先用 chatHistory（库中持久化的完整对话流，含第二轮起的提示词）；
+        //    无则回退到首轮 designPrompt 单条。否则「第二轮起的提示词」保存后再次打开会丢失（旧 bug）。
+        //    （历史反馈「编辑时 html 提示词仍没显示」即因只回填 designPrompt 单条、丢失后续轮次。）
+        if (Array.isArray(detail.chatHistory) && detail.chatHistory.length > 0) {
+          setChatMessages(detail.chatHistory);
+        } else if (detail.designPrompt) {
           setChatMessages([{ role: "user", content: detail.designPrompt }]);
         }
         // 数据已到齐，此刻才允许进入编辑态

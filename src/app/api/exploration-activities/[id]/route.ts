@@ -46,6 +46,11 @@ export async function GET(
     item.htmlContent = purifyExplorationHtml(item.htmlContent);
 
     const response: Record<string, unknown> = { ...item };
+    // 多轮对话历史：库中存 JSON 字符串，回显前解析成数组（前端直接 setChatMessages 还原对话流）。
+    // ⛔ 解析失败按空处理，不抛错——旧数据无此字段时为 null，前端自然回退到仅首轮 designPrompt。
+    (response as any).chatHistory = item.chatHistoryJson
+      ? (() => { try { return JSON.parse(item.chatHistoryJson!); } catch { return null; } })()
+      : null;
     return NextResponse.json(response);
   } catch (error: any) {
     console.error("[GET/exploration-activity] 错误:", error?.message || error);
@@ -74,6 +79,7 @@ export async function PUT(
       aiCompanionPrompt,
       designPrompt,
       analysisPrompt,
+      chatHistory,
     } = body;
 
     const item = await prisma.explorationActivity.findUnique({
@@ -103,6 +109,14 @@ export async function PUT(
     // 分析提示词（可编辑）
     if (analysisPrompt !== undefined) {
       updateData.analysisPrompt = analysisPrompt;
+    }
+    // 多轮对话历史（可编辑，保存时整体覆盖）
+    // ⛔ 只在显式传入时更新：前端 doSaveExploration 每次保存都传最新 chatMessages，
+    //    空数组表示「用户清空了对话流 / 仅首轮意图无多轮」，应落库为 null 而非残留旧历史。
+    if (chatHistory !== undefined) {
+      updateData.chatHistoryJson = Array.isArray(chatHistory) && chatHistory.length > 0
+        ? JSON.stringify(chatHistory)
+        : null;
     }
 
     // AI伴学提示词（教师可手动编辑）
