@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
-import { upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
+import { renderExplorationHtml } from "@/lib/exploration/render";
+import { parseCollectProfile } from "@/lib/exploration/collect-profile";
 
 // GET: 学生按需获取单个探究活动的 HTML 内容（懒加载）
 // /api/student/tasks 列表不再返回 htmlContent，避免列表体积过大导致学生端加载缓慢；
@@ -38,20 +39,20 @@ export async function GET(
       return NextResponse.json({ error: "无权限" }, { status: 403 });
     }
 
-    // 兜底升级：AI 伴学 HTML 可能来自教师升级前的旧版本，在内存中自愈注入，不持久化
-    let htmlContent = item.htmlContent;
-    let upgradeWarnings: string[] | undefined;
-    if (item.enableAiCompanion) {
-      const upgrade = upgradeAiCompanionIfNeeded(item.htmlContent, { explorationId: id });
-      if (upgrade.changed) {
-        upgradeWarnings = upgrade.warnings;
-        htmlContent = upgrade.html;
-      }
-    }
+    // 读取时渲染：按开关把「纯净稿」注入成「提交 + 伴学」渲染版（纯函数，内存现算，不落库）。
+    // ⛔ 提交功能从「保存时落库」改为「读取时注入」，与伴学统一；htmlContent 存库恒为纯净稿。
+    const rendered = renderExplorationHtml({
+      htmlContent: item.htmlContent,
+      explorationId: id,
+      taskTitle: item.SubProject.task.title || "",
+      enableSubmission: item.enableSubmission,
+      enableAiCompanion: item.enableAiCompanion,
+      collectProfile: parseCollectProfile(item.collectProfile ?? null),
+    });
 
-    const response: Record<string, unknown> = { id: item.id, htmlContent };
-    if (upgradeWarnings && upgradeWarnings.length > 0) {
-      response._aiCompanionWarnings = upgradeWarnings;
+    const response: Record<string, unknown> = { id: item.id, htmlContent: rendered.html };
+    if (rendered.warnings.length > 0) {
+      response._renderWarnings = rendered.warnings;
     }
     return NextResponse.json(response);
   } catch (error: any) {

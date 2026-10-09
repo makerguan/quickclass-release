@@ -1,13 +1,16 @@
 import { prisma } from "@/lib/prisma";
+import { buildClassExplorationStats } from "@/lib/exploration/stats-aggregator";
 
 /**
- * 4 类数据类型
+ * 6 类数据类型
  * - quiz: 作业数据（所有学生的 QuizAttempt + QuestionAttempt）
  * - conversation: 对话数据（所有学生的 Conversation + Message）
  * - quizReport: 作业报告（班级 AIInsight，type=quiz_class）
  * - conversationReport: 对话报告（班级 AIInsight，type=pc_class）
+ * - exploration: 交互探究数据（所有学生的 ExplorationSubmission + 表单结论脱敏摘要）
+ * - explorationReport: 探究报告（各探究活动的 AI 班级学情诊断报告）
  */
-export type ResearchDataType = "quiz" | "conversation" | "quizReport" | "conversationReport";
+export type ResearchDataType = "quiz" | "conversation" | "quizReport" | "conversationReport" | "exploration" | "explorationReport";
 
 export interface ResearchDataTypeOption {
   value: ResearchDataType;
@@ -15,6 +18,23 @@ export interface ResearchDataTypeOption {
   description: string;
   icon: string;
 }
+
+/**
+ * 教研探究摘要总量闸门（字符数）。
+ *
+ * 🧪 MEASURED: 单个探究活动摘要约 300 字符（实测「口算」= 279 字符，22 条操作日志聚合而来）。
+ * 📐 CONTRACT: 老师创建课题时可多选课堂（前端默认全选），摘要按课堂线性累加；
+ *   本闸门给累加设硬顶，超出部分按课堂整块跳过并写入 dataQuality.warnings 告知老师。
+ *   取值依据（2026-09-28 校准）：模型上下文 deepseek-flash 为 64K tokens，Prompt 由
+ *   「对话+作业+探究+模板」共享，且论文输出还需 8500-10000 字（约 10000 tokens）。
+ *   12000 字符 ≈ 12000 tokens，占 64K 窗口约 19%，可容纳约 40 个探究活动
+ *   （真实场景：课题通常选 3-5 个课堂 × 3-5 个探究 = 15-25 个活动，约 4500-7500 字符），
+ *   既不会误触发"未纳入"警告，又为对话/作业数据留足预算。
+ * ⛔ DO NOT REVERT: 去掉此闸门会让长尾课堂撑爆 Prompt，导致整篇论文生成失败；
+ *   也不要无节制上调——超过 20000 后，叠加对话全量数据会有超窗风险。
+ * 🔗 RELATED: scripts/test-exploration-stats.ts 直接 import 本常量做断言（勿在测试里另写死值）。
+ */
+export const MAX_EXPLORATION_SUMMARY_CHARS = 12000;
 
 export const RESEARCH_DATA_TYPE_OPTIONS: ResearchDataTypeOption[] = [
   {
@@ -30,6 +50,12 @@ export const RESEARCH_DATA_TYPE_OPTIONS: ResearchDataTypeOption[] = [
     icon: "💬",
   },
   {
+    value: "exploration",
+    label: "交互探究数据",
+    description: "学生在虚拟仿真、交互实验中的操作频次、探索时长与探究结论（已安全脱敏）",
+    icon: "🔬",
+  },
+  {
     value: "quizReport",
     label: "作业报告",
     description: "所有选中课堂中所有作业的 AI 班级分析报告（统计信息已包含在报告内）",
@@ -40,6 +66,12 @@ export const RESEARCH_DATA_TYPE_OPTIONS: ResearchDataTypeOption[] = [
     label: "对话报告",
     description: "所有选中课堂中所有对话活动的 AI 班级分析报告",
     icon: "📑",
+  },
+  {
+    value: "explorationReport",
+    label: "探究报告",
+    description: "所有选中课堂中交互探究活动的 AI 班级学情诊断报告",
+    icon: "📈",
   },
 ];
 
@@ -136,12 +168,27 @@ export interface ResearchDataSnapshot {
     createdAt: string;
     conversationCount: number;
   }>;
+  /** 交互探究数据：所有学生的探究参与度、探索时长、动作特征与脱敏结论摘要 */
+  explorationData?: {
+    totalActivities: number;
+    summaryText: string;
+  };
+  /** 探究报告：各探究活动已生成的 AI 分析报告 */
+  explorationReports?: Array<{
+    explorationId: string;
+    explorationTitle: string;
+    subProjectTitle: string;
+    taskTitle: string;
+    content: string;
+    createdAt: string;
+  }>;
   /** 数据质量/警告 */
   dataQuality: {
     warnings: string[];
     missingReports?: {
       quizzesWithoutReport: string[];     // 没有 AIInsight 报告的作业标题
       conversationsWithoutReport: string[]; // 没有 AIInsight 报告的对话活动标题
+      explorationsWithoutReport?: string[]; // 没有 AI 分析报告的探究活动标题
     };
   };
 }
@@ -193,15 +240,21 @@ export async function collectResearchData(
   const studentIds = [...allStudents.keys()];
 
   // 提取学科 hints（从任务标题和教师关键字）
+  // ⚠️ GOTCHA: "信息技术"与"信息科技"都收录——2022 版课标改名后新旧课名并存于历史任务标题，
+  // 只收一个会漏提取；提取后统一归并为规范名"信息科技"（见下方 ALIAS 归并）。
+  // 🔗 RELATED: 归并后的规范名被 reference-fetcher.ts SUBJECT_QUERY_TERMS/SUBJECT_TITLE_RE、
+  // quality-check.ts DISCIPLINE_WORDS 按 key 消费，三处词表必须与本列表同步。
   const subjectKeywords = [
     "数学", "语文", "英语", "物理", "化学", "生物",
-    "历史", "地理", "政治", "科学", "信息技术", "美术", "音乐",
+    "历史", "地理", "政治", "科学", "信息技术", "信息科技", "美术", "音乐",
     "体育", "心理", "道德", "法治",
   ];
+  // 旧课名 → 规范名（2022 版义务教育课程方案：信息技术 → 信息科技）
+  const SUBJECT_ALIAS: Record<string, string> = { 信息技术: "信息科技" };
   const subjectHints = new Set<string>();
   for (const t of tasks) {
     for (const subj of subjectKeywords) {
-      if (t.title && t.title.includes(subj)) subjectHints.add(subj);
+      if (t.title && t.title.includes(subj)) subjectHints.add(SUBJECT_ALIAS[subj] || subj);
     }
   }
 
@@ -489,19 +542,135 @@ export async function collectResearchData(
     }
   }
 
+  // 6. 条件性收集：交互探究数据（汇总各课堂启用的探究活动，全量平行班）
+  let explorationData: ResearchDataSnapshot["explorationData"];
+  if (dataTypes.includes("exploration")) {
+    const explorationSummaries: string[] = [];
+    let totalExpActivities = 0;
+    for (const t of tasks) {
+      const expStatText = await buildClassExplorationStats(t.id, undefined, true);
+      if (expStatText) {
+        explorationSummaries.push(`## 课堂【${t.title}】探究表现\n${expStatText}`);
+      }
+      const count = await prisma.explorationActivity.count({
+        where: { SubProject: { taskId: t.id }, enabled: true },
+      });
+      totalExpActivities += count;
+    }
+
+    if (totalExpActivities === 0) {
+      warnings.push("所选课堂未包含启用的交互探究活动");
+    }
+
+    // 总量闸门：按课堂逐个累加，触顶即停并标注省略。
+    // 🧪 MEASURED: 单个探究活动摘要约 300 字符（实测「口算」= 279）。
+    // ⚠️ GOTCHA: 老师创建课题时可多选课堂（前端默认全选），摘要按课堂线性累加且原本无上限——
+    //   选 10 个课堂 × 5 个探究 ≈ 15000 字符，会挤占对话/作业数据在同一 Prompt 里的预算
+    //   （模型上下文 deepseek-flash 64K，非探究独享）。
+    // ⛔ DO NOT REVERT: 不要为了"数据全"去掉这道闸门——宁可少而精并显式告知老师，
+    //   也不要让长尾课堂把 Prompt 撑爆导致整篇论文生成失败。
+    const kept: string[] = [];
+    let used = 0;
+    let omittedClassCount = 0;
+    for (const s of explorationSummaries) {
+      if (used + s.length > MAX_EXPLORATION_SUMMARY_CHARS) {
+        omittedClassCount++;
+        continue;
+      }
+      kept.push(s);
+      used += s.length;
+    }
+    if (omittedClassCount > 0) {
+      warnings.push(
+        `探究数据已达摘要上限（${MAX_EXPLORATION_SUMMARY_CHARS} 字符），` +
+        `另有 ${omittedClassCount} 个课堂的探究表现未纳入，如需完整分析请减少所选课堂数`
+      );
+    }
+
+    const summaryText = kept.length > 0
+      ? kept.join("\n\n")
+      : "所选课堂暂无探究活动或提交数据";
+
+    explorationData = {
+      totalActivities: totalExpActivities,
+      summaryText,
+    };
+  }
+
+  // 7. 条件性收集：探究报告（AIInsight type=exploration_class）
+  let explorationReports: ResearchDataSnapshot["explorationReports"];
+  let explorationsWithoutReport: string[] = [];
+  if (dataTypes.includes("explorationReport")) {
+    const allExplorations = await prisma.explorationActivity.findMany({
+      where: {
+        SubProject: { taskId: { in: taskIds } },
+        enabled: true,
+      },
+      include: {
+        SubProject: {
+          include: { task: { select: { title: true } } },
+        },
+      },
+    });
+
+    if (allExplorations.length > 0) {
+      const expIds = allExplorations.map((e) => e.id);
+      const reports = await prisma.aIInsight.findMany({
+        where: {
+          type: "exploration_class",
+          scopeId: { in: expIds },
+        },
+        orderBy: { version: "desc" },
+      });
+
+      const latestMap = new Map<string, typeof reports[0]>();
+      for (const r of reports) {
+        if (r.scopeId && !latestMap.has(r.scopeId)) latestMap.set(r.scopeId, r);
+      }
+
+      explorationReports = allExplorations
+        .filter((e) => latestMap.has(e.id))
+        .map((e) => {
+          const r = latestMap.get(e.id)!;
+          return {
+            explorationId: e.id,
+            explorationTitle: e.title,
+            subProjectTitle: e.SubProject?.title || "",
+            taskTitle: e.SubProject?.task?.title || "",
+            content: r.content,
+            createdAt: r.createdAt.toISOString(),
+          };
+        });
+
+      const reportedExpIds = new Set(explorationReports.map((r) => r.explorationId));
+      for (const e of allExplorations) {
+        if (!reportedExpIds.has(e.id)) {
+          explorationsWithoutReport.push(`${e.SubProject?.task?.title || ""} - ${e.title}`);
+        }
+      }
+
+      if (explorationsWithoutReport.length > 0) {
+        warnings.push(`共 ${explorationsWithoutReport.length} 个交互探究尚未生成 AI 报告，建议先到对应探究页生成`);
+      }
+    }
+  }
+
   return {
     scope,
     quizData,
     conversationData,
     quizReports,
     conversationReports,
+    explorationData,
+    explorationReports,
     dataQuality: {
       warnings,
-      ...(dataTypes.includes("quizReport") || dataTypes.includes("conversationReport")
+      ...(dataTypes.includes("quizReport") || dataTypes.includes("conversationReport") || dataTypes.includes("explorationReport")
         ? {
             missingReports: {
               quizzesWithoutReport: dataTypes.includes("quizReport") ? missingReports : [],
               conversationsWithoutReport: dataTypes.includes("conversationReport") ? conversationsWithoutReport : [],
+              explorationsWithoutReport: dataTypes.includes("explorationReport") ? explorationsWithoutReport : [],
             },
           }
         : {}),

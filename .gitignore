@@ -39,11 +39,31 @@ npm-debug.log*
 **/dev.db-shm
 # 数据库备份（含真实账户数据，绝不入库）
 **/dev.db.bak*
+# 根目录 backups/：开发期手工备份的整库文件（dev_日期_用途.db），同样含真实数据
+/backups/
 
 # test artifacts
 .playwright-cli/
 # 本地临时测试草稿（batch-test、e2e-batch、seed-sim 等，各机器自建，绝不入库）
 *.tmp.cjs
+
+# ─────────────────────────────────────────────────────────
+# 不随分发包交付的两个脚本（2026-09-29）
+#   scripts/pack-release.mjs —— 已废弃：旧结构下用于把主仓库 rsync 到
+#     「跨平台安装包/」子仓库。仓库合并后根目录本身即发布包，该脚本无目标、
+#     且会在前置检查处直接 exit 1。保留会误导后人以为发布要跑它。
+#   scripts/delete-all-users.ts —— 破坏性脚本：会清空全部用户数据。
+#     随发布包分发到老师电脑有误触风险。
+# ⚠️ GOTCHA（重要）：这两个文件目前【仍在 git 索引中】，而 .gitignore 对已跟踪
+#   文件无效 —— 在此之前本规则不会生效，它们仍会被 git add -A 带上并推送。
+#   真正要让其生效，必须先执行一次：
+#     git rm --cached scripts/pack-release.mjs scripts/delete-all-users.ts
+#   （本地磁盘文件不会被删；推送后远端才会真正移除，协作者 pull 后会失去，
+#     如需恢复可从 git 历史找回。）
+# 📌 TODO(2026-09-29) 下次发布打包前执行上述 git rm --cached，届时本规则自动生效。
+# ─────────────────────────────────────────────────────────
+scripts/pack-release.mjs
+scripts/delete-all-users.ts
 
 # 环境变量（每个部署环境独立配置，不提交）
 .env
@@ -59,3 +79,6 @@ start.log
 # 本地构建/安装日志（不入库）
 npm-install.log
 npm-build.log
+
+# 语音合成缓存（运行时生成，不入库）
+/.cache/

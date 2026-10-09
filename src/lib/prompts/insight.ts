@@ -134,6 +134,10 @@ export interface TaskTemplateVars {
   classDialogAnalysisReport?: string;
   /** 全班作业数据 */
   classQuizStats?: string;
+  /** 全班探究数据（完成率/探索时长/操作特征/探究结论） */
+  classExplorationStats?: string;
+  /** 个人探究数据（探索时长/关卡达成/操作路径/作答记录） */
+  personalExplorationStats?: string;
   /** 课堂目标（= taskObjectives 的别名） */
   taskDescription?: string;
   /** 年级 */
@@ -261,6 +265,8 @@ export function replaceTaskVars(template: string, vars: TaskTemplateVars): strin
     personalDialogAnalysisReport: vars.personalDialogAnalysisReport || "",
     classDialogAnalysisReport: vars.classDialogAnalysisReport || "",
     classQuizStats: vars.classQuizStats || "",
+    classExplorationStats: vars.classExplorationStats || "",
+    personalExplorationStats: vars.personalExplorationStats || "",
   });
 }
 
@@ -295,6 +301,13 @@ export function renderInsightTemplate(options: TemplateRenderOptions): string {
     }
   } else {
     content = replaceTaskVars(templateContent, vars as TaskTemplateVars);
+    // 兜底：若有探究数据但模板未显式包含对应变量占位符，自动追加在数据段后，防止探究学情丢失
+    const tVars = vars as TaskTemplateVars;
+    if (isStudent && tVars.personalExplorationStats && !templateContent.includes("{personalExplorationStats}")) {
+      content += (content ? "\n\n" : "") + "## 个人交互探究数据\n" + tVars.personalExplorationStats;
+    } else if (!isStudent && tVars.classExplorationStats && !templateContent.includes("{classExplorationStats}")) {
+      content += (content ? "\n\n" : "") + "## 全班交互探究数据\n" + tVars.classExplorationStats;
+    }
   }
 
   // 追加约束条件
@@ -458,6 +471,7 @@ export function buildTaskClassPrompt(params: BuildTaskClassParams): string {
       personalDialogAnalysisReport: params.personalDialogAnalysisReport || "",
       classDialogAnalysisReport: params.classDialogAnalysisReport || "",
       classQuizStats: params.classQuizStats || "",
+      classExplorationStats: params.classExplorationStats || "",
     },
     {
       requireStarRating: params.config?.requireStarRating ?? false,
@@ -493,6 +507,7 @@ export function buildTaskStudentPrompt(params: BuildTaskStudentParams): string {
       personalDialogContents: params.dialogContents || "",
       personalQuizStats: params.quizStats || "",
       classQuizStats: params.classQuizStats || "",
+      personalExplorationStats: params.personalExplorationStats || "",
     },
     {
       requireStarRating: params.config?.requireStarRating ?? false,

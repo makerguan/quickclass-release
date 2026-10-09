@@ -1,18 +1,19 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Button, Input, MessagePlugin, Slider, Tag } from "tdesign-react";
+import { Button, Input, MessagePlugin, Tag } from "tdesign-react";
 import {
   SendIcon,
   ImageIcon,
   AddIcon,
   FolderIcon,
   ChatIcon,
-  SoundIcon,
-  SoundMuteIcon,
 } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
-import { speak, stopSpeaking, DEFAULT_VOICE_RATE } from "@/lib/speech";
+import SpeechControls from "@/components/speech/SpeechControls";
+import SpeakButton from "@/components/speech/SpeakButton";
+import { speakSmart, stopSpeaking } from "@/lib/speech";
+import { getSpeechSettings } from "@/lib/speech-settings";
 import StudentLayout from "@/components/layout/StudentLayout";
 import QuizPanel from "./QuizPanel";
 import ExplorationPanel from "./ExplorationPanel";
@@ -140,6 +141,52 @@ function toApiMessages(messages: Message[]) {
   });
 }
 
+/**
+ * 渲染探索面板（避免在 JSX 中直接用 IIFE）。
+ *
+ * ⚠️ GOTCHA —— 本组件 MUST STAY AT MODULE TOP LEVEL，禁止移回 StudentChatPage 函数体内：
+ * 若定义在父组件函数体内，父组件每次渲染（任何 state 变化：收起/展开侧边栏、收到新消息、切换输入……）
+ * 都会产生一个「新的组件类型」，React 会卸载并重挂整个子树 —— ExplorationPanel 内的 iframe 随之销毁重建，
+ * 探究页面状态被重置、AI 伴学对话记录全部丢失。定义在模块顶层后组件类型恒定，父组件重渲染只引起
+ * 普通 re-render，不再 remount。
+ *
+ * 📐 CONTRACT：props 全部显式传入（explorationId / tasks / onBack），不引用任何父组件闭包变量；
+ * 探究 HTML 由本组件自行 fetch（/api/student/explorations/[id]）并持有为内部 state，
+ * 与父组件的对话消息流互不干扰。
+ *
+ * 🔗 RELATED：./ExplorationPanel（真正渲染 iframe 的组件）；调用点在本文件
+ *   「activeType === "exploration"」分支（搜索 ExplorationPanelRender）。
+ * ⛔ DO NOT REVERT：不要为了「就近取用父组件变量」把它挪回函数体内 —— 那正是 iframe 重载、
+ *   伴学对话丢失 bug 的根源（2026-09 实测：折叠侧边栏即触发 iframe 整页重载）。
+ */
+function ExplorationPanelRender({ explorationId, tasks, onBack }: { explorationId: string; tasks: LearningTask[]; onBack: () => void }) {
+  const exp = tasks
+    .flatMap(t => t.subProjects.flatMap(sp => sp.explorations || []))
+    .find(e => e.id === explorationId);
+  const [html, setHtml] = useState<string>("");
+  useEffect(() => {
+    let cancelled = false;
+    setHtml("");
+    const tk = localStorage.getItem("token");
+    if (!tk) return;
+    fetch(`/api/student/explorations/${explorationId}`, { headers: { Authorization: `Bearer ${tk}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (!cancelled && d && typeof d.htmlContent === "string") setHtml(d.htmlContent); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [explorationId]);
+  if (!exp) return null;
+  return (
+    <ExplorationPanel
+      explorationId={exp.id}
+      htmlContent={html}
+      enableSubmissionEnabled={exp.enableSubmission}
+      enableAiCompanion={exp.enableAiCompanion}
+      onBack={onBack}
+    />
+  );
+}
+
 export default function StudentChatPage() {
   const [tasks, setTasks] = useState<LearningTask[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -160,26 +207,28 @@ export default function StudentChatPage() {
   // 侧边栏折叠状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
-  // 语音朗读：学生端对话界面内的开关 + 语速，按对话活动独立记忆（localStorage）
-  const [voiceEnabled, setVoiceEnabled] = useState(false);
-  const voiceEnabledRef = useRef(false);
-  const [voiceRate, setVoiceRate] = useState(DEFAULT_VOICE_RATE);
-  const voiceRateRef = useRef(DEFAULT_VOICE_RATE);
-  const [showRate, setShowRate] = useState(false); // 拖动语速滑杆时显示数值，停止后隐藏
-  const hideRateTimerRef = useRef<number | null>(null);
+  // 朗读的开关 / 音色 / 语速统一由 lib/speech-settings 管理（见 SpeechControls 组件）；
+  // 这里只记录最新一条 AI 回答的下标，供自动朗读时高亮对应的朗读按钮。
+  const assistantIndexRef = useRef(-1);
 
   // 图片
   const [pendingImages, setPendingImages] = useState<MessageImage[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const activePresetRef = useRef<string | null>(null);
   const isSwitchingRef = useRef(false); // 防止 switch 函数重入
   const latestDetailConvRef = useRef<string | null>(null); // 最新一次详情请求的对话 ID（竞态保护：快速切换后丢弃旧响应）
+  const scrollContainerRef = useRef<HTMLDivElement>(null); // 消息滚动容器（判断是否处于底部附近）
+  const messagesInnerRef = useRef<HTMLDivElement>(null); // 消息内容内层（供 ResizeObserver 观察内容高度突变）
+  const prevMsgCountRef = useRef(-1); // 上一次渲染的消息条数（区分"新增消息"与"流式更新最后一条"）
 
   const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    // 直接设置消息容器的 scrollTop：只滚动消息区，绝不波及页面级滚动。
+    // scrollIntoView 默认 block:"start" 会滚动所有可滚动祖先链（含页面本身），
+    // 流式期间高频调用会导致页面来回跳动、底部输入框位置闪烁。
+    const el = scrollContainerRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
   };
 
   useEffect(() => {
@@ -187,69 +236,40 @@ export default function StudentChatPage() {
   }, []);
 
   useEffect(() => {
-    scrollToBottom();
+    // 新增消息（条数变化：发送、回复首包、加载历史）→ 无条件滚到底；
+    // 流式更新最后一条内容（条数不变）→ 仅当用户本就在底部附近时跟随，
+    // 避免学生上滚回看流程图时被强行拉回底部
+    const countChanged = prevMsgCountRef.current !== messages.length;
+    prevMsgCountRef.current = messages.length;
+    const el = scrollContainerRef.current;
+    const nearBottom =
+      !el || el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+    if (countChanged || nearBottom) {
+      scrollToBottom();
+    }
   }, [messages]);
+
+  // 高度突变补偿：mermaid 图表渲染完成、图片加载等会撑高内容但不改变 messages，
+  // 此时若用户在底部附近则跟随滚动，修复"画面停留在流程图而非最新消息"
+  useEffect(() => {
+    const outer = scrollContainerRef.current;
+    const inner = messagesInnerRef.current;
+    if (!outer || !inner || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      const nearBottom =
+        outer.scrollHeight - outer.scrollTop - outer.clientHeight < 120;
+      if (nearBottom) {
+        scrollToBottom();
+      }
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [activePresetId, activeType]);
 
   // 当 activePresetId 变化时，清除重入锁（让后续点击可进入 switchToChat）
   useEffect(() => {
     isSwitchingRef.current = false;
   }, [activePresetId, activeType]);
-
-  // 进入对话活动时，读取该活动自己的语音设置（开关 + 语速，每个对话独立记忆）
-  useEffect(() => {
-    if (!activePresetId) {
-      setVoiceEnabled(false);
-      voiceEnabledRef.current = false;
-      setVoiceRate(DEFAULT_VOICE_RATE);
-      voiceRateRef.current = DEFAULT_VOICE_RATE;
-      return;
-    }
-    try {
-      const map = JSON.parse(localStorage.getItem("qc-voice-settings") || "{}");
-      const raw = map[activePresetId];
-      const enabled = typeof raw === "object" && raw ? !!raw.enabled : !!raw;
-      const rate = typeof raw === "object" && raw && typeof raw.rate === "number" ? raw.rate : DEFAULT_VOICE_RATE;
-      setVoiceEnabled(enabled);
-      voiceEnabledRef.current = enabled;
-      setVoiceRate(rate);
-      voiceRateRef.current = rate;
-    } catch {
-      setVoiceEnabled(false);
-      voiceEnabledRef.current = false;
-      setVoiceRate(DEFAULT_VOICE_RATE);
-      voiceRateRef.current = DEFAULT_VOICE_RATE;
-    }
-  }, [activePresetId]);
-
-  const saveVoiceSetting = (partial: { enabled?: boolean; rate?: number }) => {
-    if (!activePresetId) return;
-    try {
-      const map = JSON.parse(localStorage.getItem("qc-voice-settings") || "{}");
-      const raw = map[activePresetId];
-      const prev = typeof raw === "object" && raw ? raw : { enabled: !!raw, rate: DEFAULT_VOICE_RATE };
-      map[activePresetId] = { enabled: prev.enabled, rate: prev.rate, ...partial };
-      localStorage.setItem("qc-voice-settings", JSON.stringify(map));
-    } catch {
-      /* localStorage 不可用时忽略 */
-    }
-  };
-
-  const handleVoiceToggle = (val: boolean) => {
-    setVoiceEnabled(val);
-    voiceEnabledRef.current = val;
-    saveVoiceSetting({ enabled: val });
-    if (!val) stopSpeaking();
-  };
-
-  const handleRateChange = (val: number) => {
-    setVoiceRate(val);
-    voiceRateRef.current = val;
-    saveVoiceSetting({ rate: val });
-    // 拖动中显示速度值；停止滑动约 600ms 后自动隐藏
-    setShowRate(true);
-    if (hideRateTimerRef.current !== null) window.clearTimeout(hideRateTimerRef.current);
-    hideRateTimerRef.current = window.setTimeout(() => setShowRate(false), 600);
-  };
 
   const fetchData = async () => {
     const token = localStorage.getItem("token");
@@ -410,35 +430,6 @@ export default function StudentChatPage() {
     stopSpeaking();
   };
 
-  // 渲染探索面板（避免在 JSX 中直接用 IIFE）
-  function ExplorationPanelRender({ explorationId, tasks, onBack }: { explorationId: string; tasks: LearningTask[]; onBack: () => void }) {
-    const exp = tasks
-      .flatMap(t => t.subProjects.flatMap(sp => sp.explorations || []))
-      .find(e => e.id === explorationId);
-    const [html, setHtml] = useState<string>("");
-    useEffect(() => {
-      let cancelled = false;
-      setHtml("");
-      const tk = localStorage.getItem("token");
-      if (!tk) return;
-      fetch(`/api/student/explorations/${explorationId}`, { headers: { Authorization: `Bearer ${tk}` } })
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => { if (!cancelled && d && typeof d.htmlContent === "string") setHtml(d.htmlContent); })
-        .catch(() => {});
-      return () => { cancelled = true; };
-    }, [explorationId]);
-    if (!exp) return null;
-    return (
-      <ExplorationPanel
-        explorationId={exp.id}
-        htmlContent={html}
-        enableSubmissionEnabled={exp.enableSubmission}
-        enableAiCompanion={exp.enableAiCompanion}
-        onBack={onBack}
-      />
-    );
-  }
-
   // 找到当前对话活动的描述
   const getCurrentPresetInfo = () => {
     for (const task of tasks) {
@@ -591,9 +582,17 @@ export default function StudentChatPage() {
         }
       }
 
-      // 流式回答生成完毕后，若语音开启则朗读完整回答（讲完再读）
-      if (voiceEnabledRef.current && assistantContent.trim()) {
-        speak(assistantContent, voiceRateRef.current);
+      // 流式回答生成完毕后，若朗读开关为开则自动朗读整段回答（讲完再读）
+      if (getSpeechSettings().enabled && assistantContent.trim()) {
+        // 安卓平板等设备可能没有任何语音引擎，静默失败会让学生以为"坏了"，给出可见提示
+        speakSmart(assistantContent, { owner: `msg-${assistantIndexRef.current}` }).then(
+          (result) => {
+            if (result === "no-voice") {
+              MessagePlugin.warning("自动朗读失败：当前设备没有可用的语音，请检查媒体音量或改用电脑");
+            }
+          },
+          () => {}
+        );
       }
 
     } catch (error) {
@@ -909,40 +908,13 @@ onClick={() => {
                     {currentInfo.task.title} / {currentInfo.subProject.title === "默认活动" ? "对话思考" : currentInfo.subProject.title}
                   </p>
                 </div>
-                <div className="flex items-center gap-3 shrink-0">
-                  <button
-                    type="button"
-                    onClick={() => handleVoiceToggle(!voiceEnabled)}
-                    className={`flex items-center justify-center w-7 h-7 rounded transition-colors ${
-                      voiceEnabled ? "text-[#0052D9] bg-[#E8F1FF]" : "text-[#63666F] hover:bg-gray-100"
-                    }`}
-                    title={voiceEnabled ? "关闭语音朗读" : "开启语音朗读"}
-                  >
-                    {voiceEnabled ? <SoundIcon size="18px" /> : <SoundMuteIcon size="18px" />}
-                  </button>
-                  <Slider
-                    value={voiceRate}
-                    onChange={(value) => handleRateChange(Array.isArray(value) ? value[0] : value)}
-                    min={0.5}
-                    max={2}
-                    step={0.1}
-                    label={false}
-                    style={{ width: 96 }}
-                  />
-                  <span
-                    className={`text-xs font-medium text-[#0052D9] tabular-nums transition-opacity duration-150 ${
-                      showRate ? "opacity-100" : "opacity-0"
-                    }`}
-                    style={{ width: 34 }}
-                  >
-                    {voiceRate.toFixed(1)}x
-                  </span>
-                </div>
+                <SpeechControls />
               </div>
 
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4">
+            <div ref={scrollContainerRef} className="flex-1 overflow-y-auto p-4">
+              <div ref={messagesInnerRef} className="space-y-4">
               {messages.length === 0 && currentInfo && (
                 <div className="text-center text-gray-400 mt-10">
                   <p className="text-lg mb-2">{currentInfo.preset.title}</p>
@@ -977,6 +949,11 @@ onClick={() => {
                     {msg.role === "assistant" ? (
                       <div className="prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_pre]:bg-gray-800 [&_pre]:text-gray-100 [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_pre_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-gray-400 [&_blockquote]:pl-3 [&_blockquote]:italic [&_table]:text-xs [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1">
                         <Markdown>{msg.content}</Markdown>
+                        {msg.content.trim() && (
+                          <div className="mt-2 flex items-center justify-end">
+                            <SpeakButton owner={`msg-${index}`} text={msg.content} />
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="whitespace-pre-wrap">{msg.content}</div>
@@ -991,7 +968,7 @@ onClick={() => {
                   </div>
                 </div>
               )}
-              <div ref={messagesEndRef} />
+              </div>
             </div>
 
             {pendingImages.length > 0 && (

@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
 
     const prompt = aiPreviewPrompt(htmlContent);
 
+    const { chatModel } = await createDashScopeClient();
     const { text: content } = await generateText({
       model: chatModel,
       system: "你是一个 HTML 交互分析助手，擅长识别页面中的学生互动行为。",

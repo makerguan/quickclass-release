@@ -9,6 +9,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import { MATH_OUTPUT_RULES } from "@/lib/math-format";
+import { DEFAULT_TTS_VOICE } from "@/lib/tts-voices";
 
 /**
  * 读取 katex UMD bundle 与 CSS（SSR 端，从 node_modules 读取）
@@ -38,7 +39,10 @@ function loadKatexAssets(): { js: string; css: string; available: boolean } {
 // 模块加载时执行一次（Next.js 路由在 Node.js 环境中运行）
 const katexAssets = loadKatexAssets();
 
-export const AI_COMPANION_VERSION = "math-renderer-v5";
+// （历史机制退役 2026-09）曾用 AI_COMPANION_VERSION 版本号识别库里 HTML 的伴学注入新旧，
+// 读取时「版本一致直接放行、不一致剥旧注新」。现读取路径（renderExplorationHtml）入口
+// 无条件 purify 后永远注入当前版，不存在「放行库里旧注入」的路径，版本号随之退役。
+// ⛔ DO NOT RE-ADD 版本号 / 升级判断：那会让代码侧的伴学修复（CSS/脚本）对存量数据失效。
 
 /**
 * AI伴学浮动对话框CSS样式
@@ -148,10 +152,42 @@ export const aiCompanionCSS = `
 #ai-companion-root .ac-msg ul, #ai-companion-root .ac-msg ol { margin: 4px 0 4px 18px; padding: 0; }
 #ai-companion-root .ac-msg li { margin: 2px 0; }
 #ai-companion-root .ac-msg a { color: #667eea; text-decoration: underline; }
+#ai-companion-root .ac-msg.assistant img { display: block; max-width: 100%; max-height: 260px; border-radius: 8px; margin: 6px 0; border: 1px solid #e5e7eb; cursor: zoom-in; }
 
 /* 公式容器样式 */
 #ai-companion-root .ac-math-inline { display: inline-block; vertical-align: middle; }
 #ai-companion-root .ac-math-block { display: block; text-align: center; margin: 6px 0; }
+
+/* 每条 AI 回答底部的朗读按钮 */
+#ai-companion-root .ac-msg-foot { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-top: 4px; }
+#ai-companion-root .ac-play {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0;
+  border: none; border-radius: 50%;
+  background: #f3f4f6; color: #6b7280;
+  cursor: pointer; flex-shrink: 0;
+  transition: background 0.15s, color 0.15s;
+}
+#ai-companion-root .ac-play:hover { background: #e8ecf3; color: #667eea; }
+#ai-companion-root .ac-play.playing { background: rgba(102,126,234,0.15); color: #667eea; }
+#ai-companion-root .ac-play.loading { animation: acBlink 0.8s ease-in-out infinite; cursor: default; }
+@keyframes acBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+#ai-companion-root .ac-speak-err { display: none; font-size: 11px; color: #9ca3af; }
+#ai-companion-root .ac-speak-err.show { display: inline; }
+
+/* ===== 防御声明（2026-09 修复 1）=====
+   ⚠️ GOTCHA：探究页自身的 CSS 可能用宽泛选择器（button/div/* 的 reset、带 !important 的覆盖）
+   冲掉伴学面板的存在性样式 —— 典型症状：浮动按钮消失、面板被探究内容盖住、消息区塌陷。
+   以下 !important 只锁「面板能否出现 / 定位 / 滚动」的骨架属性，不锁美观属性。
+   panel 的 display 两条都带 !important：靠 .open 的更高特异性实现收起/展开切换。
+   ⛔ DO NOT REVERT：别只删其中一条 —— 删 none 那条会让收起状态被探究页的 div 规则强制显示；
+   删 .open 那条会让面板永远打不开。 */
+#ai-companion-root { display: block !important; }
+#ai-companion-root #ai-companion-trigger { position: fixed !important; display: flex !important; z-index: 10001 !important; }
+#ai-companion-root #ai-companion-panel { position: fixed !important; display: none !important; z-index: 10001 !important; }
+#ai-companion-root #ai-companion-panel.open { display: flex !important; }
+#ai-companion-root #ac-messages { display: flex !important; flex-direction: column !important; flex: 1 !important; overflow-y: auto !important; }
+#ai-companion-root #ac-input-area { display: flex !important; }
 `.trim();
 
 /**
@@ -198,7 +234,6 @@ export const aiCompanionScript = String.raw`
 (function() {
   if (window.__AI_COMPANION_INJECTED__) return;
   window.__AI_COMPANION_INJECTED__ = true;
-  window.__AI_COMPANION_VERSION__ = '${AI_COMPANION_VERSION}';
 
   var trigger = document.getElementById('ai-companion-trigger');
   var panel = document.getElementById('ai-companion-panel');
@@ -212,6 +247,264 @@ export const aiCompanionScript = String.raw`
   var chatHistory = [];
   var isStreaming = false;
   var historyLoaded = false;
+
+  // ========================= 单条回答朗读（服务端合成） =========================
+  // 每条 AI 回答右下角一个播放按钮，历史消息也能单独点播。
+  // 朗读设置与宿主页共用同一份（localStorage: qc-speech-settings），
+  // 所以学生在页面右上角改的开关 / 音色 / 语速，这里立刻生效；
+  // 文本清洗由服务端统一做（/api/tts），这里只负责把原文送过去并播放。
+  //
+  // **离线保底**：老师可能把 QuickClass 部署在没有外网的教室里，此时服务端合成
+  // 一定失败（返回 502）。这时回退到**浏览器内置朗读**（本机音色），保证"至少有声音"；
+  // 回退用的文本是服务端清洗后回传的 cleanText，不会把 Markdown 符号念出来。
+  // 服务端迟迟不出声（网络黑洞 / 排队卡住）由 15 秒看门狗兜底。
+
+  var SPEECH_SETTINGS_KEY = 'qc-speech-settings';
+  var DEFAULT_VOICE_ID = '${DEFAULT_TTS_VOICE}';
+  var DEFAULT_SPEECH_RATE = 1.2;
+  var ICON_PLAY = '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><path d="M8 5v14l11-7z" fill="currentColor"></path></svg>';
+  var ICON_STOP = '<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor"></rect></svg>';
+
+  var audioEl = null;    // 当前播放中的音频
+  var playingBtn = null; // 当前正在朗读的那条消息上的按钮
+  var speechSeq = 0;     // 朗读请求序号：停止或新一段朗读会自增，用于丢弃在途的旧请求
+
+  function readSpeechSettings() {
+    try {
+      var raw = window.localStorage.getItem(SPEECH_SETTINGS_KEY);
+      if (raw) {
+        var o = JSON.parse(raw) || {};
+        var rate = Number(o.rate);
+        return {
+          enabled: o.enabled === true,
+          voice: (typeof o.voice === 'string' && o.voice) ? o.voice : DEFAULT_VOICE_ID,
+          rate: (isFinite(rate) && rate > 0) ? Math.min(2, Math.max(0.5, rate)) : DEFAULT_SPEECH_RATE
+        };
+      }
+    } catch (e) { /* 读不到就用默认值 */ }
+    return { enabled: false, voice: DEFAULT_VOICE_ID, rate: DEFAULT_SPEECH_RATE };
+  }
+
+  function setBtnState(btn, state) {
+    if (!btn) return;
+    btn.className = 'ac-play' + (state === 'idle' ? '' : ' ' + state);
+    btn.innerHTML = state === 'playing' ? ICON_STOP : ICON_PLAY;
+    btn.title = state === 'playing' ? '停止朗读' : '朗读这条回答';
+    btn.setAttribute('aria-label', btn.title);
+  }
+
+  function releaseAudio() {
+    if (!audioEl) return;
+    var a = audioEl;
+    audioEl = null;
+    try {
+      a.onended = null;
+      a.onerror = null;
+      a.pause();
+      a.removeAttribute('src');
+      a.load(); // 中止仍在进行的流式下载
+    } catch (e) { /* ignore */ }
+  }
+
+  function stopSpeech() {
+    speechSeq++; // 让在途的朗读请求失效，避免停止后又被回退路径重新读起来
+    releaseAudio();
+    if (window.speechSynthesis) {
+      try { window.speechSynthesis.cancel(); } catch (e) { /* ignore */ }
+    }
+    if (playingBtn) {
+      setBtnState(playingBtn, 'idle');
+      playingBtn = null;
+    }
+  }
+
+  function showSpeakError(btn, text) {
+    if (!btn || !btn.parentNode) return;
+    var tip = btn.parentNode.querySelector('.ac-speak-err');
+    if (!tip) return;
+    tip.textContent = text;
+    tip.className = 'ac-speak-err show';
+    if (tip.__acTimer) clearTimeout(tip.__acTimer);
+    tip.__acTimer = setTimeout(function() { tip.className = 'ac-speak-err'; }, 4000);
+  }
+
+  // 浏览器内置朗读（**离线保底路径**）：老师把 QuickClass 部署在没有外网的教室里时，
+  // 服务端合不出来，这里保证"至少读得出来"。
+  // 挑音色只认**本机自带**的（localService === true）：名字含 Online/Natural 的微软音色
+  // 其实是云端音色，没网时反而不出声，不能优先它们。
+  function pickLocalChineseVoice() {
+    try {
+      if (!window.speechSynthesis) return null;
+      var all = window.speechSynthesis.getVoices() || [];
+      if (!all.length) return null;
+      var zh = [];
+      for (var i = 0; i < all.length; i++) {
+        var v = all[i];
+        if (/^zh([-_].*)?$/i.test(v.lang || '') || /chinese|中文|普通话|国语|國語/i.test(v.name || '')) zh.push(v);
+      }
+      var pool = zh.length ? zh : all;
+      var local = [];
+      for (var j = 0; j < pool.length; j++) {
+        if (pool[j].localService === true) local.push(pool[j]);
+      }
+      var usable = local.length ? local : pool;
+      for (var k = 0; k < usable.length; k++) {
+        if (!/natural|online/i.test(usable[k].name || '')) return usable[k];
+      }
+      return usable[0] || null;
+    } catch (e) { return null; }
+  }
+
+  function playSpeech(btn, content, auto) {
+    if (!content) return;
+    // 再点一次同一按钮 = 停止
+    if (playingBtn === btn && !auto) { stopSpeech(); return; }
+    stopSpeech();
+    var settings = readSpeechSettings();
+    var token = ++speechSeq;
+    var finished = false; // 本次朗读是否已有结论，避免"失败"被重复处理
+    function claim() { if (finished) return false; finished = true; return true; }
+    playingBtn = btn;
+    setBtnState(btn, 'loading');
+
+    // ---------- 保底：浏览器内置朗读 ----------
+    function finishLocal() {
+      if (token !== speechSeq) return;
+      if (playingBtn === btn) { playingBtn = null; setBtnState(btn, 'idle'); }
+    }
+    function speakLocally(text) {
+      if (!window.speechSynthesis || !text) return false;
+      try {
+        window.speechSynthesis.cancel();
+        var voice = pickLocalChineseVoice();
+        var parts = String(text).match(/[^。！？!?；;]+[。！？!?；;]?/g) || [String(text)];
+        var chunks = [];
+        for (var i = 0; i < parts.length; i++) {
+          var t = parts[i].trim();
+          if (t) chunks.push(t);
+        }
+        if (!chunks.length) return false;
+        for (var j = 0; j < chunks.length; j++) {
+          var u = new SpeechSynthesisUtterance(chunks[j]);
+          if (voice) { u.voice = voice; u.lang = voice.lang || 'zh-CN'; } else { u.lang = 'zh-CN'; }
+          u.rate = settings.rate;
+          if (j === chunks.length - 1) { u.onend = finishLocal; u.onerror = finishLocal; }
+          window.speechSynthesis.speak(u);
+        }
+        return true;
+      } catch (e) { return false; }
+    }
+    // 安卓平板常见坑：speechSynthesis 存在但系统没有 TTS 引擎（无 GMS / Google 语音服务不可达），
+    // getVoices() 永远为空 —— speak() 不报错也不出声，按钮会一直停在"播放中"。
+    // 先等音色列表就绪（Chrome 桌面首帧为空、稍后 voiceschanged 才有），仍为空才算"没有语音"。
+    function hasAnyVoice(cb) {
+      if (!window.speechSynthesis) { cb(false); return; }
+      var list = [];
+      try { list = window.speechSynthesis.getVoices() || []; } catch (e) {}
+      if (list.length) { cb(true); return; }
+      var settled = false;
+      function finish(ok) {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        try { window.speechSynthesis.removeEventListener('voiceschanged', onChange); } catch (e) {}
+        cb(ok);
+      }
+      function onChange() {
+        var v = [];
+        try { v = window.speechSynthesis.getVoices() || []; } catch (e) {}
+        if (v.length) finish(true);
+      }
+      var timer = setTimeout(function() { finish(false); }, 1500);
+      try { window.speechSynthesis.addEventListener('voiceschanged', onChange); } catch (e) { finish(false); }
+    }
+    // 服务端不可用（没外网 / 合成失败 / 自动播放被拦截）→ 回退本机朗读；本机也没有语音引擎才算"没声音"
+    function fallbackToLocal(cleanText) {
+      if (token !== speechSeq) return;
+      releaseAudio();
+      playingBtn = btn;
+      hasAnyVoice(function(ok) {
+        if (token !== speechSeq) return;
+        if (ok && speakLocally(cleanText || content)) {
+          setBtnState(btn, 'playing');
+        } else {
+          playingBtn = null;
+          setBtnState(btn, 'idle');
+          showSpeakError(btn, '当前设备没有可用的语音，请检查媒体音量');
+        }
+      });
+    }
+
+    // ---------- 首选：服务端合成的神经音色 ----------
+    fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: content, voice: settings.voice })
+    })
+      .then(function(r) { if (!r.ok) throw new Error('register failed'); return r.json(); })
+      .then(function(d) {
+        if (!d || !d.ok || !d.id) throw new Error('register failed');
+        if (token !== speechSeq) throw new Error('superseded'); // 已被新的朗读取代
+        // 服务端回传的是**清洗后**的文本（剥离 Markdown、公式转口语）；
+        // 回退朗读要用它，否则会把 "**"、"$x^2$" 这类符号念出来。
+        var cleanText = (typeof d.text === 'string' && d.text) ? d.text : content;
+        var audio = new Audio('/api/tts/audio/' + d.id);
+        // 语速交给播放器变速（变速不变调），不必每个语速各自合成一份
+        audio.playbackRate = settings.rate;
+        audioEl = audio;
+        // 服务端迟迟不出声（网络黑洞 / 排队卡住）的兜底：15 秒后按失败处理，改本机朗读
+        var watchdog = setTimeout(function() {
+          if (!claim()) return;
+          fallbackToLocal(cleanText);
+        }, 15000);
+        audio.onended = function() {
+          clearTimeout(watchdog);
+          if (audioEl === audio) audioEl = null;
+          if (token === speechSeq && playingBtn === btn) { playingBtn = null; setBtnState(btn, 'idle'); }
+        };
+        audio.onerror = function() {
+          clearTimeout(watchdog);
+          // 服务端返回 502/503（最常见：教室没有外网）→ 回退本机朗读
+          if (!claim()) return;
+          fallbackToLocal(cleanText);
+        };
+        return audio.play().then(function() {
+          clearTimeout(watchdog);
+          if (token === speechSeq && playingBtn === btn) setBtnState(btn, 'playing');
+        }, function() {
+          clearTimeout(watchdog);
+          // 音频加载失败：服务端不可用，或自动播放被浏览器拦截
+          if (!claim()) return;
+          fallbackToLocal(cleanText);
+        });
+      })
+      .catch(function() {
+        if (token !== speechSeq) return;
+        if (!claim()) return;
+        // 登记都失败了（服务端异常）→ 本机朗读兜底
+        fallbackToLocal(content);
+      });
+  }
+
+  /** 给一条 AI 回答挂上朗读按钮（重复调用只更新文本，不会重复插入） */
+  function ensurePlayButton(msgDiv, content) {
+    if (!msgDiv || !content) return null;
+    msgDiv.__acText = content;
+    var foot = msgDiv.querySelector('.ac-msg-foot');
+    if (foot) return foot.querySelector('.ac-play');
+    foot = document.createElement('div');
+    foot.className = 'ac-msg-foot';
+    var tip = document.createElement('span');
+    tip.className = 'ac-speak-err';
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    setBtnState(btn, 'idle');
+    btn.addEventListener('click', function() { playSpeech(btn, msgDiv.__acText, false); });
+    foot.appendChild(tip);
+    foot.appendChild(btn);
+    msgDiv.appendChild(foot);
+    return btn;
+  }
 
   // ========================= Markdown + Math 渲染器 =========================
   // XSS 防护：所有用户/AI 文本通过 textContent / createElement 注入；
@@ -293,6 +586,33 @@ export const aiCompanionScript = String.raw`
           parent.appendChild(codeEl);
           i = endC + 1;
           continue;
+        }
+      }
+
+      // 图片 ![alt](url)：课堂图片组素材（AI 回复中的教学图片）
+      if (ch === '!' && nx === '[') {
+        var endAltImg = s.indexOf(']', i + 2);
+        if (endAltImg > 0 && s.charAt(endAltImg + 1) === '(') {
+          var endUrlImg = s.indexOf(')', endAltImg + 2);
+          if (endUrlImg > endAltImg + 1) {
+            var altImg = s.substring(i + 2, endAltImg);
+            var urlImg = s.substring(endAltImg + 2, endUrlImg).trim();
+            flushText();
+            var imgEl = document.createElement('img');
+            imgEl.alt = altImg;
+            imgEl.loading = 'lazy';
+            // 本地教学图片追加登录 token（<img> 无法带 header；同源 iframe 可读 localStorage）
+            if (urlImg.indexOf('/api/images/') === 0 && urlImg.indexOf('token=') === -1) {
+              try {
+                var acTk = localStorage.getItem('token');
+                if (acTk) urlImg += (urlImg.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(acTk);
+              } catch (e) { /* 忽略 */ }
+            }
+            imgEl.src = urlImg;
+            parent.appendChild(imgEl);
+            i = endUrlImg + 1;
+            continue;
+          }
         }
       }
 
@@ -473,6 +793,7 @@ export const aiCompanionScript = String.raw`
 
   // 清空当前显示（保留chatHistory不变，由父窗口决定是否真清空数据库）
   function clearLocalDisplay() {
+    stopSpeech();
     while (messagesDiv.firstChild) {
       messagesDiv.removeChild(messagesDiv.firstChild);
     }
@@ -491,6 +812,7 @@ export const aiCompanionScript = String.raw`
   closeBtn.addEventListener('click', function() {
     panel.classList.remove('open');
     trigger.style.display = 'flex';
+    stopSpeech(); // 收起对话框时停止朗读
   });
 
   if (clearBtn) {
@@ -515,6 +837,8 @@ export const aiCompanionScript = String.raw`
   function sendMessage() {
     var text = inputArea.value.trim();
     if (!text || isStreaming) return;
+
+    stopSpeech(); // 新提问先停掉上一段朗读
 
     if (welcomeDiv) welcomeDiv.style.display = 'none';
 
@@ -602,6 +926,8 @@ export const aiCompanionScript = String.raw`
       div.appendChild(document.createTextNode(''));
     } else {
       renderMarkdownToElement(div, content || '');
+      // AI 回答（含历史消息）都带一个朗读按钮
+      if (role === 'assistant' && content) ensurePlayButton(div, content);
     }
     messagesDiv.appendChild(div);
     if (animateScroll !== false) {
@@ -650,6 +976,10 @@ export const aiCompanionScript = String.raw`
         // 流结束后一次性渲染 Markdown + Math
         renderMarkdownToElement(doneMsg, finalContent);
         chatHistory.push({ role: 'assistant', content: finalContent });
+        // 挂上朗读按钮；学生开着"自动朗读"时这一条直接播报
+        var doneBtn = ensurePlayButton(doneMsg, finalContent);
+        if (doneBtn && readSpeechSettings().enabled) playSpeech(doneBtn, finalContent, true);
+        messagesDiv.scrollTop = messagesDiv.scrollHeight;
       }
       isStreaming = false;
       sendBtn.disabled = false;
@@ -673,6 +1003,16 @@ export const aiCompanionScript = String.raw`
       isStreaming = false;
       sendBtn.disabled = false;
     }
+  });
+
+  // 宿主页（学生端）把"自动朗读"关掉时，停掉正在播的那条
+  // 同源 iframe 会收到父文档写入 localStorage 触发的 storage 事件
+  window.addEventListener('storage', function(e) {
+    if (!e || e.key !== SPEECH_SETTINGS_KEY) return;
+    try {
+      var s = JSON.parse(e.newValue || '{}') || {};
+      if (s.enabled !== true) stopSpeech();
+    } catch (err) { /* ignore */ }
   });
 
   sendBtn.addEventListener('click', sendMessage);
@@ -701,38 +1041,12 @@ export interface AiCompanionInjectResult {
   html: string;
 }
 
-/**
- * 检测 HTML 中 AI 伴学注入是否包含当前版本（无版本 → 缺注入；有注入但版本号不一致 → 需升级）
- */
-export function isAiCompanionUpToDate(html: string | null | undefined): boolean {
-  if (!html) return true; // 没有 HTML 视为最新，避免空内容触发升级循环
-  // 缺少 AI 伴学注入标记则视为需要注入（教师已启用但尚未注入）
-  if (!html.includes("__AI_COMPANION_INJECTED__") && !html.includes("ai-companion-root")) {
-    return false;
-  }
-  return html.includes(AI_COMPANION_VERSION);
-}
-
-/**
- * 惰性升级：把数据库里旧的 AI 伴学 HTML（任意旧版本）替换为当前版本
- * - 若 HTML 中无 AI 伴学标记，原样返回 { changed: false }
- * - 若 HTML 中已包含当前版本标记，原样返回 { changed: false }
- * - 否则先 removeAiCompanion 清干净，再 injectAiCompanion 重新注入
- * 供学生读路径等"无法触发教师保存"的接口使用，保证学生总能看到当前版本的伴学脚本
- */
-export function upgradeAiCompanionIfNeeded(
-  html: string | null | undefined,
-  context: AiCompanionContext
-): { html: string; changed: boolean; warnings: string[] } {
-  if (!html) return { html: "", changed: false, warnings: [] };
-  if (isAiCompanionUpToDate(html)) {
-    return { html, changed: false, warnings: [] };
-  }
-  const warnings: string[] = [`检测到旧版 AI 伴学注入，已自动升级到 ${AI_COMPANION_VERSION}`];
-  const cleaned = removeAiCompanion(html);
-  const result = injectAiCompanion(cleaned, context);
-  return { html: result.html, changed: true, warnings: [...warnings, ...result.warnings] };
-}
+// （历史函数已删 2026-09）isAiCompanionUpToDate / upgradeAiCompanionIfNeeded 是版本号机制的
+// 配套函数，随 AI_COMPANION_VERSION 一并退役（见文件头部退役说明）。
+// 现在需要「确保 HTML 带当前版伴学」的唯一正确姿势：
+//   import { injectAiCompanion, removeAiCompanion } from "@/lib/prompts/ai-companion";
+//   injectAiCompanion(removeAiCompanion(html), context)  // 剥旧 + 注当前版，对纯净稿幂等
+// 或直接走 renderExplorationHtml（内部已做同样的事）。
 
 /**
  * 注入AI伴学功能到HTML

@@ -130,14 +130,32 @@ if not exist "prisma\\dev.db" (\r
     echo [3/5] 正在初始化数据库...\r
     call npx prisma db push --skip-generate --accept-data-loss\r
 ) else (\r
-    echo [3/5] 数据库已就绪\r
+    echo [3/5] 正在同步数据库结构（无损升级，不影响现有数据）...\r
+    call npx prisma db push --skip-generate\r
+    if errorlevel 1 (\r
+        echo [警告] 数据库结构同步未完成，请将上方错误信息截图反馈给开发者\r
+        pause\r
+        exit /b 1\r
+    )\r
+    echo   数据库结构已就绪\r
 )\r
 \r
-if not exist ".next\\BUILD_ID" (\r
+rem 构建可用性：BUILD_ID 存在且 .next\qc-version 与 public\latest.json 版本一致\r
+set "QC_NEED_BUILD=1"\r
+if exist ".next\\BUILD_ID" (\r
+    node -e "const fs=require('fs');const want=(()=>{try{return String(JSON.parse(fs.readFileSync('public/latest.json','utf8')).version||'')}catch(e){return ''}})();let have='';try{have=fs.readFileSync('.next/qc-version','utf8').trim()}catch(e){};process.exit(want&&have===want?0:1)"\r
+    if not errorlevel 1 set "QC_NEED_BUILD=0"\r
+)\r
+if "%QC_NEED_BUILD%"=="0" (\r
+    echo [4/5] 生产版本已就绪\r
+) else (\r
     echo [4/5] 正在构建生产版本...\r
     call npm run build\r
-) else (\r
-    echo [4/5] 生产版本已就绪\r
+    if errorlevel 1 (\r
+        echo   [警告] 构建未完成，将以旧版本运行；请将上方错误信息截图反馈给开发者\r
+    ) else (\r
+        node -e "const fs=require('fs');try{fs.writeFileSync('.next/qc-version',String(JSON.parse(fs.readFileSync('public/latest.json','utf8')).version||''))}catch(e){}"\r
+    )\r
 )\r
 \r
 echo [5/5] 正在启动服务器...\r
@@ -226,20 +244,26 @@ fi
 echo "[2/5] 正在生成 Prisma 客户端..."
 npx prisma generate
 
-# 3. 初始化数据库（空库）
+# 3. 初始化/同步数据库（空库建表；已有库做无损结构同步，升级自动补新表新列）
 if [ ! -f "prisma/dev.db" ]; then
     echo "[3/5] 正在初始化数据库..."
     npx prisma db push --skip-generate --accept-data-loss
 else
-    echo "[3/5] 数据库已就绪"
+    echo "[3/5] 正在同步数据库结构（无损升级，不影响现有数据）..."
+    npx prisma db push --skip-generate || { echo "[警告] 数据库结构同步未完成，请将上方错误信息截图反馈给开发者"; exit 1; }
+    echo "  数据库结构已就绪"
 fi
 
-# 4. 构建生产版本
-if [ ! -f ".next/BUILD_ID" ]; then
-    echo "[4/5] 正在构建生产版本..."
-    npm run build
-else
+# 4. 构建生产版本（.next/qc-version 与 public/latest.json 版本一致才跳过；覆盖升级后自动重建）
+build_ready() {
+    [ -f ".next/BUILD_ID" ] || return 1
+    node -e "const fs=require('fs');const want=(()=>{try{return String(JSON.parse(fs.readFileSync('public/latest.json','utf8')).version||'')}catch(e){return ''}})();let have='';try{have=fs.readFileSync('.next/qc-version','utf8').trim()}catch(e){};process.exit(want&&have===want?0:1)"
+}
+if build_ready; then
     echo "[4/5] 生产版本已就绪"
+else
+    echo "[4/5] 正在构建生产版本..."
+    npm run build && node -e "const fs=require('fs');try{fs.writeFileSync('.next/qc-version',String(JSON.parse(fs.readFileSync('public/latest.json','utf8')).version||''))}catch(e){}"
 fi
 
 # 5. 启动

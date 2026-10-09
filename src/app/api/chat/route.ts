@@ -3,6 +3,7 @@ import { streamText } from "ai";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
+import { buildImageInjection, MERMAID_HINT } from "@/lib/image-library";
 import { aiQueue } from "@/lib/ai-queue";
 import { dbWrite } from "@/lib/db-queue";
 import {
@@ -184,6 +185,22 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      // 3.5 图片组（课堂级，AI 可在回复中用 Markdown 图片语法发送组内图片）
+      try {
+        const imageInjection = await buildImageInjection(
+          task.imageGroupIds,
+          task.teacherId
+        );
+        if (imageInjection) {
+          systemPrompt += imageInjection;
+        }
+      } catch {
+        // 图片组注入失败，忽略（不影响对话）
+      }
+
+      // 3.6 Mermaid 示意图能力（前端 Markdown 组件渲染 ```mermaid 代码块）
+      systemPrompt += MERMAID_HINT;
+
       // 4. 兜底：教师模板未引用 {pcDescription} 时，自动追加对话目标
       if (presetConv.description && !/\{pcDescription\}/.test(teacherTemplate)) {
         systemPrompt += `\n对话目标：${presetConv.description}\n`;
@@ -204,6 +221,9 @@ export async function POST(req: NextRequest) {
           systemPrompt += `[片段${i + 1}] ${chunk.content}\n`;
         });
       }
+
+      // Mermaid 示意图能力（前端 Markdown 组件渲染 ```mermaid 代码块）
+      systemPrompt += MERMAID_HINT;
     }
 
     // 如果消息包含图片，提示 AI 可以分析图片
@@ -256,7 +276,11 @@ export async function POST(req: NextRequest) {
       async start(controller) {
         let fullContent = "";
         let chunkCount = 0;
-        try {
+        let streamError: Error | null = null;
+
+        // 单次流式请求。AI SDK v6 在 429 限流/403 配额等错误时 for-await 不抛异常、
+        // 流为空，必须借 onError 回调才能拿到真实错误（与 exploration ai-chat 路由同款防护）
+        const runStream = async () => {
           const result = await aiQueue.enqueue(async () => {
             return streamText({
               model: chatModel,
@@ -264,6 +288,11 @@ export async function POST(req: NextRequest) {
               messages: formattedMessages,
               // 统一输出上限 64K（网关默认 4096 会截断长输出，实测硬上限 65536）
               maxOutputTokens: 65536,
+              onError: ({ error }: { error: unknown }) => {
+                const errMsg = error instanceof Error ? error.message : String(error);
+                console.error("[chat] streamText onError:", errMsg);
+                streamError = error instanceof Error ? error : new Error(errMsg);
+              },
             });
           });
 
@@ -272,11 +301,45 @@ export async function POST(req: NextRequest) {
             fullContent += chunk;
             controller.enqueue(encoder.encode(chunk));
           }
+          await result.consumeStream();
 
-          // 检测空响应：streamText 可能无异常返回空流
+          // 空流时记录结束原因，便于区分限流/内容审核/截断
           if (chunkCount === 0) {
-            const errMsg = "AI 模型返回了空响应（可能不支持图片输入，请检查模型配置）";
-            console.error("Empty stream:", errMsg);
+            try {
+              const reason = await Promise.race([
+                result.finishReason,
+                new Promise<string>((r) => setTimeout(() => r("未知（获取超时）"), 2000)),
+              ]);
+              console.warn("[chat] 流为空，finishReason:", reason);
+            } catch {}
+          }
+        };
+
+        try {
+          await runStream();
+
+          // 空流自动重试一次：此时客户端尚未收到任何内容，重试无副作用；
+          // 偶发的限流（429）/网关抖动导致的空流，重试大概率恢复
+          if (chunkCount === 0) {
+            console.warn("[chat] AI 返回空流，自动重试一次");
+            await runStream();
+          }
+
+          // 重试后仍为空：按真实原因提示，不再一律归咎于图片输入
+          if (chunkCount === 0) {
+            // streamError 仅在 onError 回调内赋值，控制流分析会把它收窄为 null，需断言
+            const raw = (streamError as Error | null)?.message || "";
+            let errMsg: string;
+            if (raw) {
+              errMsg = /quota|配额|free|429|rate|limit/i.test(raw)
+                ? "AI 服务繁忙（限流或配额不足），请稍后重试"
+                : `AI 服务响应异常：${raw.slice(0, 100)}`;
+            } else if (hasImageContent(lastMessage.content)) {
+              errMsg = "AI 模型返回了空响应（可能不支持图片输入，请检查模型配置）";
+            } else {
+              errMsg = "AI 模型返回了空响应，请重新发送试试";
+            }
+            console.error("[chat] Empty stream:", errMsg, raw);
             controller.enqueue(encoder.encode(errMsg));
             fullContent = errMsg;
           }

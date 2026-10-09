@@ -3,7 +3,7 @@
  * 支持：单选题/判断题（精确匹配）、填空题（AI语义评分）、简答题（AI评分）
  */
 
-import { getAIConfig } from "./ai";
+import { getAIConfig, chatCompletionsFetch } from "./ai";
 import {
   normalizeQuestionType,
   isOptionKeyAnswer,
@@ -160,18 +160,13 @@ async function gradeByAI(
 
   prompt += `\n请严格按以下JSON格式输出评分结果（不要输出任何其他内容）：\n{\n  "results": [\n    {\n      "questionId": "题目ID",\n      "score": 得分,\n      "comment": "评语"\n    }\n  ]{{if generateAdvice}},"learningAdvice": "学习建议"{{/if}}\n}`;
 
-  const response = await fetch(`${aiConfig.baseURL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${aiConfig.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: aiConfig.model,
-      messages: [{ role: "user", content: prompt }],
-      // 统一输出上限 64K（原生 fetch 走 OpenAI 兼容字段名）
-      max_tokens: 65536,
-    }),
+  // ⛔ DO NOT REVERT：不要改回裸 fetch——学生提交时主观题批阅走这里，网络抖动一次
+  //   就会把整题静默记 0 分（aiGrade 的 catch 不报错只记 0）。统一走带重试的封装。
+  const response = await chatCompletionsFetch(aiConfig, {
+    model: aiConfig.model,
+    messages: [{ role: "user", content: prompt }],
+    // 统一输出上限 64K（原生 fetch 走 OpenAI 兼容字段名）
+    max_tokens: 65536,
   });
 
   if (!response.ok) {
@@ -330,18 +325,12 @@ export async function generateTeachingAdvice(
 
   prompt += `\n请给出2-3条具体的教学改进建议，每条50字以内，格式：建议：xxx`;
 
-  const response = await fetch(`${aiConfig.baseURL}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${aiConfig.apiKey}`,
-    },
-    body: JSON.stringify({
-      model: aiConfig.model,
-      messages: [{ role: "user", content: prompt }],
-      // 统一输出上限 64K（原生 fetch 走 OpenAI 兼容字段名）
-      max_tokens: 65536,
-    }),
+  // ⛔ DO NOT REVERT：同 gradeByAI，统一走带超时+重试的封装（见 src/lib/ai.ts）
+  const response = await chatCompletionsFetch(aiConfig, {
+    model: aiConfig.model,
+    messages: [{ role: "user", content: prompt }],
+    // 统一输出上限 64K（原生 fetch 走 OpenAI 兼容字段名）
+    max_tokens: 65536,
   });
 
   if (!response.ok) throw new Error("AI 生成教学建议失败");

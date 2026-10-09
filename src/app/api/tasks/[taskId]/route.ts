@@ -14,6 +14,19 @@ export async function GET(
     if (!payload) return NextResponse.json({ error: "无权限" }, { status: 403 });
 
     const { taskId } = await params;
+    // ── ?lite=1：只取「编辑所需」的数据，不取探究 HTML 正文 ──────────────────
+    // 用途：课堂管理页的编辑入口（openEditForm / startEditingSubProjects /
+    //       openEditConversationDialog）在打开表单前拉一次详情，用来补齐列表接口
+    //       已不再下发的提示词正文。
+    // 为什么单独开这个开关：单个探究的 htmlContent 可达数百 KB（实测一节课 322 KB），
+    //       「编辑课堂」根本不看探究正文，不该为它买单。
+    // ⛔ 不要回退：**不带 lite 时必须保持原行为（返回完整 htmlContent）** ——
+    //       「编辑探究」的编辑器与探究预览都依赖正文。删掉这个分支或用它覆盖默认行为，
+    //       会导致探究编辑器打不开 / 内容空白。
+    // 关联：列表接口 GET /api/tasks 不再下发提示词正文，两者是一套设计，
+    //       完整说明见 src/app/api/tasks/route.ts GET 分支顶部的「列表瘦身契约」。
+    // ────────────────────────────────────────────────────────────────────────
+    const lite = new URL(req.url).searchParams.get("lite") === "1";
     const task = await prisma.learningTask.findUnique({
       where: { id: taskId },
       include: {
@@ -27,8 +40,12 @@ export async function GET(
               select: { id: true, title: true, description: true, systemPrompt: true, analysisPrompt: true, classAnalysisPrompt: true, sortOrder: true, enabled: true, studentInsightTemplateId: true, classInsightTemplateId: true },
               orderBy: [{ enabled: "desc" }, { sortOrder: "asc" }],
             },
-            QuizActivity: { select: { id: true, title: true, description: true, status: true, sortOrder: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
-            ExplorationActivity: { select: { id: true, title: true, description: true, htmlContent: true, enableSubmission: true, enableAiCompanion: true, aiCompanionPrompt: true, analysisPrompt: true, designPrompt: true, questionsJson: true, teachingAdvice: true, sortOrder: true, enabled: true }, orderBy: [{ enabled: "desc" }, { sortOrder: "asc" }] },
+            // QuizActivity.analysisPrompt 必须保留：这是列表接口刻意保留的字段之一，
+            // 「编辑作业」弹窗要回填它 —— 此前它从未被下发，导致点开编辑时框恒空、
+            // 一保存就把库里原有的分析提示词清掉（真实数据丢失）。
+            QuizActivity: { select: { id: true, title: true, description: true, status: true, sortOrder: true, analysisPrompt: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
+            // htmlContent: !lite —— 见本函数开头的 lite 说明：lite 时不取探究 HTML 正文（可达数百 KB）
+            ExplorationActivity: { select: { id: true, title: true, description: true, htmlContent: !lite, enableSubmission: true, enableAiCompanion: true, aiCompanionPrompt: true, analysisPrompt: true, designPrompt: true, questionsJson: true, teachingAdvice: true, sortOrder: true, enabled: true }, orderBy: [{ enabled: "desc" }, { sortOrder: "asc" }] },
           },
           orderBy: { sortOrder: "asc" },
         },
@@ -86,7 +103,7 @@ export async function PUT(
       return NextResponse.json({ error: "无权限" }, { status: 403 });
 
     const body = await req.json();
-    const { title, description, grade, subject, objectives, requirements, knowledgeBase, analysisPrompt, knowledgeBaseIds, subProjects, classIds, studentInsightTemplateId, classInsightTemplateId, classAnalysisPrompt } = body;
+    const { title, description, grade, subject, objectives, requirements, knowledgeBase, analysisPrompt, knowledgeBaseIds, imageGroupIds, subProjects, classIds, studentInsightTemplateId, classInsightTemplateId, classAnalysisPrompt } = body;
 
     // 调试日志：打印 classIds
     console.log("[PUT /api/tasks/:taskId] classIds=", classIds, "'classIds' in body:", 'classIds' in body);
@@ -240,6 +257,7 @@ export async function PUT(
             analysisPrompt,
             classAnalysisPrompt,
             knowledgeBaseIds,
+            imageGroupIds,
             updatedAt: new Date(),
           },
         });
@@ -534,7 +552,8 @@ export async function PUT(
       // 保存对话活动时，不修改课堂基本信息，只更新 updatedAt
       if (title !== undefined || description !== undefined || grade !== undefined || subject !== undefined ||
           objectives !== undefined || requirements !== undefined || knowledgeBase !== undefined ||
-          analysisPrompt !== undefined || classAnalysisPrompt !== undefined || knowledgeBaseIds !== undefined) {
+          analysisPrompt !== undefined || classAnalysisPrompt !== undefined || knowledgeBaseIds !== undefined ||
+          imageGroupIds !== undefined) {
         await tx.learningTask.update({
           where: { id: taskId },
           data: {
@@ -548,6 +567,7 @@ export async function PUT(
             ...(analysisPrompt !== undefined && { analysisPrompt }),
             ...(classAnalysisPrompt !== undefined && { classAnalysisPrompt }),
             ...(knowledgeBaseIds !== undefined && { knowledgeBaseIds }),
+            ...(imageGroupIds !== undefined && { imageGroupIds }),
             updatedAt: new Date(),
           },
         });
@@ -561,6 +581,10 @@ export async function PUT(
       });
     }
 
+    // PUT 保存后的回读：**保持 include 全字段、且 htmlContent: true**，与 GET 的 lite 分支相反。
+    // 原因：前端保存后要用这个返回值直接刷新本地状态（含探究正文与全部提示词），
+    //       缺字段会让界面立刻显示成空白 —— 保存后即时回读是「所见即所得」的保证。
+    // ⛔ 不要给这里的 htmlContent 加 lite 条件，也不要跟着列表接口一起瘦身。
     const updated = await prisma.learningTask.findUnique({
       where: { id: taskId },
       include: {
@@ -571,7 +595,7 @@ export async function PUT(
             studentInsightTemplate: { select: { id: true, name: true, type: true } },
             classInsightTemplate: { select: { id: true, name: true, type: true } },
             PresetConversation: { select: { id: true, title: true, description: true, systemPrompt: true, analysisPrompt: true, classAnalysisPrompt: true, sortOrder: true, enabled: true, studentInsightTemplateId: true, classInsightTemplateId: true }, orderBy: [{ enabled: "desc" }, { sortOrder: "asc" }] },
-            QuizActivity: { select: { id: true, title: true, description: true, status: true, sortOrder: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
+            QuizActivity: { select: { id: true, title: true, description: true, status: true, sortOrder: true, analysisPrompt: true, Question: { orderBy: { order: "asc" } } }, orderBy: [{ status: "desc" }, { sortOrder: "asc" }] },
             ExplorationActivity: { select: { id: true, title: true, description: true, htmlContent: true, enableSubmission: true, enableAiCompanion: true, aiCompanionPrompt: true, analysisPrompt: true, designPrompt: true, questionsJson: true, teachingAdvice: true, sortOrder: true, enabled: true }, orderBy: [{ enabled: "desc" }, { sortOrder: "asc" }] },
           },
         },

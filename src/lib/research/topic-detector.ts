@@ -81,6 +81,8 @@ function buildTitlesPrompt(
   const hasConv = types.includes("conversation");
   const hasQuizR = types.includes("quizReport");
   const hasConvR = types.includes("conversationReport");
+  const hasExp = types.includes("exploration");
+  const hasExpR = types.includes("explorationReport");
 
   const sections: string[] = [];
 
@@ -135,6 +137,26 @@ ${r.content.slice(0, 600)}...`).join("\n")}`);
 ${data.conversationReports.slice(0, 5).map((r, i) => `
 ### 报告 ${i + 1}：${r.taskTitle} - ${r.presetTitle} (v${r.version}, ${r.conversationCount}组对话)
 
+${r.content.slice(0, 500)}...`).join("\n")}`);
+  }
+
+  // 交互探究数据
+  // ⚠️ GOTCHA: 选题阶段只需数据「概览」而非全量——这里截断到 3000 字符（约 10 个探究活动），
+  //   与作业/对话报告的 slice(0,5) 采样口径同量级；全量摘要留给正文生成阶段
+  //   （document-generator.ts 的 buildDataSections 不做截断）。
+  // 🔗 RELATED: 上限与 data-collector.ts MAX_EXPLORATION_SUMMARY_CHARS (=12000) 是同一数据的两级闸门，
+  //   调大彼处时此处可同步，但不要超过彼处。
+  if (hasExp && data.explorationData) {
+    sections.push(`## 交互探究数据（含动手操作与结论）
+- 探究活动总数：${data.explorationData.totalActivities}
+${data.explorationData.summaryText.slice(0, 3000)}`);
+  }
+
+  // 探究报告
+  if (hasExpR && data.explorationReports && data.explorationReports.length > 0) {
+    sections.push(`## 探究报告（班级 AI 分析）
+${data.explorationReports.slice(0, 5).map((r, i) => `
+### 报告 ${i + 1}：${r.taskTitle} - ${r.explorationTitle}
 ${r.content.slice(0, 500)}...`).join("\n")}`);
   }
 

@@ -1,9 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
-import { injectSubmitFunctionality, removeSubmitFunctionality } from "@/lib/prompts/exploration-submit";
-import type { SubmitContext } from "@/lib/prompts/exploration-submit";
-import { removeAiCompanion, upgradeAiCompanionIfNeeded } from "@/lib/prompts/ai-companion";
+import {
+  ensureQfTaskForExploration,
+  deleteQfTaskForExploration,
+} from "@/lib/exploration/qf-binding";
+import {
+  analyzeCollectProfileWithAi,
+  detectCollectProfile,
+  parseCollectProfile,
+  stringifyCollectProfile,
+} from "@/lib/exploration/collect-profile";
+import { purifyExplorationHtml } from "@/lib/exploration/render";
 
 // GET: 获取单个探究详情（含 aiCompanionPrompt）
 export async function GET(
@@ -32,21 +40,17 @@ export async function GET(
       return NextResponse.json({ error: "无权限" }, { status: 403 });
     }
 
-    // 兜底升级：教师预览 / 第三方调用也可能命中旧版 AI 伴学 HTML
-    // 只在内存中自愈注入，不持久化回 DB（保持 htmlContent 纯净）
-    let upgradeWarnings: string[] | undefined;
-    if (item.enableAiCompanion) {
-      const upgrade = upgradeAiCompanionIfNeeded(item.htmlContent, { explorationId: id });
-      if (upgrade.changed) {
-        upgradeWarnings = upgrade.warnings;
-        item.htmlContent = upgrade.html;
-      }
-    }
+    // 编辑回显返回纯净稿（不含提交 / 伴学注入），保证前端「源码区」与「AI 接入状态」
+    // 都基于纯净稿判断，避免「编辑时看到注入代码」「提示词不显示」的错位。
+    // ⛔ 预览所需的注入版由前端本地渲染（复用 lib 注入函数），此处不再内存注入。
+    item.htmlContent = purifyExplorationHtml(item.htmlContent);
 
     const response: Record<string, unknown> = { ...item };
-    if (upgradeWarnings && upgradeWarnings.length > 0) {
-      response._aiCompanionWarnings = upgradeWarnings;
-    }
+    // 多轮对话历史：库中存 JSON 字符串，回显前解析成数组（前端直接 setChatMessages 还原对话流）。
+    // ⛔ 解析失败按空处理，不抛错——旧数据无此字段时为 null，前端自然回退到仅首轮 designPrompt。
+    (response as any).chatHistory = item.chatHistoryJson
+      ? (() => { try { return JSON.parse(item.chatHistoryJson!); } catch { return null; } })()
+      : null;
     return NextResponse.json(response);
   } catch (error: any) {
     console.error("[GET/exploration-activity] 错误:", error?.message || error);
@@ -75,6 +79,7 @@ export async function PUT(
       aiCompanionPrompt,
       designPrompt,
       analysisPrompt,
+      chatHistory,
     } = body;
 
     const item = await prisma.explorationActivity.findUnique({
@@ -91,7 +96,7 @@ export async function PUT(
 
     const existingSubs = await prisma.explorationSubmission.count({ where: { explorationId: id } });
     const updateData: Record<string, unknown> = {};
-    let injectWarnings: string[] | undefined;
+    let qfWarnings: string[] | undefined;
     let htmlContentChanged = false;
 
     // 基础字段
@@ -105,65 +110,85 @@ export async function PUT(
     if (analysisPrompt !== undefined) {
       updateData.analysisPrompt = analysisPrompt;
     }
+    // 多轮对话历史（可编辑，保存时整体覆盖）
+    // ⛔ 只在显式传入时更新：前端 doSaveExploration 每次保存都传最新 chatMessages，
+    //    空数组表示「用户清空了对话流 / 仅首轮意图无多轮」，应落库为 null 而非残留旧历史。
+    if (chatHistory !== undefined) {
+      updateData.chatHistoryJson = Array.isArray(chatHistory) && chatHistory.length > 0
+        ? JSON.stringify(chatHistory)
+        : null;
+    }
 
     // AI伴学提示词（教师可手动编辑）
     if (aiCompanionPrompt !== undefined) {
       updateData.aiCompanionPrompt = aiCompanionPrompt && aiCompanionPrompt.trim() ? aiCompanionPrompt.trim() : null;
     }
 
-    // 已有提交时锁定内容和提交开关
+    // 已有提交时锁定内容和提交开关（htmlContent 仍剥净为纯净稿，保证读取路径渲染一致）
     if (existingSubs > 0) {
-      updateData.htmlContent = item.htmlContent;
+      updateData.htmlContent = purifyExplorationHtml(item.htmlContent);
       updateData.enableSubmission = item.enableSubmission;
     } else {
-      // 决定要操作的 HTML
+      // 决定要操作的 HTML（⛔ htmlContent 恒存纯净稿，注入移到读取路径 renderExplorationHtml）
       const baseHtml = htmlContent !== undefined ? htmlContent : item.htmlContent;
       htmlContentChanged = htmlContent !== undefined && htmlContent !== item.htmlContent;
+      // ① htmlContent 恒存纯净稿（purify 幂等，兼容存量注入版数据自愈）
+      updateData.htmlContent = purifyExplorationHtml(baseHtml);
 
       if (enableSubmission === true) {
-        // 启用提交 → 注入提交功能
-        const context: SubmitContext = {
-          explorationId: id,
-          taskTitle: item.SubProject.task.title || "",
-        };
-        const result = injectSubmitFunctionality(baseHtml, context);
-        updateData.htmlContent = result.html;
-        injectWarnings = result.warnings;
+        // ② 绑定 / 复用 QuickForm 收集任务（首次创建，之后复用；改名只同步任务名）
+        //    绑定失败不阻断：老师照常能开提交，只是答案不入库（会提示）
+        const qf = await ensureQfTaskForExploration({
+          currentTaskId: item.qfTaskId ?? null,
+          title: (updateData.title as string) || item.title || "",
+        });
+        if (qf.error) {
+          qfWarnings = ["QuickForm 收集任务准备失败：" + qf.error];
+        }
+        if (qf.taskId) {
+          updateData.qfTaskId = qf.taskId;
+        }
+
+        // ③ 采集类别分析：只有 HTML 变了 / 首次启用（无 collectProfile）才重新分析，
+        //    避免每次保存都调 AI。⛔ 只存 collectProfile，不注入 htmlContent；
+        //    提交功能由读取路径 renderExplorationHtml 内存注入。
+        let profile = parseCollectProfile(item.collectProfile ?? null);
+        if (htmlContentChanged || !profile) {
+          const cleanBaseHtml = updateData.htmlContent as string;
+          const aiProfile = await analyzeCollectProfileWithAi(cleanBaseHtml);
+          profile = aiProfile ?? detectCollectProfile(cleanBaseHtml);
+          updateData.collectProfile = stringifyCollectProfile(profile);
+        }
         updateData.enableSubmission = true;
       } else if (enableSubmission === false) {
-        // 禁用提交 → 移除提交功能
-        updateData.htmlContent = removeSubmitFunctionality(baseHtml);
+        // 禁用提交 → 只关开关；htmlContent 已在上方 purify 成纯净稿（无提交注入可移除）
         updateData.enableSubmission = false;
       } else {
-        // enableSubmission 未传，只更新 HTML
-        if (htmlContent !== undefined) {
-          updateData.htmlContent = htmlContent;
-        }
+        // enableSubmission 未传：htmlContent 已在上方更新为纯净稿
       }
     }
 
-    // AI伴学启用/禁用处理（在提交功能注入之后，避免互相覆盖）
-    // 不再在 PUT 时持久化注入/清理 AI 伴学代码到 htmlContent：
-    // - 启用时只记录标志位，学生读取路径通过 upgradeAiCompanionIfNeeded 在内存中自愈注入
-    // - 禁用时仍调用 removeAiCompanion 清理由历史残留的注入标记（存量兼容，对纯净稿是 no-op）
-    // - 禁用时不清空 aiCompanionPrompt，保留提示词以便下次开启时复用
+    // AI伴学启用/禁用处理：只翻转标志位，不持久化注入/清理到 htmlContent。
+    // ⛔ htmlContent 恒为纯净稿，伴学注入由读取路径 renderExplorationHtml 内存现算；
+    //    关闭时不清空 aiCompanionPrompt，保留提示词以便下次开启时复用。
     if (enableAiCompanion === true) {
       updateData.enableAiCompanion = true;
     } else if (enableAiCompanion === false) {
-      const html = (updateData.htmlContent as string) || item.htmlContent;
-      if (html.includes("__AI_COMPANION_INJECTED__") || html.includes("ai-companion-trigger") || html.includes("#ai-companion-root")) {
-        updateData.htmlContent = removeAiCompanion(html);
-      }
+      // 关闭只关开关；htmlContent 已在上方 purify 成纯净稿（无伴学注入残留）
       updateData.enableAiCompanion = false;
       // 关闭时只关功能，不删除提示词
     } else if (enableAiCompanion === undefined) {
       updateData.enableAiCompanion = item.enableAiCompanion;
     }
 
-    // AI伴学提示词：HTML内容变化且AI伴学启用时，清空旧提示词触发重新生成
-    // 考虑两种场景：(1) 伴学已开启+改HTML (2) 本次同时开启伴学+改HTML
+    // AI伴学提示词：HTML内容变化且AI伴学启用时，无条件清空旧提示词触发重新生成。
+    // ⛔ DO NOT REVERT：别再要求 aiCompanionPrompt === undefined —— 前端 doSaveExploration
+    //   总会把回显的旧提示词原样传回，导致「老师改了 HTML 但提示词没动」时旧提示词残留、
+    //   与新页面语义不匹配。改为只要 HTML 变 + 伴学开就清空重生成。
+    //   老师「只改提示词、不改 HTML」时 htmlContentChanged=false，走上方 109-111 行正常保存，不受影响。
+    // 🔗 RELATED：前端保存后触发重生成 src/app/teacher/tasks/page.tsx doSaveExploration。
     const effectiveAiCompanion = enableAiCompanion === true ? true : item.enableAiCompanion;
-    if (htmlContentChanged && effectiveAiCompanion && aiCompanionPrompt === undefined) {
+    if (htmlContentChanged && effectiveAiCompanion) {
       updateData.aiCompanionPrompt = null;
     }
 
@@ -173,8 +198,8 @@ export async function PUT(
     });
 
     const response: Record<string, unknown> = { ...updated };
-    if (injectWarnings && injectWarnings.length > 0) {
-      response._injectWarnings = injectWarnings;
+    if (qfWarnings && qfWarnings.length > 0) {
+      response._qfWarnings = qfWarnings;
     }
 
     return NextResponse.json(response);
@@ -225,6 +250,12 @@ export async function DELETE(
       await prisma.explorationActionLog.deleteMany({ where: { submissionId: { in: subIds } } });
       await prisma.explorationSubmission.deleteMany({ where: { explorationId: id } });
     }
+
+    // 连带清理该探究绑定的 QF 收集任务（含 qf_records）。
+    // ⛔ DO NOT REMOVE：qfTaskId 是普通字符串字段、无外键级联，不在这里删会残留孤儿
+    // qf_tasks / qf_records（历史教训：删探究后留下 task_id 找不到的孤儿记录）。
+    // 🔗 RELATED：deleteQfTaskForExploration 见 src/lib/exploration/qf-binding.ts。
+    await deleteQfTaskForExploration(item.qfTaskId);
 
     await prisma.explorationActivity.delete({ where: { id } });
     return NextResponse.json({ success: true });

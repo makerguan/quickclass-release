@@ -52,6 +52,12 @@ const DATA_TYPES = [
     icon: "💬",
   },
   {
+    value: "exploration",
+    label: "交互探究数据",
+    description: "所有学生在虚拟仿真/交互实验中的探索时长、操作流与实验结论",
+    icon: "🔬",
+  },
+  {
     value: "quizReport",
     label: "作业报告",
     description: "班级作业 AI 分析报告（含统计信息）",
@@ -66,6 +72,14 @@ const DATA_TYPES = [
     icon: "📑",
     requiresGeneration: true,
     linkHint: "在「课堂管理」点击具体对话活动的「生成分析」可生成",
+  },
+  {
+    value: "explorationReport",
+    label: "探究报告",
+    description: "班级交互探究 AI 分析报告",
+    icon: "📈",
+    requiresGeneration: true,
+    linkHint: "在「课堂管理」点击具体交互探究的「生成分析」可生成",
   },
 ];
 
@@ -90,6 +104,7 @@ export default function NewProjectPage() {
   const [missingReports, setMissingReports] = useState<{
     quizzesWithoutReport?: string[];
     conversationsWithoutReport?: string[];
+    explorationsWithoutReport?: string[];
   }>({});
   const [selectedIndex, setSelectedIndex] = useState<number | null>(null);
 
@@ -400,10 +415,11 @@ export default function NewProjectPage() {
 
             {/* 缺失报告的具体清单 */}
             {((missingReports.quizzesWithoutReport?.length ?? 0) > 0 ||
-              (missingReports.conversationsWithoutReport?.length ?? 0) > 0) && (
+              (missingReports.conversationsWithoutReport?.length ?? 0) > 0 ||
+              (missingReports.explorationsWithoutReport?.length ?? 0) > 0) && (
               <div className="bg-orange-50 border border-orange-200 rounded p-3 space-y-2">
                 <div className="text-sm font-medium text-orange-800">
-                  📋 以下作业/对话活动尚未生成 AI 报告：
+                  📋 以下作业/活动尚未生成 AI 报告：
                 </div>
                 {missingReports.quizzesWithoutReport && missingReports.quizzesWithoutReport.length > 0 && (
                   <div className="text-xs text-orange-700">
@@ -421,6 +437,17 @@ export default function NewProjectPage() {
                       <div className="font-medium mt-1">对话活动：</div>
                       <ul className="ml-4">
                         {missingReports.conversationsWithoutReport.map((t, i) => (
+                          <li key={i}>• {t}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                {missingReports.explorationsWithoutReport &&
+                  missingReports.explorationsWithoutReport.length > 0 && (
+                    <div className="text-xs text-orange-700">
+                      <div className="font-medium mt-1">交互探究：</div>
+                      <ul className="ml-4">
+                        {missingReports.explorationsWithoutReport.map((t, i) => (
                           <li key={i}>• {t}</li>
                         ))}
                       </ul>

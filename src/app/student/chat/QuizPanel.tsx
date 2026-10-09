@@ -13,6 +13,7 @@ interface Question {
   options: string | Record<string, string>;
   answer: string;
   difficulty: string;
+  explanation?: string | null;
   order: number;
 }
 
@@ -42,6 +43,8 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
   const [result, setResult] = useState<{ score: number; totalQuestions: number; correctCount: number; passScore?: number } | null>(null);
   // 每题的后端判定结果：key = questionId
   const [answerResults, setAnswerResults] = useState<Record<string, AnswerResult>>({});
+  // 解题思路展开状态：key = questionId（记录用户点击；未记录时错题默认展开、对题默认折叠）
+  const [expandedExplanations, setExpandedExplanations] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
 
@@ -54,6 +57,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
     setAnswers({});
     setResult(null);
     setAnswerResults({});
+    setExpandedExplanations({});
     setCurrentIndex(0);
     setLoading(true);
 
@@ -220,6 +224,8 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
         const backend = answerResults[q.id];
         const isRight = backend ? backend.isCorrect : isChoiceCorrect(q, userAns);
         const ungraded = !!backend && backend.gradedBy === "pending";
+        // 解题思路展开：用户点过以其为准，否则错题默认展开、对题默认折叠
+        const explanationOpen = q.id in expandedExplanations ? expandedExplanations[q.id] : !isRight;
         return (
           <div key={q.id} className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
             {/* 题号和题目 */}
@@ -272,6 +278,32 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
                 );
               })}
             </div>
+            {/* 解题思路：错题默认展开，对题折叠，点击可切换 */}
+            {q.explanation && (
+              <div className="mt-3 ml-11">
+                {explanationOpen ? (
+                  <div className="rounded-lg bg-blue-50 border border-blue-100 p-3">
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="text-xs font-medium text-[#0052D9]">解题思路</span>
+                      <span
+                        className="text-xs text-[#8B8F99] cursor-pointer hover:text-[#0052D9]"
+                        onClick={() => setExpandedExplanations((prev) => ({ ...prev, [q.id]: false }))}
+                      >
+                        收起
+                      </span>
+                    </div>
+                    <div className="text-sm text-[#4A4A4A]"><Markdown>{q.explanation}</Markdown></div>
+                  </div>
+                ) : (
+                  <div
+                    className="text-xs text-[#0052D9] cursor-pointer hover:underline w-fit"
+                    onClick={() => setExpandedExplanations((prev) => ({ ...prev, [q.id]: true }))}
+                  >
+                    查看解题思路
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         );
       })}

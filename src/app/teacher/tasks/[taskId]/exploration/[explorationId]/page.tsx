@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
-import { Button, Tag, Select, MessagePlugin, Dialog } from "tdesign-react";
-import { ArrowLeftIcon, ChartBarIcon } from "tdesign-icons-react";
+import { Button, Tag, Select, MessagePlugin, Dialog, Switch, InputNumber } from "tdesign-react";
+import { ArrowLeftIcon, ChartBarIcon, RefreshIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
+import QuickFormDashboard, { type QfRecordItem, analyzeFields } from "@/components/exploration/QuickFormDashboard";
+import QuickFormRecordList from "@/components/exploration/QuickFormRecordList";
+import QuickFormAiDashboard from "@/components/exploration/QuickFormAiDashboard";
+import DashboardEditor from "@/components/exploration/DashboardEditor";
+import { SUBMITTED_AT_FIELD, type AiDashboardConfig, type AiDashboardChart, type AiDashboardKpi } from "@/lib/prompts/dashboard-config";
+import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 
 interface StudentRecord {
   studentId: string;
@@ -36,6 +42,7 @@ interface AnalysisData {
 
 interface UserSubmission {
   id: string;
+  studentId: string;
   studentName: string;
   answers: string;
   score: number | null;
@@ -104,6 +111,57 @@ function InsightContent({ content, className = "" }: { content: string; classNam
 
 type TabKey = "statistics" | "submissions" | "ai";
 
+/** 解析落库的 AI 大屏配置；非法或为空 → null（回退默认大屏，不白屏） */
+function parseDashboardConfig(raw: unknown): AiDashboardConfig | null {
+  if (typeof raw !== "string" || !raw.trim()) return null;
+  try {
+    const o = JSON.parse(raw);
+    return o && typeof o === "object" ? (o as AiDashboardConfig) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** 把「默认大屏」的自动分析结果转成可编辑的 AI 配置。
+ *  ⚠️ GOTCHA：默认大屏（QuickFormDashboard）是纯前端自动分析、没有落库 config；
+ *  老师点「编辑」时用本函数把分析结果「转正」成 AiDashboardConfig，
+ *  保存后即走 QuickFormAiDashboard 渲染（从此不再是默认大屏）。
+ *  ⛔ DO NOT REVERT：默认大屏也要能编辑，是本需求（2026-10-05）的核心诉求。 */
+function buildDefaultConfig(records: QfRecordItem[]): AiDashboardConfig {
+  const fields = analyzeFields(records);
+  const charts: AiDashboardChart[] = [];
+  const kpis: AiDashboardKpi[] = [{ label: "已提交", field: null, agg: "count" }];
+
+  for (const f of fields) {
+    if (f.kind === "identifier") {
+      charts.push({ title: f.key, field: f.key, type: "roster" });
+    } else if (f.kind === "numeric") {
+      charts.push({ title: f.key, field: f.key, type: "bar", limit: 8 });
+      kpis.push({ label: `${f.key}平均`, field: f.key, agg: "avg" });
+    } else if (f.kind === "low-cardinality") {
+      charts.push({
+        title: f.key,
+        field: f.key,
+        type: f.uniqueCount <= 4 ? "pie" : "hbar",
+        limit: 8,
+      });
+    } else if (f.kind === "array") {
+      charts.push({ title: f.key, field: f.key, type: "hbar", limit: 8 });
+    } else {
+      charts.push({ title: f.key, field: f.key, type: "wordcloud", limit: 12 });
+    }
+  }
+
+  return {
+    title: "数据大屏",
+    subtitle: "",
+    theme: "blue",
+    gridCols: 2,
+    kpis,
+    charts,
+  };
+}
+
 export default function ExplorationAnalysisPage() {
   const router = useRouter();
   const params = useParams();
@@ -118,6 +176,32 @@ export default function ExplorationAnalysisPage() {
   const [selectedClassId, setSelectedClassId] = useState("");
   const [allClasses, setAllClasses] = useState<{ id: string; name: string }[]>([]);
 
+  // QuickForm 数据大屏状态
+  const [qfTaskId, setQfTaskId] = useState<string | null>(null);
+  const [qfRecords, setQfRecords] = useState<QfRecordItem[]>([]);
+  const [qfTotal, setQfTotal] = useState(0);
+  const [qfLoading, setQfLoading] = useState(false);
+
+  // 「AI 重排」数据大屏状态（配置落库在 exploration.dashboardConfig）
+  const [aiDashConfig, setAiDashConfig] = useState<AiDashboardConfig | null>(null);
+  const [aiDashLoading, setAiDashLoading] = useState(false);
+  const [aiDashError, setAiDashError] = useState("");
+  const [aiDashInstruction, setAiDashInstruction] = useState("");
+
+  // 手动微调编辑器（AI 初稿 + 手动微调）
+  const [editing, setEditing] = useState(false);
+  // 记录「进入编辑前是否原本是默认大屏」，用于「放弃」时正确回退到默认大屏
+  const editingFromDefaultRef = useRef(false);
+
+  // 自动刷新轮询：默认开、间隔秒数页面可控
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [refreshSeconds, setRefreshSeconds] = useState(15);
+  const refreshLiveDataRef = useRef<() => Promise<void>>(() => Promise.resolve());
+
+  // 实时刷新（页签切换 / 手动刷新）
+  const [refreshing, setRefreshing] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState("");
+
   // AI 分析报告状态
   const [templates, setTemplates] = useState<AnalysisTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState("");
@@ -125,6 +209,14 @@ export default function ExplorationAnalysisPage() {
   const [aiReportVersions, setAiReportVersions] = useState<InsightVersion[]>([]);
   const [aiVersionIndex, setAiVersionIndex] = useState(0);
   const [generatingReport, setGeneratingReport] = useState(false);
+
+  // 提交详情缓存：展开有 canvas 快照的学生时按 studentId 拉取完整数据
+  // （列表接口已剥离 canvasSnapshots / textSnapshot 等大字段，只留 canvasCount）
+  const [detailCache, setDetailCache] = useState<Record<string, Record<string, any>>>({});
+
+  // 提交详情页签的双视图切换：绑定 QF 任务时「收集数据」与「行为数据」并列，
+  // 默认「收集数据」保持既有习惯，老师可切到「行为数据」看作品快照 / 操作日志
+  const [submissionView, setSubmissionView] = useState<"qf" | "behavior">("qf");
 
   // 删除版本
   const [deleteVisible, setDeleteVisible] = useState(false);
@@ -197,12 +289,44 @@ export default function ExplorationAnalysisPage() {
         : (data.classIds?.[0] || "");
       setSelectedClassId(targetClassId);
 
-      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions`, {
+      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions${targetClassId ? `?classId=${targetClassId}` : ""}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (subRes.ok) {
         const subData = await subRes.json();
         setSubmissions(Array.isArray(subData) ? subData : subData.submissions || []);
+      }
+
+      // 拉取 QuickForm 收集数据（数据大屏）
+      const detailRes = await fetch(`/api/exploration-activities/${explorationId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      let qfTaskId: string | null = null;
+      if (detailRes.ok) {
+        const detail = await detailRes.json();
+        qfTaskId = detail.qfTaskId || null;
+        setQfTaskId(qfTaskId);
+        setAiDashConfig(parseDashboardConfig(detail.dashboardConfig));
+      }
+      if (qfTaskId) {
+        setQfLoading(true);
+        try {
+          const qfRes = await fetch(`/api/qf/records/${qfTaskId}?page=1&pageSize=500${targetClassId ? `&classId=${targetClassId}` : ""}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          if (qfRes.ok) {
+            const qfData = await qfRes.json();
+            setQfRecords(Array.isArray(qfData.items) ? qfData.items : []);
+            setQfTotal(typeof qfData.total === "number" ? qfData.total : 0);
+          }
+        } catch {
+          // QF 数据拉取失败不影响其它标签展示
+        } finally {
+          setQfLoading(false);
+        }
+      } else {
+        setQfRecords([]);
+        setQfTotal(0);
       }
 
       // 加载已保存的 AI 报告版本
@@ -214,6 +338,175 @@ export default function ExplorationAnalysisPage() {
       setError(e.message || "获取数据失败");
     } finally {
       setLoading(false);
+      setLastUpdated(new Date().toLocaleTimeString());
+    }
+  };
+
+  /**
+   * 轻量刷新：只重拉会变动的数据（提交列表 + QuickForm 收集记录），
+   * 不触发整页 loading，用于「切换页签」与「手动刷新」。
+   */
+  const refreshLiveData = async (classOverride?: string) => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      const token = localStorage.getItem("token");
+      // 班级：优先用调用方显式传入（切换班级时 state 还没更新，闭包里是旧值）
+      const cls = classOverride !== undefined ? classOverride : selectedClassId;
+
+      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions${cls ? `?classId=${cls}` : ""}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (subRes.ok) {
+        const subData = await subRes.json();
+        setSubmissions(Array.isArray(subData) ? subData : subData.submissions || []);
+      }
+
+      let tid = qfTaskId;
+      if (!tid) {
+        const detailRes = await fetch(`/api/exploration-activities/${explorationId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (detailRes.ok) {
+          const detail = await detailRes.json();
+          tid = detail.qfTaskId || null;
+          setQfTaskId(tid);
+        }
+      }
+      if (tid) {
+        const qfRes = await fetch(`/api/qf/records/${tid}?page=1&pageSize=500${cls ? `&classId=${cls}` : ""}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        if (qfRes.ok) {
+          const qfData = await qfRes.json();
+          setQfRecords(Array.isArray(qfData.items) ? qfData.items : []);
+          setQfTotal(typeof qfData.total === "number" ? qfData.total : 0);
+        }
+      }
+
+      setLastUpdated(new Date().toLocaleTimeString());
+    } catch {
+      /* 静默失败：刷新出错不影响已有展示 */
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // 始终指向最新的 refreshLiveData，避免定时器闭包捕获旧班级/任务
+  refreshLiveDataRef.current = refreshLiveData;
+
+  // 自动刷新轮询：默认开，间隔 refreshSeconds 秒（5~300 clamp）
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const secs = Math.max(5, Math.min(300, refreshSeconds));
+    const timer = setInterval(() => refreshLiveDataRef.current(), secs * 1000);
+    return () => clearInterval(timer);
+  }, [autoRefresh, refreshSeconds]);
+
+  /**
+   * 「编辑」入口：AI 大屏直接编辑；默认大屏先把自动分析结果「转正」成可编辑配置再进入。
+   * ⛔ DO NOT REVERT：默认大屏也要能直接编辑，是本需求（2026-10-05）的核心诉求。
+   */
+  const handleEditDashboard = () => {
+    if (!aiDashConfig) {
+      editingFromDefaultRef.current = true;
+      setAiDashConfig(buildDefaultConfig(qfRecords));
+    } else {
+      editingFromDefaultRef.current = false;
+    }
+    setEditing(true);
+  };
+
+  /** 放弃编辑：若原本是默认大屏，则回退到默认大屏（不保留临时「转正」配置） */
+  const handleCancelEdit = () => {
+    if (editingFromDefaultRef.current) {
+      editingFromDefaultRef.current = false;
+      setAiDashConfig(null);
+    }
+    setEditing(false);
+  };
+
+  /**
+   * 「AI 重排大屏」：把字段摘要交给 AI，产出**图表配置 JSON** 并落库缓存；
+   * 前端只按配置渲染图表（AI 不产出 HTML，避免 XSS）。老师手动触发、低频。
+   */
+  const handleGenerateAiDashboard = async () => {
+    if (aiDashLoading) return;
+    setAiDashLoading(true);
+    setAiDashError("");
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/exploration-activities/${explorationId}/dashboard-config`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ instruction: aiDashInstruction }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.config) {
+        setAiDashError(data?.message || "生成失败，请重试。");
+        return;
+      }
+      setAiDashConfig(data.config as AiDashboardConfig);
+      MessagePlugin.success("已按 AI 配置重排大屏");
+    } catch {
+      setAiDashError("网络异常，生成失败。");
+    } finally {
+      setAiDashLoading(false);
+    }
+  };
+
+  /** 恢复默认大屏：清空落库配置 */
+  const handleResetAiDashboard = async () => {
+    if (aiDashLoading) return;
+    setAiDashLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      await fetch(`/api/exploration-activities/${explorationId}/dashboard-config`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+    } catch {
+      /* 静默：失败也先回退本地显示 */
+    } finally {
+      setAiDashConfig(null);
+      setAiDashError("");
+      setAiDashLoading(false);
+      // ⚠️ GOTCHA：若在「编辑态」点恢复默认，必须退出编辑态并清掉「转正」标记，
+      // 否则 editing 卡在 true → 工具栏「编辑」按钮被 `!editing` 条件隐藏、再也点不回来（历史 bug）。
+      setEditing(false);
+      editingFromDefaultRef.current = false;
+    }
+  };
+
+  /** 保存老师手动微调后的配置（PUT 落库，返回 sanitize 后的合法配置） */
+  const handleSaveDashboard = async (config: AiDashboardConfig) => {
+    setAiDashLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/exploration-activities/${explorationId}/dashboard-config`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ config }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok || !data?.config) {
+        MessagePlugin.error(data?.message || "保存失败，请重试。");
+        return;
+      }
+      setAiDashConfig(data.config as AiDashboardConfig);
+      editingFromDefaultRef.current = false; // 已保存落库 = 转正成功，不再是默认大屏
+      setEditing(false);
+      MessagePlugin.success("大屏已更新");
+    } catch {
+      MessagePlugin.error("网络异常，保存失败。");
+    } finally {
+      setAiDashLoading(false);
     }
   };
 
@@ -293,13 +586,102 @@ export default function ExplorationAnalysisPage() {
         ? "border-blue-500 text-blue-600"
         : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
         }`}
-      onClick={() => setActiveTab(tabKey)}
+      onClick={() => { setActiveTab(tabKey); refreshLiveData(); }}
     >
       {label}
     </button>
   );
 
   const renderStatistics = () => {
+    // 优先渲染 QuickForm 数据大屏（有绑定任务时）
+    if (qfTaskId) {
+      if (qfLoading) {
+        return (
+          <div className="space-y-4 animate-pulse" aria-label="数据大屏加载中">
+            <div className="h-20 rounded-2xl bg-blue-100/60" />
+            <div className="h-32 rounded-2xl bg-gray-100" />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div className="h-48 rounded-2xl bg-gray-100" />
+              <div className="h-48 rounded-2xl bg-gray-100" />
+            </div>
+          </div>
+        );
+      }
+
+      // 手动微调编辑器的字段下拉来源：从当前收集记录提取字段名（去重）。
+      // ⚠️ GOTCHA：剔除 `_` 保留字段（_record_id/_submitted_at 等内部字段，选了也会被保存端 sanitize 丢弃），
+      // 并显式加入「提交时间」这个元数据字段（其值在 record.submittedAt，不在 data 里）。
+      const dashboardFields = [
+        ...Array.from(
+          new Set(qfRecords.flatMap((r) => Object.keys(r.data || {})))
+        ).filter((k) => !k.startsWith("_")),
+        SUBMITTED_AT_FIELD,
+      ].sort();
+
+      // 工具栏：AI 重排 / 自定义要求 / 编辑 / 恢复默认
+      const toolbar = (
+        <div className="flex items-center gap-2 flex-wrap mb-3">
+          <Button
+            size="small"
+            theme="primary"
+            loading={aiDashLoading}
+            onClick={handleGenerateAiDashboard}
+          >
+            {aiDashConfig ? "AI 重新排布" : "AI 重排大屏"}
+          </Button>
+          <input
+            value={aiDashInstruction}
+            onChange={(e) => setAiDashInstruction(e.target.value)}
+            placeholder="可选：描述风格或重点（如「深色科技风，突出年龄分布」「清新绿色」）"
+            className="flex-1 min-w-[220px] h-8 px-3 text-xs border border-gray-200 rounded-md focus:outline-none focus:border-blue-400"
+          />
+          {!editing && (
+            <Button
+              size="small"
+              variant="outline"
+              disabled={aiDashLoading}
+              onClick={handleEditDashboard}
+            >
+              编辑
+            </Button>
+          )}
+          {aiDashConfig && (
+            <Button
+              size="small"
+              variant="outline"
+              disabled={aiDashLoading}
+              onClick={handleResetAiDashboard}
+            >
+              恢复默认
+            </Button>
+          )}
+        </div>
+      );
+
+      return (
+        <div>
+          {toolbar}
+          {aiDashError && (
+            <div className="mb-3 text-xs text-red-500 bg-red-50 border border-red-100 rounded-md px-3 py-2">
+              {aiDashError}
+            </div>
+          )}
+          {editing && aiDashConfig ? (
+            <DashboardEditor
+              config={aiDashConfig}
+              fields={dashboardFields}
+              onSave={handleSaveDashboard}
+              onCancel={handleCancelEdit}
+            />
+          ) : aiDashConfig ? (
+            <QuickFormAiDashboard records={qfRecords} total={qfTotal} config={aiDashConfig} />
+          ) : (
+            <QuickFormDashboard records={qfRecords} total={qfTotal} />
+          )}
+        </div>
+      );
+    }
+
     if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交数据</div>;
 
     const allAnswers: Record<string, any>[] = submissions.map((sub) => {
@@ -457,20 +839,41 @@ export default function ExplorationAnalysisPage() {
     );
   };
 
-  const renderSubmissions = () => {
-    if (loading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+  // 行为数据视图：原有 ExplorationSubmission 展示（作品快照 / 操作日志 / 页面状态等）。
+  // ⚠️ GOTCHA：双轨探究里这些数据与 QF 收集答案并存，早先「提交详情」在有 qfTaskId 时
+  //   只显示 QF 名单表，canvas 作品快照 / 操作日志完全无入口，老师看不到学生作品。
+  //   这里抽成独立函数，供下方「收集数据 / 行为数据」切换复用，避免行为轨丢失。
+  // ⛔ DO NOT REVERT：不要把行为数据视图从双轨探究里摘掉——那会退回「作品快照无入口」。
+  const renderBehaviorSubmissions = () => {
     if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交记录</div>;
 
-    const toggleExpand = (id: string) => {
+    const toggleExpand = (id: string, studentId: string, canvasCount: number) => {
+      const willExpand = !expandedIds.has(id);
       setExpandedIds((prev) => {
         const next = new Set(prev);
         if (next.has(id)) next.delete(id);
         else next.add(id);
         return next;
       });
+      // 展开且有 canvas 快照时，按 studentId 拉取该学生的完整数据（含大字段）
+      if (willExpand && canvasCount > 0 && !detailCache[id]) {
+        fetch(`/api/exploration-activities/${explorationId}/submissions?studentId=${studentId}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` },
+        })
+          .then((r) => (r.ok ? r.json() : null))
+          .then((arr) => {
+            if (Array.isArray(arr) && arr[0]?.answers) {
+              try {
+                const full = JSON.parse(arr[0].answers);
+                setDetailCache((prev) => ({ ...prev, [id]: full }));
+              } catch { /* 解析失败保持基础展示 */ }
+            }
+          })
+          .catch(() => { /* 拉取失败不影响基础展示 */ });
+      }
     };
 
-    const renderAnswersDetail = (answers: Record<string, unknown>) => {
+    const renderAnswersDetail = (answers: Record<string, any>, canvasShots: string[]) => {
       const fieldLabels: Record<string, string> = {
         timeSpent: "停留时间（秒）",
         interactions: "互动次数",
@@ -478,22 +881,81 @@ export default function ExplorationAnalysisPage() {
         attempts: "尝试次数",
         gameLevel: "游戏关卡",
         completedSections: "完成环节",
+        canvasCount: "作品快照数",
       };
-      const items = Object.entries(answers).filter(([, v]) => v !== "" && v !== null && v !== undefined);
-      if (items.length === 0) return <div className="text-xs text-gray-400">无数据</div>;
+      // 大字段 / 对象字段单独渲染，不进通用网格
+      const { gameState, storageSnapshot, textSnapshot, canvasCount, scoreInferred, ...rest } = answers;
+      const items = Object.entries(rest).filter(
+        ([, v]) => v !== "" && v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0)
+      );
 
       return (
-        <div className="grid grid-cols-2 gap-2">
-          {items.map(([key, val]) => (
-            <div key={key} className="bg-gray-50 rounded px-3 py-2">
-              <div className="text-xs text-gray-400">{fieldLabels[key] || key}</div>
-              <div className="text-sm font-medium text-gray-700 mt-0.5">
-                {key === "completedSections"
-                  ? (Array.isArray(val) && val.length > 0 ? val.join("、") : "无")
-                  : Array.isArray(val) ? val.join("、") : String(val)}
+        <div className="space-y-3">
+          {items.length === 0 && canvasShots.length === 0 ? (
+            <div className="text-xs text-gray-400">无数据</div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {items.map(([key, val]) => (
+                <div key={key} className="bg-gray-50 rounded px-3 py-2">
+                  <div className="text-xs text-gray-400">{fieldLabels[key] || key}</div>
+                  <div className="text-sm font-medium text-gray-700 mt-0.5">
+                    {key === "completedSections"
+                      ? (Array.isArray(val) && val.length > 0 ? val.join("、") : "无")
+                      : Array.isArray(val) ? val.join("、") : String(val)}
+                  </div>
+                </div>
+              ))}
+              {scoreInferred === true && (
+                <div className="bg-amber-50 rounded px-3 py-2">
+                  <div className="text-xs text-gray-400">分数来源</div>
+                  <div className="text-sm font-medium text-amber-700 mt-0.5">页面文本推测（页面未主动上报）</div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* AI 上报的页面状态（契约轨明细） */}
+          {gameState && typeof gameState === "object" && Object.keys(gameState).length > 0 && (
+            <div>
+              <div className="text-xs text-gray-400 mb-1">🤖 页面状态（AI 上报）</div>
+              <div className="bg-blue-50/50 rounded p-2 text-xs font-mono break-all">
+                {JSON.stringify(gameState)}
               </div>
             </div>
-          ))}
+          )}
+
+          {/* canvas 作品快照（详情拉取后展示） */}
+          {canvasShots.length > 0 && (
+            <div>
+              <div className="text-xs text-gray-400 mb-1">🖼️ 作品快照</div>
+              <div className="flex flex-wrap gap-2">
+                {canvasShots.map((src, i) => (
+                  <img
+                    key={i}
+                    src={src}
+                    alt={`作品快照 ${i + 1}`}
+                    className="max-w-[220px] rounded border border-gray-200"
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 页面文本快照（折叠） */}
+          {typeof textSnapshot === "string" && textSnapshot.trim() && (
+            <details>
+              <summary className="text-xs text-gray-400 cursor-pointer">📄 页面文本快照</summary>
+              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-gray-50 rounded p-2 whitespace-pre-wrap">{textSnapshot}</pre>
+            </details>
+          )}
+
+          {/* 页面存档数据（折叠） */}
+          {storageSnapshot && typeof storageSnapshot === "object" && Object.keys(storageSnapshot).length > 0 && (
+            <details>
+              <summary className="text-xs text-gray-400 cursor-pointer">💾 页面存档数据</summary>
+              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-gray-50 rounded p-2 whitespace-pre-wrap">{JSON.stringify(storageSnapshot, null, 2)}</pre>
+            </details>
+          )}
         </div>
       );
     };
@@ -508,12 +970,17 @@ export default function ExplorationAnalysisPage() {
           let answers: any = {};
           try { answers = JSON.parse(sub.answers || "{}"); } catch { }
           const isExpanded = expandedIds.has(sub.id);
+          // 详情缓存命中时用完整版 answers（含 canvasSnapshots / textSnapshot）
+          const displayAnswers = detailCache[sub.id] || answers;
+          const canvasShots: string[] = Array.isArray(displayAnswers.canvasSnapshots)
+            ? displayAnswers.canvasSnapshots
+            : [];
 
           return (
             <div key={sub.id} className="border border-gray-200 rounded-lg overflow-hidden">
               <div
                 className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
-                onClick={() => toggleExpand(sub.id)}
+                onClick={() => toggleExpand(sub.id, sub.studentId, displayAnswers.canvasCount || 0)}
               >
                 <div className="flex items-center gap-3">
                   <span className="font-medium text-gray-800">{sub.studentName}</span>
@@ -530,7 +997,7 @@ export default function ExplorationAnalysisPage() {
                 <div className="px-4 py-3 space-y-4 border-t border-gray-100">
                   <div>
                     <h5 className="text-xs font-medium text-gray-500 mb-2">📊 提交数据</h5>
-                    {renderAnswersDetail(answers)}
+                    {renderAnswersDetail(displayAnswers, canvasShots)}
                   </div>
                   <div>
                     <h5 className="text-xs font-medium text-gray-500 mb-2">📋 操作记录</h5>
@@ -557,6 +1024,41 @@ export default function ExplorationAnalysisPage() {
         })}
       </div>
     );
+  };
+
+  const renderSubmissions = () => {
+    if (loading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+
+    // 双轨：探究绑定了 QuickForm 收集任务 → 「收集数据 / 行为数据」两个视图切换；
+    // 否则只有行为数据（ExplorationSubmission），不影响既有探究。
+    if (qfTaskId) {
+      if (qfLoading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+      return (
+        <div className="space-y-3">
+          <div className="flex items-center gap-1.5">
+            <button
+              onClick={() => setSubmissionView("qf")}
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "qf" ? "bg-blue-50 text-blue-600 border-blue-200" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+            >
+              收集数据（{qfTotal || qfRecords.length}）
+            </button>
+            <button
+              onClick={() => setSubmissionView("behavior")}
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "behavior" ? "bg-blue-50 text-blue-600 border-blue-200" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+            >
+              行为数据（{submissions.length}）
+            </button>
+          </div>
+          {submissionView === "qf" ? (
+            <QuickFormRecordList records={qfRecords} total={qfTotal} />
+          ) : (
+            renderBehaviorSubmissions()
+          )}
+        </div>
+      );
+    }
+
+    return renderBehaviorSubmissions();
   };
 
   const renderAiReport = () => (
@@ -612,6 +1114,19 @@ export default function ExplorationAnalysisPage() {
               ))}
             </select>
           )}
+          {selectedTemplateId && (() => {
+            const tpl: any = templates.find((t: any) => t.id === selectedTemplateId);
+            if (!tpl) return null;
+            return (
+              <TemplatePreviewButton
+                templateId={tpl.id}
+                templateName={tpl.name}
+                templateType={tpl.type}
+                hasPreview={!!tpl.hasPreview}
+                previewStale={!!tpl.previewStale}
+              />
+            );
+          })()}
           <Button
             theme="primary"
             size="small"
@@ -675,32 +1190,67 @@ export default function ExplorationAnalysisPage() {
             <h2 className="text-xl font-semibold">探究分析报告</h2>
             <p className="text-sm text-gray-500 mt-0.5">{analysisData?.explorationTitle}</p>
           </div>
-          {analysisData?.classIds && analysisData.classIds.length > 0 && (
-            <div className="flex items-center gap-2 ml-auto">
-              <span className="text-sm text-gray-500">班级：</span>
-              <select
-                value={selectedClassId}
-                onChange={(e) => {
-                  const cid = e.target.value;
-                  setSelectedClassId(cid);
-                  setAiReport(null);
-                  setAiReportVersions([]);
-                  setAiVersionIndex(0);
-                  fetchAiVersions(cid);
-                }}
-                className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
-              >
-                {analysisData.classIds.map((cid: string) => {
-                  const cls = allClasses.find((c) => c.id === cid);
-                  return (
-                    <option key={cid} value={cid}>
-                      {cls ? cls.name : cid.substring(0, 8)}
-                    </option>
-                  );
-                })}
-              </select>
+          <div className="flex items-center gap-3 ml-auto">
+            {lastUpdated && (
+              <span className="text-xs text-gray-400">最后更新 {lastUpdated}</span>
+            )}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-gray-500">自动刷新</span>
+              <Switch size="small" value={autoRefresh} onChange={(v) => setAutoRefresh(!!v)} />
+              {/* ⚠️ GOTCHA：默认 theme 是左右加减号（row），width 64 时两个按钮各占约 30px，
+                  数字「15」被挤到只剩几像素、根本看不清；改用上下加减号（column）+ 加宽到 72 才能正常显示秒数。 */}
+              <InputNumber
+                size="small"
+                theme="column"
+                value={refreshSeconds}
+                min={5}
+                max={300}
+                step={5}
+                disabled={!autoRefresh}
+                onChange={(v) => setRefreshSeconds(Number(v) || 15)}
+                style={{ width: 72 }}
+              />
+              <span className="text-xs text-gray-400">秒</span>
             </div>
-          )}
+            <Button
+              theme="default"
+              variant="outline"
+              size="small"
+              icon={<RefreshIcon />}
+              loading={refreshing}
+              onClick={() => refreshLiveData()}
+            >
+              刷新
+            </Button>
+            {analysisData?.classIds && analysisData.classIds.length > 0 && (
+              <div className="flex items-center gap-2">
+                <span className="text-sm text-gray-500">班级：</span>
+                <select
+                  value={selectedClassId}
+                  onChange={(e) => {
+                    const cid = e.target.value;
+                    setSelectedClassId(cid);
+                    setAiReport(null);
+                    setAiReportVersions([]);
+                    setAiVersionIndex(0);
+                    fetchAiVersions(cid);
+                    // 提交列表 / QF 数据大屏 / 提交详情也按班级重新拉取（显式传新班级，避免闭包旧值）
+                    refreshLiveData(cid);
+                  }}
+                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
+                >
+                  {analysisData.classIds.map((cid: string) => {
+                    const cls = allClasses.find((c) => c.id === cid);
+                    return (
+                      <option key={cid} value={cid}>
+                        {cls ? cls.name : cid.substring(0, 8)}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Tab 切换 */}

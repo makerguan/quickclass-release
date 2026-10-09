@@ -37,21 +37,16 @@ export async function POST(req: NextRequest) {
       if (baseURL.includes("deepseek.com")) {
         thinkingTestDone = true;
 
-        // 根据用户配置决定是否启用思考模式
-        // 参考官方文档: https://api-docs.deepseek.com/zh-cn/guides/thinking_mode
-        // 注意: DeepSeek V4 默认开启思考模式，所以关闭时必须传 reasoning_effort="none"
+        // 与真实对话链路保持一致（见 src/lib/ai.ts 的 noThinkingFetch）：
+        // - 开启思考：不注入任何参数，走模型默认（DeepSeek V4 默认开启思考）
+        // - 关闭思考：注入 thinking={type:"disabled"}，与 noThinkingFetch 注入的字段完全相同
         const thinkingRequestBody: Record<string, unknown> = {
           model: aiModel,
           messages: [{ role: "user", content: "请解释为什么天空是蓝色的？" }],
           max_tokens: 500,
         };
-        if (reasoningEnabled) {
-          // 启用思考模式
-          thinkingRequestBody.reasoning_effort = "high";
-          thinkingRequestBody.extra_body = { thinking: { type: "enabled" } };
-        } else {
-          // 明确禁用思考模式（否则 DeepSeek V4 默认会开启）
-          thinkingRequestBody.reasoning_effort = "none";
+        if (!reasoningEnabled) {
+          thinkingRequestBody.thinking = { type: "disabled" };
         }
 
         const thinkingResponse = await fetch(url, {

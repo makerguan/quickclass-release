@@ -2,6 +2,50 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 
+// ══════════════════════════════════════════════════════════════════════════════
+// GET /api/preset-conversations/[id]
+// ══════════════════════════════════════════════════════════════════════════════
+// 读取单个对话活动的**完整**字段（含 systemPrompt / analysisPrompt /
+// classAnalysisPrompt 三个提示词正文）。
+//
+// 为什么需要它（别删）：
+//   列表接口 GET /api/tasks 出于性能考虑**有意不下发**这几个提示词正文
+//   （8 个课堂的列表响应 372 KiB 里 89% 是提示词，详情与完整背景见
+//   src/app/api/tasks/route.ts GET 分支顶部的「列表瘦身契约」）。
+//   而「编辑对话活动」弹窗必须把三个提示词回填到输入框，否则用户一保存
+//   就会把库里的提示词清空。故新增本接口按需补齐。
+//   ⛔ 不要因为「列表接口里已经有这些字段了」而删掉本接口 —— 那一定是因为
+//      有人把列表瘦身回退了，请先去看上面那份契约说明，而不是删这里。
+//
+// 鉴权口径：与同目录 PUT / DELETE 保持一致（仅校验登录态，不校验归属）。
+//
+// 关联：调用方 src/app/teacher/tasks/page.tsx 的 openEditConversationDialog()。
+// 维护：将来 PresetConversation 新增「长文本」字段，应加在这里返回，
+//       而**不是**加回列表接口。
+// ══════════════════════════════════════════════════════════════════════════════
+export async function GET(
+  req: NextRequest,
+  { params }: { params: Promise<{ presetConversationId: string }> }
+) {
+  try {
+    const { presetConversationId } = await params;
+    const token = req.headers.get("authorization")?.replace("Bearer ", "");
+    if (!token) return new NextResponse("未登录", { status: 401 });
+    const payload = await verifyToken(token);
+    if (!payload) return new NextResponse("登录已过期", { status: 401 });
+
+    const presetConversation = await prisma.presetConversation.findUnique({
+      where: { id: presetConversationId },
+    });
+    if (!presetConversation) return new NextResponse("对话活动不存在", { status: 404 });
+
+    return NextResponse.json({ success: true, presetConversation });
+  } catch (e) {
+    console.error(e);
+    return new NextResponse("读取对话活动失败", { status: 500 });
+  }
+}
+
 // PUT /api/preset-conversations/[id]
 // 编辑单个对话活动（名片式独立 CRUD）
 export async function PUT(

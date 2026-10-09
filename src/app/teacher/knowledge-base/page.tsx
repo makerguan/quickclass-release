@@ -408,7 +408,7 @@ export default function KnowledgeBasePage() {
                 <input
                   ref={fileInputRef}
                   type="file"
-                  accept=".md,.markdown,.txt"
+                  accept=".md,.markdown,.txt,.MD,.MARKDOWN,.TXT"
                   className="hidden"
                   onChange={handleFileChange}
                 />

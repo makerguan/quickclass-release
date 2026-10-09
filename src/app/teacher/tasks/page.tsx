@@ -45,7 +45,10 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip,
   PieChart, Pie, Legend, ResponsiveContainer,
 } from "recharts";
-import { injectSubmitFunctionality, removeSubmitFunctionality } from "@/lib/prompts/exploration-submit";
+import { removeSubmitFunctionality, detectInstrumentation } from "@/lib/prompts/exploration-submit";
+import { renderExplorationHtml } from "@/lib/exploration/render";
+import { parseCollectProfile } from "@/lib/exploration/collect-profile";
+import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 import ViewFrame from "./ViewFrame";
 
 interface AnalysisTemplate {
@@ -76,6 +79,8 @@ interface SubProject {
   requirements: string;
   knowledgeBase?: string;
   analysisPrompt?: string;
+  analysisTemplateId?: string;
+  explorationActivities?: any[];
   presetConversations: PresetConversation[];
 }
 
@@ -95,6 +100,7 @@ interface LearningTask {
   requirements: string;
   knowledgeBase?: string;
   knowledgeBaseIds?: string;
+  imageGroupIds?: string;
   analysisPrompt?: string;
   status: string;
   createdAt: string;
@@ -117,6 +123,13 @@ interface KnowledgeBaseItem {
   contentLength: number; // 知识库字符数
 }
 
+interface ImageGroupItem {
+  id: string;
+  name: string;
+  enabled: boolean; // 是否启用
+  imageCount: number; // 组内图片数
+}
+
 const STATUS_CONFIG = {
   DISABLED: { label: "未启用", theme: "default" as const, color: "gray" },
   ENABLED: { label: "启用", theme: "success" as const, color: "green" },
@@ -135,6 +148,98 @@ const NEXT_STATUS_LABEL = {
   ENDED: "暂存",
 };
 
+// 从 AI 流式输出中提取纯 HTML（剥离 markdown 代码块包裹与前后说明文字）
+function extractHtml(text: string): string {
+  if (!text) return "";
+  const t = text.trim();
+  // 1) 优先提取 markdown 代码块（取含 <html / <!doctype 的块，否则取第一个块）
+  const fenceRegex = /```(?:html)?\s*\n?([\s\S]*?)\n?```/g;
+  let best = "";
+  let m: RegExpExecArray | null;
+  while ((m = fenceRegex.exec(t)) !== null) {
+    const block = m[1].trim();
+    if (/<html|<!doctype/i.test(block)) return block;
+    if (!best) best = block;
+  }
+  if (best) return best;
+  // 2) 无代码块：截取 <!DOCTYPE html>…</html>（兼容前后夹杂说明文字）
+  const doctypeMatch = t.match(/<!doctype[^>]*>[\s\S]*?<\/html>/i);
+  if (doctypeMatch) return doctypeMatch[0];
+  const htmlTagMatch = t.match(/<html[\s\S]*<\/html>/i);
+  if (htmlTagMatch) return htmlTagMatch[0];
+  // 3) 兜底：原样返回（可能是无 DOCTYPE 的纯 HTML 片段）
+  return t;
+}
+
+/** 从 AI 返回的可交互元素（形状不定）中稳健提取「名称」，避免出现一串「?」 */
+function pickElementName(el: unknown): string {
+  if (el === null || el === undefined) return "页面元素";
+  if (typeof el !== "object") {
+    const s = String(el).trim();
+    return s || "页面元素";
+  }
+  const obj = el as Record<string, unknown>;
+  const prefer = ["element", "name", "label", "title", "text", "description", "desc", "type"];
+  for (const k of prefer) {
+    const v = obj[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  for (const k of Object.keys(obj)) {
+    if (k.startsWith("_")) continue;
+    const v = obj[k];
+    if (typeof v === "string" && v.trim()) return v.trim();
+  }
+  return "页面元素";
+}
+
+/** 提取「说明」，避开与名称重复 */
+function pickElementDesc(el: unknown): string {
+  if (el === null || typeof el !== "object") return "";
+  const obj = el as Record<string, unknown>;
+  const name = pickElementName(el);
+  const prefer = ["description", "desc", "note", "detail", "purpose"];
+  for (const k of prefer) {
+    const v = obj[k];
+    if (typeof v === "string" && v.trim() && v.trim() !== name) return v.trim();
+  }
+  for (const k of Object.keys(obj)) {
+    if (k.startsWith("_")) continue;
+    const v = obj[k];
+    if (typeof v === "string" && v.trim() && v.trim() !== name) return v.trim();
+  }
+  return "";
+}
+
+/** 课堂管理页的视图状态：记住上次停在哪门课、展开了哪些子活动、滚动位置 */
+type TasksViewState = { taskId: string | null; spIds: string[]; scrollY: number };
+
+const TASKS_VIEW_STATE_KEY = "quickclass.tasks.viewState";
+
+function readTasksViewState(): TasksViewState | null {
+  try {
+    if (typeof window === "undefined") return null;
+    const raw = window.sessionStorage.getItem(TASKS_VIEW_STATE_KEY);
+    if (!raw) return null;
+    const v = JSON.parse(raw) as Partial<TasksViewState>;
+    return {
+      taskId: typeof v.taskId === "string" ? v.taskId : null,
+      spIds: Array.isArray(v.spIds) ? v.spIds.filter((id): id is string => typeof id === "string") : [],
+      scrollY: typeof v.scrollY === "number" && v.scrollY >= 0 ? v.scrollY : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writeTasksViewState(state: TasksViewState) {
+  try {
+    if (typeof window === "undefined") return;
+    window.sessionStorage.setItem(TASKS_VIEW_STATE_KEY, JSON.stringify(state));
+  } catch {
+    /* 隐私模式下 sessionStorage 不可用，忽略即可（仅影响"记住位置"，不影响功能） */
+  }
+}
+
 export default function TeacherTasksPage() {
   const router = useRouter();
   const [tasks, setTasks] = useState<LearningTask[]>([]);
@@ -143,6 +248,8 @@ export default function TeacherTasksPage() {
   const [conversationTemplates, setConversationTemplates] = useState<AnalysisTemplate[]>([]);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBaseItem[]>([]);
   const [selectedKbIds, setSelectedKbIds] = useState<string[]>([]);
+  const [imageGroups, setImageGroups] = useState<ImageGroupItem[]>([]);
+  const [selectedImageGroupIds, setSelectedImageGroupIds] = useState<string[]>([]);
   // 分页：每页课堂数（用户自定义）与当前页
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -170,6 +277,62 @@ export default function TeacherTasksPage() {
   const [editingSubProjects, setEditingSubProjects] = useState<SubProject[]>([]);
   const [savingSubProjects, setSavingSubProjects] = useState(false);
   const [expandedSpIds, setExpandedSpIds] = useState<Set<string>>(new Set());
+
+  // 视图状态记忆：离开列表（进分析页等）前记录，返回时恢复，避免又跳回第一门课
+  const viewReadyRef = useRef(false);
+  const viewStateRef = useRef<TasksViewState>({ taskId: null, spIds: [], scrollY: 0 });
+
+  // 把最新的展开状态同步到 ref：滚动监听 / 跳转前记录都从这里取，避免 React 闭包读到旧值
+  useEffect(() => {
+    if (!viewReadyRef.current) return;
+    viewStateRef.current = {
+      taskId: expandedTaskId,
+      spIds: Array.from(expandedSpIds),
+      scrollY: viewStateRef.current.scrollY,
+    };
+  }, [expandedTaskId, expandedSpIds]);
+
+  // 记录一次当前视图（含滚动位置）
+  const persistTasksView = (scrollY?: number) => {
+    if (!viewReadyRef.current) return;
+    const state: TasksViewState = {
+      ...viewStateRef.current,
+      scrollY: typeof scrollY === "number" ? scrollY : window.scrollY,
+    };
+    viewStateRef.current = state;
+    writeTasksViewState(state);
+  };
+
+  // 打开/收起课堂、展开子活动后记录
+  useEffect(() => {
+    if (!viewReadyRef.current) return;
+    persistTasksView();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [expandedTaskId, expandedSpIds]);
+
+  // 滚动位置节流记录（返回列表时能滚回原处，不用重新往下找）
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const onScroll = () => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        persistTasksView(window.scrollY);
+      }, 250);
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      if (timer) clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // 跳转到其他页面前先记录一次（带走最新滚动位置）
+  const goTo = (url: string) => {
+    persistTasksView();
+    router.push(url);
+  };
 
   // 对话活动名片式独立 CRUD 弹窗状态
   // 测试成功后，将下方开关改为 true 即可隐藏老「对话管理」按钮
@@ -324,7 +487,7 @@ export default function TeacherTasksPage() {
   };
 
   const openBrowse = (id: string) => {
-    router.push(`/teacher/tasks/project/${id}`);
+    goTo(`/teacher/tasks/project/${id}`);
   };
 
   const [operatingProjectId, setOperatingProjectId] = useState<string | null>(null);
@@ -578,20 +741,41 @@ export default function TeacherTasksPage() {
     setConvDialogVisible(true);
   };
 
-  // 打开编辑对话活动弹窗
-  const openEditConversationDialog = (task: any, pc: any) => {
+  // 打开「编辑对话活动」弹窗
+  // ⚠️ 列表接口已剥离提示词正文，打开前必须拉一次该对话活动的完整字段
+  //    （契约见 fetchTaskDetailLite 上方）；失败则**不开弹窗**，避免空值覆盖库里的提示词。
+  // 注：这里走 /api/preset-conversations/[id] 单条接口，而不是 fetchTaskDetailLite，
+  //     因为只需要这一条对话活动，没必要把整节课拉下来。
+  const openEditConversationDialog = async (task: any, pc: any) => {
     const defaultSp = task.subProjects?.find((sp: any) => sp.presetConversations.some((p: any) => p.id === pc.id));
+    let detail: any = pc;
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/preset-conversations/${pc.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) {
+        MessagePlugin.error("读取对话活动详情失败，请重试");
+        return;
+      }
+      const data = await res.json();
+      if (data?.presetConversation) detail = data.presetConversation;
+    } catch {
+      MessagePlugin.error("读取对话活动详情失败，请重试");
+      return;
+    }
     setConvDialogMode("edit");
     setConvDialogTaskId(task.id);
     setConvDialogSpId(defaultSp?.id ?? null);
-    setConvDialogPc(pc);
+    setConvDialogPc(detail);
     setConvForm({
-      title: pc.title || "",
-      description: pc.description || "",
-      systemPrompt: pc.systemPrompt || "",
-      analysisPrompt: pc.analysisPrompt || "",
-      classAnalysisPrompt: pc.classAnalysisPrompt || "",
-      conversationPromptTemplateId: pc.conversationPromptTemplateId || "",
+      title: detail.title || "",
+      description: detail.description || "",
+      systemPrompt: detail.systemPrompt || "",
+      analysisPrompt: detail.analysisPrompt || "",
+      classAnalysisPrompt: detail.classAnalysisPrompt || "",
+      // 模板关联不在库中存字段，靠 systemPrompt 内容反查（此前读 pc.xxx 恒为空）
+      conversationPromptTemplateId: findConversationPromptTemplateId(detail.systemPrompt) || "",
     });
     setConvDialogVisible(true);
   };
@@ -693,17 +877,23 @@ export default function TeacherTasksPage() {
   const [explorations, setExplorations] = useState<any[]>([]);
   const [operatingExplorationId, setOperatingExplorationId] = useState<string | null>(null);
   const [togglingExplorationId, setTogglingExplorationId] = useState<string | null>(null);
+  const [clearingSubmissionsExplorationId, setClearingSubmissionsExplorationId] = useState<string | null>(null);
 
   // 新建/编辑探究弹窗
   const [explorationModalVisible, setExplorationModalVisible] = useState(false);
   const [explorationEditId, setExplorationEditId] = useState<string | null>(null); // null=新建
   const [explorationTitle, setExplorationTitle] = useState("");
-  const [explorationPrompt, setExplorationPrompt] = useState("");
-  const [explorationDesignPrompt, setExplorationDesignPrompt] = useState(""); // 互动设计提示词（临时，不保存）
+  const [explorationPrompt, setExplorationPrompt] = useState(""); // 分析提示词（analysisPrompt）
+  const [initialPrompt, setInitialPrompt] = useState(""); // 首轮设计意图（保存为 designPrompt）
+  const [draftInput, setDraftInput] = useState(""); // 对话输入框当前值
+  const [chatMessages, setChatMessages] = useState<{ role: "user" | "ai"; content: string }[]>([]); // 对话流
+  const [htmlVersions, setHtmlVersions] = useState<string[]>([]); // 版本栈
+  const [versionIndex, setVersionIndex] = useState(-1); // 当前版本指针
+  const [activeTab, setActiveTab] = useState<"preview" | "code">("preview"); // 右栏 tab
   const [explorationHtml, setExplorationHtml] = useState("");
   const [explorationPreview, setExplorationPreview] = useState("");
-  const [generatingPrompt, setGeneratingPrompt] = useState(false);
-  const [generatingHtml, setGeneratingHtml] = useState(false);
+  const [generatingPrompt, setGeneratingPrompt] = useState(false); // AI 帮我写
+  const [generating, setGenerating] = useState(false); // 多轮生成中
   const [savingExploration, setSavingExploration] = useState(false);
 
   // 分析弹窗
@@ -738,16 +928,69 @@ export default function TeacherTasksPage() {
   };
   // 原始 HTML（启用提交前保存，用于取消时恢复）
   const [originalHtmlForInjection, setOriginalHtmlForInjection] = useState("");
+  // 采集类别（本地渲染预览用，与学生端读取注入保持一致；回显/保存后同步）
+  const [explorationCollectProfile, setExplorationCollectProfile] = useState<any>(null);
+
+  // 桩丢失「变化提醒」：采集桩从有→无的翻转瞬间，弹一次性 toast 抓注意力。
+  // 为什么：常驻黄条（5383 行 detectInstrumentation 实时算）是「静态状态」，老师专注编辑时
+  //   可能没注意到绿条→黄条的翻转；toast 是「变化事件」，明确告知「刚才发生了什么」。
+  // 现状/约束：只在 needsAdaptation 从 false→true 翻转、且「启用提交 + 已确认注入」时弹一次；
+  //   持续处于无桩态继续编辑不重复弹。开关关闭（confirmedInjection=false）时静默更新基线，不弹。
+  // 🔗 RELATED：检测函数 src/lib/prompts/exploration-submit.ts detectInstrumentation；
+  //   黄条渲染同文件 5382-5403 行，改判定口径两处要一致。
+  const prevNeedsAdaptationRef = useRef<boolean>(false);
+  useEffect(() => {
+    const needsAdaptation = detectInstrumentation(explorationHtml).needsAdaptation;
+    if (
+      explorationEnableSubmission &&
+      confirmedInjection &&
+      needsAdaptation &&
+      !prevNeedsAdaptationRef.current
+    ) {
+      MessagePlugin.warning("⚠️ 采集桩已丢失，分数/关卡将无法上报，可点「重试接入」恢复");
+    }
+    prevNeedsAdaptationRef.current = needsAdaptation;
+  }, [explorationHtml, explorationEnableSubmission, confirmedInjection]);
 
   // 去除 AI 伴学注入代码（用于源码编辑器保持纯净稿）
+  // 注入结构见 injectAiCompanion：<style>#ai-companion-root…</style> 入 </head> 前，
+  // <div id="ai-companion-root">…</div> + katex/伴学 <script> 入 </body> 前。
+  // 旧实现只剥 <style>，第二条正则依赖并不存在的 <!--__AI_COMPANION_INJECTED__--> 注释（失效），
+  // 会残留浮动按钮 DOM 与对话脚本 → 源码区/导出都不纯净。这里按 CSS / script / DOM 三段剥净。
+  // 🔗 RELATED 与后端 removeAiCompanion（src/lib/prompts/ai-companion.ts）语义一致，改这里要同步看那边。
   const stripAiCompanionCode = (html: string) => {
     if (!html) return "";
     let s = html;
-    // 移除注入的 AI 伴学 <style> 块
-    s = s.replace(/<style>[\s\S]*?#ai-companion-root[\s\S]*?<\/style>/g, "");
-    // 移除注入的 HTML + 脚本块（从 __AI_COMPANION_INJECTED__ 注释到 </body> 前）
-    s = s.replace(/<!--\s*__AI_COMPANION_INJECTED__[^>]*-->[\s\S]*?(?=<\/body>)/g, "");
+    // 1. 伴学 <style>（含 #ai-companion-root）
+    s = s.replace(/<style>[\s\S]*?#ai-companion-root[\s\S]*?<\/style>/gi, "");
+    // 2. 伴学交互 <script>（IIFE 内含 __AI_COMPANION_INJECTED__ 标记）
+    s = s.replace(/<script>\s*\(function\s*\(\)\s*\{[\s\S]*?__AI_COMPANION_INJECTED__[\s\S]*?\}\)\(\);?\s*<\/script>/gi, "");
+    // 3. 伴学 DOM + 依赖脚本（katex）：从 <div id="ai-companion-root" 起到 </body> 前整段删除
+    const rootIdx = s.indexOf('<div id="ai-companion-root"');
+    if (rootIdx > -1) {
+      const bodyClose = s.lastIndexOf("</body>");
+      if (bodyClose > rootIdx) {
+        s = s.substring(0, rootIdx) + s.substring(bodyClose);
+      }
+    }
     return s;
+  };
+
+  // 本地渲染预览：把「纯净稿 + 开关」渲染成注入版（提交 + 伴学），供预览 iframe 使用。
+  // 与后端读取路径 renderExplorationHtml 同源，保证预览与学生端看到的一致。
+  // ⛔ 不再依赖 GET 详情返回注入版（GET 详情现在返回纯净稿）；预览统一本地渲染。
+  const renderLocalPreview = (
+    html: string,
+    opts?: { enableSubmission?: boolean; enableAiCompanion?: boolean; collectProfile?: any; explorationId?: string }
+  ) => {
+    return renderExplorationHtml({
+      htmlContent: html,
+      explorationId: opts?.explorationId ?? explorationEditId ?? "",
+      taskTitle: "",
+      enableSubmission: opts?.enableSubmission ?? explorationEnableSubmission,
+      enableAiCompanion: opts?.enableAiCompanion ?? explorationEnableAiCompanion,
+      collectProfile: opts?.collectProfile !== undefined ? opts.collectProfile : (explorationCollectProfile ?? undefined),
+    }).html;
   };
 
   // 打开探究面板（数据已随课堂列表加载，直接从 subProjects 读取，无异步加载）
@@ -769,10 +1012,16 @@ export default function TeacherTasksPage() {
     setExplorationEditId(null);
     setExplorationTitle("");
     setExplorationPrompt("");
-    setExplorationDesignPrompt("");
+    setInitialPrompt("");
+    setDraftInput("");
+    setChatMessages([]);
+    setHtmlVersions([]);
+    setVersionIndex(-1);
+    setActiveTab("preview");
     setExplorationHtml("");
     setExplorationPreview("");
     setExplorationEnableSubmission(false);
+    setExplorationHasSubmissions(false);
     syncConfirmedInjection(false);
     setOriginalHtmlForInjection("");
     setExplorationEnableAiCompanion(false);
@@ -863,7 +1112,7 @@ export default function TeacherTasksPage() {
     }
   };
 
-  // 上传 HTML 文件
+  // 上传 HTML 文件（纳入版本栈，可撤销/继续多轮）
   const handleUploadHtml = () => {
     const input = document.createElement("input");
     input.type = "file";
@@ -876,16 +1125,112 @@ export default function TeacherTasksPage() {
         MessagePlugin.warning("文件内容为空");
         return;
       }
+      // 导入后作为新版本（若撤销回旧版本，则截断后续版本）
+      const baseVersions = htmlVersions.slice(0, versionIndex + 1);
+      const newIndex = baseVersions.length;
+      setHtmlVersions([...baseVersions, text]);
+      setVersionIndex(newIndex);
       setExplorationHtml(text);
-      setExplorationPreview(text);
-      MessagePlugin.success("HTML 文件已加载，请预览");
+      setExplorationPreview(renderLocalPreview(text));
+      setChatMessages((prev) => [...prev, { role: "ai", content: "📄 已导入外部 HTML，可继续用对话修改" }]);
+      MessagePlugin.success("HTML 文件已加载，可继续用对话修改");
     };
     input.click();
   };
 
-  // 自动生成提示词（流式：教师输入的想法作为最高优先级主题）
+  // AI 接入提交采集：对导入/存量的未接桩 HTML 插桩（复用 generate 多轮分支）
+  const [adapting, setAdapting] = useState(false);
+
+  // 纯函数：调用 AI 对 HTML 插桩，成功返回改造后的 HTML，失败返回 null（不抛错、不改任何 state）
+  const adaptHtmlWithAi = async (html: string): Promise<string | null> => {
+    setAdapting(true);
+    const startAt = Date.now();
+    let msg = await MessagePlugin.loading("AI 接入采集中... 0s", 0);
+    const timer = setInterval(async () => {
+      const s = Math.round((Date.now() - startAt) / 1000);
+      msg.close();
+      msg = await MessagePlugin.loading(`AI 接入采集中... ${s}s`, 0);
+    }, 1000);
+    try {
+      const token = localStorage.getItem("token") || "";
+      const response = await fetch("/api/exploration-activities/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          subProjectId: explorationPanelSpId,
+          initialPrompt: "",
+          currentHtml: html,
+          instruction:
+            "请先判断页面形态，再按形态接入采集，全程不得改变页面任何视觉、交互逻辑、文案，输出完整 HTML：\n【游戏/练习型】页面有得分、关卡、对错等：找到记录分数/关卡/完成状态/用户答案的变量或函数，在它们被更新的代码处插入防御式上报调用（if (typeof updateScore === \"function\") updateScore(分数)；if (typeof completeSection === \"function\") completeSection(环节名)；if (typeof setGameLevel === \"function\") setGameLevel(关卡)），并把 score、maxScore、gameLevel、completedSections、answers 同步挂到 window.__gameState__。\n【纯交互/探索型】页面无作答表单（模拟实验、概念可视化、拖拽观察等，无分数也无答题）：不要虚构分数或答案。找出学生的关键可观察状态——滑杆/参数最终值、开关/灯泡状态、学生输入的结论或观察文字、关键变量等，在它们更新处插入防御式上报（if (typeof recordAction === \"function\") recordAction(类型, 描述, 值)），并以自定义键名把这些状态挂到 window.__gameState__（如 { 滑杆值: 3.2, 灯泡状态: \"亮\", 我的发现: \"...\" }）。\n【两者兼有】同时处理。\n如果页面已存在 __gameState__ 初始化或 typeof updateScore 之类的上报调用，说明已接入，直接原样输出 HTML 不要改动。",
+        }),
+      });
+      if (!response.ok || !response.body) throw new Error(`生成失败（${response.status}）`);
+
+      // 流式接收
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let received = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += decoder.decode(value, { stream: true });
+      }
+      const adapted = received.trim();
+      if (!adapted) throw new Error("AI 未返回内容");
+      return adapted;
+    } catch {
+      return null;
+    } finally {
+      clearInterval(timer);
+      msg.close();
+      setAdapting(false);
+    }
+  };
+
+  // 手动重试入口：降级后教师可再次触发 AI 接入（带确认，改造入版本栈可撤销）
+  const handleAdaptInstrumentation = async () => {
+    if (!explorationPanelSpId) return;
+    if (!explorationHtml.trim()) {
+      MessagePlugin.warning("请先生成或上传 HTML 内容");
+      return;
+    }
+    const detection = detectInstrumentation(explorationHtml);
+    if (!detection.needsAdaptation) {
+      MessagePlugin.info("该页面已接入提交采集，无需改造");
+      return;
+    }
+    // 混淆代码提示：minified/混淆变量 AI 难以识别，效果可能不佳
+    const minified = /[\w$]{200,}/.test(explorationHtml) || /_0x[a-f0-9]{4,}/.test(explorationHtml);
+    const confirmed = window.confirm(
+      minified
+        ? "检测到该 HTML 可能经过压缩/混淆，AI 接入效果可能不佳，仍要继续吗？\n（改造会作为新版本入栈，可随时撤销还原）"
+        : "AI 将把页面中的分数/关卡/作答状态变量接入提交采集，不改变任何视觉与交互。\n（改造会作为新版本入栈，可随时撤销还原）"
+    );
+    if (!confirmed) return;
+
+    const adapted = await adaptHtmlWithAi(explorationHtml);
+    if (!adapted) {
+      MessagePlugin.warning("⚠️ AI 采集接入未成功，当前仅采集基础数据（时长/操作/滚动），分数/关卡/作答暂无法上报");
+      return;
+    }
+    // 改造结果入版本栈（备份/撤销天然可用）
+    const baseVersions = htmlVersions.slice(0, versionIndex + 1);
+    const newIndex = baseVersions.length;
+    setHtmlVersions([...baseVersions, adapted]);
+    setVersionIndex(newIndex);
+    setExplorationHtml(adapted);
+    setExplorationPreview(renderLocalPreview(adapted));
+    setChatMessages((prev) => [
+      ...prev,
+      { role: "ai", content: "🔌 已完成提交采集接入（AI 插桩），建议预览试玩验证，可撤销还原" },
+    ]);
+    MessagePlugin.success("AI 接入采集完成，建议预览试玩验证（可撤销）");
+  };
+
+  // 自动生成提示词（流式：提示词编辑区已有输入时优化已有提示词，否则从零设计）
   const autoGeneratePrompt = async () => {
     if (!explorationPanelSpId) return;
+    const hadIdea = !!draftInput.trim();
     setGeneratingPrompt(true);
     const startAt = Date.now();
     let received = 0;
@@ -903,8 +1248,8 @@ export default function TeacherTasksPage() {
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
           subProjectId: explorationPanelSpId,
-          // 教师当前输入的想法（最高优先级主题），可为空（为空时后端按课堂信息生成）
-          teacherIdea: explorationDesignPrompt,
+          // 提示词编辑区已有的用户输入：非空时后端按「优化已有提示词」处理，为空时按课堂信息从零设计
+          teacherIdea: draftInput,
           title: explorationTitle,
         }),
       });
@@ -927,9 +1272,9 @@ export default function TeacherTasksPage() {
       const promptMatch = text.match(/提示词[：:]\s*([\s\S]+)/);
       const title = titleMatch ? titleMatch[1].trim().slice(0, 50) : "探究活动";
       const prompt = promptMatch ? promptMatch[1].trim() : text.trim();
-      setExplorationTitle(title);
-      setExplorationDesignPrompt(prompt);
-      MessagePlugin.success("互动设计提示词已生成");
+      if (!explorationTitle.trim()) setExplorationTitle(title);
+      setDraftInput(prompt);
+      MessagePlugin.success(hadIdea ? "已优化提示词，请确认后发送" : "已生成设计意图，请确认后发送");
     } catch {
       MessagePlugin.error("生成提示词失败");
     } finally {
@@ -939,14 +1284,25 @@ export default function TeacherTasksPage() {
     }
   };
 
-  // 生成 HTML（流式）
-  const handleGenerateHtml = async () => {
-    if (!explorationDesignPrompt.trim()) {
-      MessagePlugin.warning("请先输入互动设计提示词");
+  // 多轮对话生成 HTML（首轮/后续轮统一入口）
+  const handleSend = async () => {
+    const instruction = draftInput.trim();
+    if (!instruction) {
+      MessagePlugin.warning("请输入内容");
       return;
     }
-    setGeneratingHtml(true);
-    // 实时进度提示：首字节前显示思考计时，之后显示已生成字符数
+    const isFirstRound = htmlVersions.length === 0;
+    if (!isFirstRound && !explorationHtml.trim()) {
+      MessagePlugin.warning("缺少当前 HTML，请先生成或导入");
+      return;
+    }
+    if (isFirstRound) setInitialPrompt(instruction);
+
+    // 追加用户消息 + 清空输入
+    setChatMessages((prev) => [...prev, { role: "user", content: instruction }]);
+    setDraftInput("");
+    setGenerating(true);
+
     const startAt = Date.now();
     let msg = await MessagePlugin.loading("AI 思考中... 0s", 0);
     let receivedBytes = 0;
@@ -957,14 +1313,17 @@ export default function TeacherTasksPage() {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          prompt: explorationDesignPrompt,
+          subProjectId: explorationPanelSpId,
+          initialPrompt: isFirstRound ? instruction : initialPrompt,
+          currentHtml: isFirstRound ? "" : explorationHtml,
+          instruction,
         }),
       });
       if (!response.ok) {
         msg.close();
         const err = await response.json().catch(() => ({ error: "生成失败" }));
         MessagePlugin.error(err.error || "生成失败");
-        setGeneratingHtml(false);
+        setGenerating(false);
         return;
       }
       // 读取流式响应，实时更新进度
@@ -984,16 +1343,82 @@ export default function TeacherTasksPage() {
       }
       clearInterval(timer);
       msg.close();
-      setExplorationHtml(htmlContent);
-      setExplorationPreview(htmlContent);
-      MessagePlugin.success("网页生成成功，请预览效果");
+
+      // 剥离 markdown 代码块包裹与前后说明文字，只保留纯 HTML
+      const clean = extractHtml(htmlContent);
+      if (!clean) {
+        MessagePlugin.error("生成内容为空，请重试");
+        setGenerating(false);
+        return;
+      }
+
+      // 纳入版本栈（若撤销回旧版本，则截断后续版本再追加）
+      const baseVersions = htmlVersions.slice(0, versionIndex + 1);
+      const newIndex = baseVersions.length;
+      setHtmlVersions([...baseVersions, clean]);
+      setVersionIndex(newIndex);
+      setExplorationHtml(clean);
+      setExplorationPreview(renderLocalPreview(clean));
+      setChatMessages((prev) => [...prev, { role: "ai", content: `✓ 已生成第 ${newIndex + 1} 版` }]);
+      MessagePlugin.success("网页已更新");
     } catch {
       clearInterval(timer);
       msg.close();
       MessagePlugin.error("生成失败");
     } finally {
-      setGeneratingHtml(false);
+      setGenerating(false);
     }
+  };
+
+  // 撤销到上一版本
+  const handleUndo = () => {
+    if (versionIndex <= 0) return;
+    const idx = versionIndex - 1;
+    setVersionIndex(idx);
+    setExplorationHtml(htmlVersions[idx]);
+    setExplorationPreview(renderLocalPreview(htmlVersions[idx]));
+  };
+
+  // 重做到下一版本
+  const handleRedo = () => {
+    if (versionIndex >= htmlVersions.length - 1) return;
+    const idx = versionIndex + 1;
+    setVersionIndex(idx);
+    setExplorationHtml(htmlVersions[idx]);
+    setExplorationPreview(renderLocalPreview(htmlVersions[idx]));
+  };
+
+  // 导出 HTML 文件
+  const handleExportHtml = () => {
+    if (!explorationHtml.trim()) {
+      MessagePlugin.warning("请先生成或上传 HTML 内容");
+      return;
+    }
+    let taskGrade = "未知年级";
+    let taskSubject = "未知学科";
+    let taskTitle = "未知课题";
+    try {
+      const spTask = tasks.find(t => t.subProjects.some(sp => sp.id === explorationPanelSpId));
+      if (spTask) {
+        taskGrade = spTask.grade || "未知年级";
+        taskSubject = spTask.subject || "未知学科";
+        taskTitle = spTask.title;
+      }
+    } catch {}
+    const safeName = (s: string) => s.replace(/[\\/:*?"<>|，。、？！：；【】（）""''\s]/g, "_");
+    const filename = [safeName(taskTitle), safeName(taskGrade), safeName(taskSubject), safeName(explorationTitle)].join("_") + ".html";
+    // 导出纯净稿：剥掉平台注入的提交通道（提交按钮/追踪脚本/探究记录面板）与 AI 伴学残留，
+    // 保留页面本身。AI 契约桩（__gameState__ / typeof updateScore 防御式调用）保留——它们属于页面逻辑、
+    // 脱离平台后是 no-op 无害，且无起止标记包裹无法安全剥离。
+    // 🔗 RELATED 与后端 PUT 的 removeSubmitFunctionality 同源；改这里要一起看 src/lib/prompts/exploration-submit.ts。
+    const cleanHtml = stripAiCompanionCode(removeSubmitFunctionality(explorationHtml));
+    const blob = new Blob([cleanHtml], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 
   // 保存探究
@@ -1013,8 +1438,9 @@ export default function TeacherTasksPage() {
             enableSubmission: explorationEnableSubmission,
             enableAiCompanion: explorationEnableAiCompanion,
             aiCompanionPrompt: aiCompanionPromptText || undefined,
-            designPrompt: explorationDesignPrompt,
+            designPrompt: initialPrompt,
             analysisPrompt: explorationPrompt,
+            chatHistory: chatMessages,
           }),
         });
       } else {
@@ -1027,8 +1453,9 @@ export default function TeacherTasksPage() {
             htmlContent: explorationHtml,
             enableSubmission: explorationEnableSubmission,
             enableAiCompanion: explorationEnableAiCompanion,
-            designPrompt: explorationDesignPrompt,
+            designPrompt: initialPrompt,
             analysisPrompt: explorationPrompt,
+            chatHistory: chatMessages,
           }),
         });
       }
@@ -1046,14 +1473,16 @@ export default function TeacherTasksPage() {
         if (saved.aiCompanionPrompt) {
           setAiCompanionPromptText(saved.aiCompanionPrompt);
         }
-        // 若启用了 AI 伴学，预览需要用注入版本（GET 自愈），源码区保持纯净
-        if (saved.enableAiCompanion && saved.id) {
-          fetch(`/api/exploration-activities/${saved.id}`, { headers: { Authorization: `Bearer ${token}` } })
-            .then(r => r.json())
-            .then(d => { if (d.htmlContent) setExplorationPreview(d.htmlContent); })
-            .catch(() => {});
-        } else {
-          setExplorationPreview(explorationHtml);
+        // 保存后预览：本地渲染注入版（提交 + 伴学），源码区恒为纯净稿。
+        // ⛔ 不再依赖 GET 详情返回注入版（GET 详情现在返回纯净稿）。
+        setExplorationPreview(renderLocalPreview(saved.htmlContent ?? explorationHtml, {
+          enableSubmission: saved.enableSubmission,
+          enableAiCompanion: saved.enableAiCompanion,
+          collectProfile: saved.collectProfile ? parseCollectProfile(saved.collectProfile) : null,
+          explorationId: saved.id,
+        }));
+        if (saved.collectProfile) {
+          setExplorationCollectProfile(parseCollectProfile(saved.collectProfile));
         }
         MessagePlugin.success("探究已保存");
         if (saved._injectWarnings && saved._injectWarnings.length > 0) {
@@ -1124,21 +1553,23 @@ export default function TeacherTasksPage() {
               htmlContent: explorationHtml,
               enableSubmission: explorationEnableSubmission,
               enableAiCompanion: true,
-              designPrompt: explorationDesignPrompt,
+              designPrompt: initialPrompt,
               analysisPrompt: explorationPrompt,
+              chatHistory: chatMessages,
             }),
           });
           if (!res.ok) throw new Error("创建失败");
           const saved = await res.json();
           setExplorationEditId(saved.id);
           setExplorations((prev) => [saved, ...prev]);
-          // 同步预览
-          if (saved.enableAiCompanion && saved.id) {
-            fetch(`/api/exploration-activities/${saved.id}`, { headers: { Authorization: `Bearer ${token}` } })
-              .then(r => r.json())
-              .then(d => { if (d.htmlContent) setExplorationPreview(d.htmlContent); })
-              .catch(() => {});
-          }
+          // 同步预览（本地渲染注入版）
+          setExplorationPreview(renderLocalPreview(saved.htmlContent ?? explorationHtml, {
+            enableSubmission: saved.enableSubmission,
+            enableAiCompanion: true,
+            collectProfile: saved.collectProfile ? parseCollectProfile(saved.collectProfile) : null,
+            explorationId: saved.id,
+          }));
+          if (saved.collectProfile) setExplorationCollectProfile(parseCollectProfile(saved.collectProfile));
 
           // 生成伴学提示词
           setAiCompanionStatus("analyzing");
@@ -1198,15 +1629,16 @@ export default function TeacherTasksPage() {
         const saved = await res.json();
         setExplorations((prev) => prev.map((e) => e.id === saved.id ? saved : e));
 
-        // 同步更新预览和源代码编辑区
-        // saved.htmlContent 是纯净稿（PUT 不再持久化注入），预览需要注入版本
+        // 同步更新预览和源代码编辑区（源码区纯净稿，预览本地渲染注入版）
         if (saved.htmlContent) {
           setExplorationHtml(saved.htmlContent); // 源码区：纯净版
-          // 额外 GET 拿自愈注入版本用于预览 iframe
-          fetch(`/api/exploration-activities/${explorationEditId}`, { headers: { Authorization: `Bearer ${token}` } })
-            .then(r => r.json())
-            .then(d => { if (d.htmlContent) setExplorationPreview(d.htmlContent); })
-            .catch(() => setExplorationPreview(saved.htmlContent));
+          setExplorationPreview(renderLocalPreview(saved.htmlContent, {
+            enableSubmission: saved.enableSubmission,
+            enableAiCompanion: true,
+            collectProfile: saved.collectProfile ? parseCollectProfile(saved.collectProfile) : null,
+            explorationId: saved.id,
+          }));
+          if (saved.collectProfile) setExplorationCollectProfile(parseCollectProfile(saved.collectProfile));
         }
 
         // 3. 如果已有提示词 → 秒开，否则生成
@@ -1236,10 +1668,16 @@ export default function TeacherTasksPage() {
         if (res.ok) {
           const saved = await res.json();
           setExplorations((prev) => prev.map((e) => e.id === saved.id ? saved : e));
-          // 同步更新预览和源代码编辑区（移除AI伴学代码）
+          // 同步更新预览和源代码编辑区（源码区纯净稿；关闭伴学后预览仍按提交开关本地渲染）
           if (saved.htmlContent) {
             setExplorationHtml(saved.htmlContent);
-            setExplorationPreview(saved.htmlContent);
+            setExplorationPreview(renderLocalPreview(saved.htmlContent, {
+              enableSubmission: saved.enableSubmission,
+              enableAiCompanion: false,
+              collectProfile: saved.collectProfile ? parseCollectProfile(saved.collectProfile) : null,
+              explorationId: saved.id,
+            }));
+            if (saved.collectProfile) setExplorationCollectProfile(parseCollectProfile(saved.collectProfile));
           }
           MessagePlugin.success("AI伴学已关闭（提示词已保留，再次启用秒开）");
         }
@@ -1295,58 +1733,10 @@ export default function TeacherTasksPage() {
       return;
     }
 
-    // 未启用提交 → 直接保存
-    if (!explorationEnableSubmission) {
-      await doSaveExploration();
-      return;
-    }
-
-    // 已确认注入（用户在预览中点了确认）→ HTML 已改造，直接保存
-    if (confirmedInjection) {
-      await doSaveExploration();
-      return;
-    }
-
-    // 启用提交但未确认 → 先调 AI 预览（原始流程）
-    setPreviewLoading(true);
-    setPreviewError(null);
-    setPreviewAnalysis(null);
-    setAutoScoreScript(null);
-    setPreviewStatus("正在向 AI 发送 HTML 代码...");
-    setInjectionPreviewVisible(true);
-    try {
-      const token = localStorage.getItem("token") || "";
-      const res = await fetch("/api/exploration-activities/preview-injection", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          htmlContent: explorationHtml,
-          explorationId: explorationEditId || undefined,
-          subProjectId: explorationPanelSpId,
-        }),
-      });
-      let data;
-      try {
-        data = await res.json();
-      } catch (parseErr) {
-        setPreviewError("服务器返回格式错误：" + String(parseErr));
-        setPreviewLoading(false);
-        return;
-      }
-      if (data.success) {
-        setPreviewAnalysis(data.analysis);
-        setAutoScoreScript(data.autoScoreScript || null);
-      } else {
-        setPreviewError(data.error || "分析失败");
-        if (data.fallback) {
-          setPreviewAnalysis(data.fallback);
-        }
-      }
-    } catch (e: any) {
-      setPreviewError(e.message || "预览失败");
-    } finally {
-      setPreviewLoading(false);
-    }
+    // 新架构：提交/伴学注入由读取路径 renderExplorationHtml 内存渲染，保存只落纯净稿 + 开关。
+    // ⛔ DO NOT REVERT：保存前不再走「AI 预览确认注入」流程（提交 UI 不再于保存时注入落库）。
+    //    采集桩（AI 插桩）在「启用提交」开关切换时完成；未接桩仅降级为基础采集（UI 已黄条提示）。
+    await doSaveExploration();
   };
 
   // 删除探究
@@ -1408,6 +1798,37 @@ export default function TeacherTasksPage() {
     }
   };
 
+  // 清除探究的学生提交（失效后、改内容前的逃生口）
+  const handleClearExplorationSubmissions = async (explorationId: string) => {
+    if (!confirm("确定要清除本探究的全部学生提交吗？\n\nQuickForm 收集的答案将一并清空。\n\n此操作不可撤销！")) return;
+    setClearingSubmissionsExplorationId(explorationId);
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/exploration-activities/${explorationId}/clear-submissions`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (res.ok) {
+        // 重新拉取列表（_count 归零后，编辑锁定自然解除）
+        if (explorationPanelSpId) {
+          const refreshRes = await fetch(`/api/exploration-activities?subProjectId=${explorationPanelSpId}`, {
+            headers: { Authorization: `Bearer ${token}` },
+          });
+          const refreshData = await refreshRes.json();
+          setExplorations(Array.isArray(refreshData) ? refreshData : []);
+        }
+        MessagePlugin.success(`已清除 ${data.deletedCount ?? 0} 条提交`);
+      } else {
+        MessagePlugin.error(data.error || "清除失败");
+      }
+    } catch {
+      MessagePlugin.error("请求失败");
+    } finally {
+      setClearingSubmissionsExplorationId(null);
+    }
+  };
+
   // 探究排序
   const handleExplorationReorder = async (expId: string, direction: "up" | "down") => {
     if (!explorationPanelSpId) return;
@@ -1435,19 +1856,40 @@ export default function TeacherTasksPage() {
 
   // 编辑已有探究
   const openEditExploration = (e: any) => {
+    // ⛔ DO NOT REVERT：有学生提交时禁止进入编辑（2026-09-25 用户拍板）。
+    //   旧设计是「编辑器照开、HTML 锁定、标题/提示词仍可改」，但用户明确要求入口拦截并提示
+    //   「已有学生提交，请清除后编辑！」。清除路径：先失效（开关）→「清除提交」→ 再编辑。
+    //   _count 来自列表接口（/api/exploration-activities?subProjectId= 的 include _count），
+    //   清除提交成功后会重拉列表归零（见 handleClearExplorationSubmissions），拦截自然解除。
+    // 🔗 RELATED：清除提交按钮（本文件，仅 !enabled 且有提交时显示）；
+    //   编辑器内 explorationHasSubmissions 锁定与服务端 PUT 字段锁
+    //   （[id]/route.ts existingSubs>0 分支）都保留作兜底——防列表数据滞后
+    //   （老师开着面板期间学生刚提交）时漏拦。
+    if ((e._count?.ExplorationSubmission ?? 0) > 0) {
+      MessagePlugin.warning("已有学生提交，请清除后编辑！");
+      return;
+    }
     setExplorationEditId(e.id);
     setExplorationTitle(e.title);
-    setExplorationDesignPrompt(e.designPrompt || ""); // 互动设计提示词（如果有保存的话）
+    setInitialPrompt(e.designPrompt || ""); // 首轮设计意图（保存的 designPrompt）
+    setDraftInput("");
+    setChatMessages([]);
+    setActiveTab("preview");
     setExplorationPrompt(e.analysisPrompt || "");
     // 源码编辑区保持纯净稿（去除 AI 伴学注入代码），预览区使用含注入版本
     // 列表接口已瘦身不再返回 htmlContent，统一从详情接口按需拉取（避免列表页传输大段HTML）
     const rawHtml = e.htmlContent || "";
-    if (e.enableAiCompanion) {
-      setExplorationHtml(stripAiCompanionCode(rawHtml));
-    } else {
-      setExplorationHtml(rawHtml);
-    }
+    const cleanRaw = e.enableAiCompanion ? stripAiCompanionCode(rawHtml) : rawHtml;
+    setExplorationHtml(cleanRaw);
     setExplorationPreview(rawHtml);
+    // 版本栈：编辑已有探究，初始为当前 HTML 作为 v0
+    if (rawHtml) {
+      setHtmlVersions([cleanRaw]);
+      setVersionIndex(0);
+    } else {
+      setHtmlVersions([]);
+      setVersionIndex(-1);
+    }
     // 答题提交相关
     setExplorationEnableSubmission(e.enableSubmission || false);
     setExplorationHasSubmissions((e._count?.ExplorationSubmission ?? 0) > 0);
@@ -1459,31 +1901,80 @@ export default function TeacherTasksPage() {
     setAiCompanionPromptText((e as any).aiCompanionPrompt || "");
     setAiCompanionStatus(e.enableAiCompanion ? "ready" : "idle");
     setShowAiCompanionPrompt(false);
-    setExplorationModalVisible(true);
+    // ⚠️ 这里**故意不打开**弹窗：列表接口已不下发 htmlContent 与提示词正文，
+    //    必须等下面详情拉回来再打开。否则就是「先开弹窗、后补数据」——
+    //    一旦详情拉取失败，源码区 / 预览区 / 提示词会全为空，用户一保存就把
+    //    库里的探究正文和提示词整片清空。
+    //    （真正打开弹窗的动作在下方 async 块的成功分支末尾）
 
     // 从详情接口获取完整 htmlContent（列表已瘦身，编辑时按需拉取）
     // 详情含注入版HTML + 最新提示词；预览用注入版，源码区保持纯净
     (async () => {
       try {
         const token = localStorage.getItem("token") || "";
+        // 拉完整详情：/api/exploration-activities/[id] 始终返回完整字段
+        // （含 htmlContent 正文与 designPrompt / analysisPrompt / aiCompanionPrompt）。
+        // ⚠️ 编辑探究**必须**拿正文，所以这里不要改用 fetchTaskDetailLite（它会剥掉 htmlContent）。
         const detailRes = await fetch(`/api/exploration-activities/${e.id}`, {
           headers: { Authorization: `Bearer ${token}` },
         });
-        if (detailRes.ok) {
-          const detail = await detailRes.json();
-          if (detail.htmlContent) {
-            const clean = e.enableAiCompanion ? stripAiCompanionCode(detail.htmlContent) : detail.htmlContent;
-            setExplorationHtml(clean);          // 源码编辑区：纯净稿
-            setExplorationPreview(detail.htmlContent); // 预览区：注入版
-            setOriginalHtmlForInjection(clean);
-          }
-          if (detail.aiCompanionPrompt && detail.aiCompanionPrompt.length > 50) {
-            setAiCompanionPromptText(detail.aiCompanionPrompt);
-            setAiCompanionStatus("ready");
-          }
+        if (!detailRes.ok) {
+          // 拿不到权威完整数据就**不进编辑态**（弹窗不开），避免空白内容覆盖数据库
+          MessagePlugin.error("读取探究详情失败，请重试");
+          return;
         }
+        const detail = await detailRes.json();
+        if (detail.htmlContent) {
+          // GET 详情现在返回纯净稿（不含提交/伴学注入），源码区直接用；
+          // 预览区本地渲染注入版（按 detail 的开关 + collectProfile，与学生端一致）。
+          const clean = detail.htmlContent;
+          setExplorationHtml(clean);          // 源码编辑区：纯净稿
+          setExplorationPreview(renderLocalPreview(clean, {
+            enableSubmission: detail.enableSubmission,
+            enableAiCompanion: detail.enableAiCompanion,
+            collectProfile: detail.collectProfile ? parseCollectProfile(detail.collectProfile) : null,
+            explorationId: detail.id,
+          }));
+          if (detail.collectProfile) {
+            setExplorationCollectProfile(parseCollectProfile(detail.collectProfile));
+          }
+          setOriginalHtmlForInjection(clean);
+          // 详情是权威完整版，重建版本栈 v0
+          setHtmlVersions([clean]);
+          setVersionIndex(0);
+          // 编辑回显：按「是否开启提交 + 采集是否已接桩」恢复 confirmedInjection。
+          // ⛔ 别始终 false —— 否则编辑一个已开启提交（且已接桩）的探究时，
+          //    会被误判成「未确认注入」，保存/开关切换时又弹 AI 预览（回归）。
+          syncConfirmedInjection(!!detail.enableSubmission && !detectInstrumentation(clean).needsAdaptation);
+        }
+        // 已有提交数：列表接口不下发 _count，以详情为准更新（决定是否锁定 HTML 编辑）。
+        // ⛔ 别漏这步 —— 否则 explorationHasSubmissions 恒为 false，锁定编辑/关闭提交拦截全部失效。
+        setExplorationHasSubmissions((detail._count?.ExplorationSubmission ?? 0) > 0);
+        // 提示词回显：详情是权威来源，无条件回填。
+        // ⛔ 别再按长度过滤（原 length > 50 会把短提示词误判成空，导致「编辑时提示词不显示」）
+        if (detail.aiCompanionPrompt) {
+          setAiCompanionPromptText(detail.aiCompanionPrompt);
+          setAiCompanionStatus("ready");
+        }
+        // 列表接口已剥离提示词正文，这两个提示词改由本详情接口补齐。
+        // ⚠️ 别再依赖列表数据回填它们 —— 否则「首轮设计意图 / 分析提示词」会显示为空，
+        //    用户一保存就把库里的内容清掉（契约见 fetchTaskDetailLite 上方说明）。
+        if (detail.designPrompt !== undefined) setInitialPrompt(detail.designPrompt || "");
+        if (detail.analysisPrompt !== undefined) setExplorationPrompt(detail.analysisPrompt || "");
+        // 回显多轮对话历史到对话流：
+        // ⛔ 优先用 chatHistory（库中持久化的完整对话流，含第二轮起的提示词）；
+        //    无则回退到首轮 designPrompt 单条。否则「第二轮起的提示词」保存后再次打开会丢失（旧 bug）。
+        //    （历史反馈「编辑时 html 提示词仍没显示」即因只回填 designPrompt 单条、丢失后续轮次。）
+        if (Array.isArray(detail.chatHistory) && detail.chatHistory.length > 0) {
+          setChatMessages(detail.chatHistory);
+        } else if (detail.designPrompt) {
+          setChatMessages([{ role: "user", content: detail.designPrompt }]);
+        }
+        // 数据已到齐，此刻才允许进入编辑态
+        setExplorationModalVisible(true);
       } catch {
-        // 详情拉取失败则保持列表已有数据
+        // 详情拉取失败：同样不进编辑态（上面已 return / 这里已没有可用的权威数据）
+        MessagePlugin.error("读取探究详情失败，请重试");
       }
     })();
   };
@@ -1604,6 +2095,7 @@ export default function TeacherTasksPage() {
     fetchClasses();
     fetchTemplates();
     fetchKnowledgeBases();
+    fetchImageGroups();
   }, []);
 
   // 作业分析弹窗滚动到AI区域
@@ -1640,26 +2132,66 @@ export default function TeacherTasksPage() {
           return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
         });
         setTasks(sortedData);
-        // 仅在首次加载时自动展开
+        // 仅在首次加载时决定展开哪门课：优先恢复上次停留的位置，其次才默认展开第一门
         if (initial) {
-          const enabledTask = data.find((t: LearningTask) => t.status === "ENABLED");
-          if (enabledTask) {
-            setExpandedTaskId(enabledTask.id);
-            const allSpIds = new Set<string>();
-            data.forEach((t: LearningTask) => {
+          const enabledSpIdsOf = (list: LearningTask[]) => {
+            const ids = new Set<string>();
+            list.forEach((t: LearningTask) => {
               if (t.status === "ENABLED") {
                 t.subProjects.forEach((sp) => {
-                  if (sp.id) allSpIds.add(sp.id);
+                  if (sp.id) ids.add(sp.id);
                 });
               }
             });
-            setExpandedSpIds(allSpIds);
-            const firstSp = enabledTask.subProjects[0];
+            return ids;
+          };
+          const openFirstSp = (task: LearningTask) => {
+            const firstSp = task.subProjects?.[0];
             if (firstSp?.id) {
-              openQuizPanel(firstSp.id, enabledTask);
+              openQuizPanel(firstSp.id, task);
               // 同时自动加载互动探究列表（如果已有探究项目，面板会立刻显示；没有则无影响）
-              openExplorationPanel(firstSp.id, enabledTask);
+              openExplorationPanel(firstSp.id, task);
             }
+          };
+
+          const saved = readTasksViewState();
+          const savedTask = saved?.taskId ? sortedData.find((t: LearningTask) => t.id === saved.taskId) : undefined;
+          const enabledTask = sortedData.find((t: LearningTask) => t.status === "ENABLED");
+
+          if (savedTask) {
+            // 恢复上次停留的课堂与展开的子活动
+            const validSpIds = enabledSpIdsOf(sortedData);
+            setExpandedTaskId(savedTask.id);
+            // 只恢复仍然存在的子活动；一个都对不上（如刚编辑过课程、子活动被重建）就整体展开，避免"展开了却空着"
+            const restoredSpIds = (saved?.spIds || []).filter((id) => validSpIds.has(id));
+            const restoredSpIdSet = restoredSpIds.length > 0 ? new Set(restoredSpIds) : validSpIds;
+            setExpandedSpIds(restoredSpIdSet);
+            // 该课堂若不在第一页，自动翻到它所在的那一页
+            const savedIndex = sortedData.findIndex((t: LearningTask) => t.id === savedTask.id);
+            if (savedIndex >= 0) setCurrentPage(Math.floor(savedIndex / pageSize) + 1);
+            openFirstSp(savedTask);
+
+            // 等这一帧渲染完，把画面滚回上次的位置
+            const savedScrollY = saved?.scrollY || 0;
+            const restoredTaskId = savedTask.id;
+            const restoredSpIdsArray = Array.from(restoredSpIdSet);
+            setTimeout(() => {
+              const el = document.getElementById(`task-card-${restoredTaskId}`);
+              if (savedScrollY > 0) window.scrollTo({ top: savedScrollY });
+              else if (el) el.scrollIntoView({ block: "start" });
+              viewStateRef.current = { taskId: restoredTaskId, spIds: restoredSpIdsArray, scrollY: savedScrollY };
+              viewReadyRef.current = true;
+            }, 250);
+          } else if (enabledTask) {
+            // 没有历史记录（首次进入，或标签页已关闭）：保持原有默认行为——展开第一门课
+            const allSpIds = enabledSpIdsOf(sortedData);
+            setExpandedTaskId(enabledTask.id);
+            setExpandedSpIds(allSpIds);
+            openFirstSp(enabledTask);
+            viewStateRef.current = { taskId: enabledTask.id, spIds: Array.from(allSpIds), scrollY: 0 };
+            viewReadyRef.current = true;
+          } else {
+            viewReadyRef.current = true;
           }
         }
         return data;
@@ -1739,6 +2271,36 @@ export default function TeacherTasksPage() {
       .reduce((sum, kb) => sum + (kb?.contentLength || 0), 0);
   };
 
+  const fetchImageGroups = async () => {
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/image-groups", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setImageGroups(
+          data
+            .filter((g: { id: string; name: string; enabled: boolean; images: unknown[] }) => g.enabled)
+            .map((g: { id: string; name: string; enabled: boolean; images: unknown[] }) => ({
+              id: g.id,
+              name: g.name,
+              enabled: g.enabled,
+              imageCount: g.images?.length || 0,
+            }))
+        );
+      }
+    } catch {
+      console.error("获取图片组失败");
+    }
+  };
+
+  const toggleImageGroupSelection = (groupId: string) => {
+    setSelectedImageGroupIds((prev) =>
+      prev.includes(groupId) ? prev.filter((id) => id !== groupId) : [...prev, groupId]
+    );
+  };
+
   const toggleKbSelection = (kbId: string) => {
     setSelectedKbIds((prev) => {
       if (prev.includes(kbId)) {
@@ -1763,6 +2325,7 @@ export default function TeacherTasksPage() {
     setObjectivesBackup(null);
     setFormClassIds([]);
     setSelectedKbIds([]);
+    setSelectedImageGroupIds([]);
     setEditingTask(null);
     setFormStudentTemplateId("");
     setFormClassTemplateId("");
@@ -1786,6 +2349,14 @@ export default function TeacherTasksPage() {
 
   // Step 1: 编辑已有作业（从列表进入设计模式）
   const startEditQuiz = (q: any) => {
+    // ⛔ DO NOT REVERT：有答题记录时禁止快编 —— 服务端 PUT /api/quiz-activities/[id]
+    //   对 attemptCount>0 一律 403（所有字段都改不了），这里不拦的话老师改半天、
+    //   保存时才报错。与探究「编辑」入口拦截（openEditExploration）口径一致。
+    //   清除路径：失效 →「清除答题」→ 再编辑；「题目管理」页仍可进入查看（自带只读横幅）。
+    if ((q._count?.attempts ?? 0) > 0) {
+      MessagePlugin.warning("已有学生提交，请清除后编辑！");
+      return;
+    }
     const tpl = templates.find((t: any) => t.type === "QUIZ_DESIGN");
     setQuizDesignId(q.id); // 编辑已有
     setQuizDesignTitle(q.title);
@@ -2161,21 +2732,72 @@ export default function TeacherTasksPage() {
     setFormVisible(true);
   };
 
-  const openEditForm = (task: LearningTask) => {
-    setEditingTask(task);
-    setFormTitle(task.title);
-    setFormDescription(task.description || "");
-    setFormGrade(task.grade || "");
-    setFormSubject(task.subject || "");
-    setFormClassIds(task.assignments.map((a) => a.classId));
-    // 设置分析提示词到独立 state
-    setFormAnalysisPrompt(task.analysisPrompt || "");
-    setFormClassAnalysisPrompt((task as any).classAnalysisPrompt || "");
+  // ── 按需拉取课堂详情（「列表瘦身契约」的前端那一半） ──────────────────────
+  // ⚠️ 为什么必须存在：GET /api/tasks（列表接口）**有意不下发**提示词正文
+  //   （systemPrompt / analysisPrompt / classAnalysisPrompt / designPrompt /
+  //    aiCompanionPrompt）与探究 HTML 正文 —— 实测 8 个课堂的列表响应 372 KiB 里
+  //   89% 是这些大字段，而数据库查询只要 14ms，所以「课堂管理页打开慢」的根因
+  //   就是每次刷新都要传它们。瘦身后 372 KiB → 65.5 KiB（降 82.4%）。
+  //
+  //   代价：编辑弹窗不能再拿列表数据直接初始化表单，必须**先拉详情**，
+  //   否则输入框是空的，用户一保存就把库里原有的提示词清掉（真实数据丢失）。
+  //
+  // ⛔ 调用约定（以后新加编辑入口务必遵守）：
+  //   凡是「打开一个会把提示词/正文回写到数据库的表单或编辑器」，都必须先
+  //   `await` 本函数；拿不到 detail 就 `MessagePlugin.error(...)` + `return`，
+  //   **不要**先打开弹窗再补数据，也**不要**拿列表对象兜底（那等于用空值覆盖数据库）。
+  //   现有 4 个调用点：
+  //     - openEditForm（编辑课堂）            → 本函数（lite）
+  //     - startEditingSubProjects（编辑子活动） → 本函数（lite）
+  //     - openEditConversationDialog（编辑对话活动）→ GET /api/preset-conversations/[id]
+  //     - openEditExploration（编辑探究）      → GET /api/exploration-activities/[id]（要正文，不带 lite）
+  //
+  // lite=1：不带探究 HTML 正文（单课可达数百 KB，编辑课堂/子活动并不需要它）。
+  // 接口侧契约（为什么列表要剥、为什么不能加回去）见
+  // src/app/api/tasks/route.ts GET 分支顶部的「列表瘦身契约」注释块。
+  // ──────────────────────────────────────────────────────────────────────────
+  const fetchTaskDetailLite = async (taskId: string): Promise<any | null> => {
     try {
-      const ids = task.knowledgeBaseIds ? JSON.parse(task.knowledgeBaseIds) : [];
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/tasks/${taskId}?lite=1`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return null;
+      return await res.json();
+    } catch {
+      return null;
+    }
+  };
+
+  // 编辑课堂：⚠️ 必须**先拿到详情再打开表单**（原因见 fetchTaskDetailLite 上方的契约）。
+  // 拉取失败直接 return —— 不要退化成「用列表里的 task 对象打开表单」，
+  // 那样提示词框是空的，用户一点保存就会把库里已有的提示词覆盖成空。
+  const openEditForm = async (task: LearningTask) => {
+    const detail = await fetchTaskDetailLite(task.id);
+    if (!detail) {
+      MessagePlugin.error("读取课堂详情失败，请重试");
+      return;
+    }
+    setEditingTask(detail as LearningTask);
+    setFormTitle(detail.title || "");
+    setFormDescription(detail.description || "");
+    setFormGrade(detail.grade || "");
+    setFormSubject(detail.subject || "");
+    setFormClassIds((detail.assignments || []).map((a: any) => a.classId));
+    // 设置分析提示词到独立 state
+    setFormAnalysisPrompt(detail.analysisPrompt || "");
+    setFormClassAnalysisPrompt(detail.classAnalysisPrompt || "");
+    try {
+      const ids = detail.knowledgeBaseIds ? JSON.parse(detail.knowledgeBaseIds) : [];
       setSelectedKbIds(Array.isArray(ids) ? ids : []);
     } catch {
       setSelectedKbIds([]);
+    }
+    try {
+      const imgIds = detail.imageGroupIds ? JSON.parse(detail.imageGroupIds) : [];
+      setSelectedImageGroupIds(Array.isArray(imgIds) ? imgIds : []);
+    } catch {
+      setSelectedImageGroupIds([]);
     }
     setFormVisible(true);
   };
@@ -2283,6 +2905,7 @@ export default function TeacherTasksPage() {
         knowledgeBase: editingTask?.knowledgeBase || "",
         analysisPrompt: formAnalysisPrompt || editingTask?.analysisPrompt || "",
         knowledgeBaseIds: selectedKbIds.length > 0 ? JSON.stringify(selectedKbIds) : null,
+        imageGroupIds: selectedImageGroupIds.length > 0 ? JSON.stringify(selectedImageGroupIds) : null,
         classIds: formClassIds,
         classAnalysisPrompt: formClassAnalysisPrompt || (editingTask as any)?.classAnalysisPrompt || "",
       };
@@ -2452,11 +3075,18 @@ export default function TeacherTasksPage() {
   };
 
   // startEditingSubProjects：analysisPrompt 直接赋值，不再做模板映射
-  const startEditingSubProjects = (task: LearningTask) => {
+  // ⚠️ 列表接口已剥离提示词正文，进入编辑态前先拉详情补齐（契约见 fetchTaskDetailLite 上方）；
+  // 拉取失败或子活动为空则**不进编辑态**，避免整屏空白框被保存回库。
+  const startEditingSubProjects = async (task: LearningTask) => {
+    const detail = await fetchTaskDetailLite(task.id);
+    if (!detail || !Array.isArray(detail.subProjects) || detail.subProjects.length === 0) {
+      MessagePlugin.error("读取课堂详情失败，请重试");
+      return;
+    }
     setEditingTaskId(task.id);
 
     setEditingSubProjects(
-      task.subProjects.map((sp) => ({
+      detail.subProjects.map((sp: any) => ({
         id: sp.id,
         title: sp.title,
         description: sp.description || "",
@@ -2464,7 +3094,7 @@ export default function TeacherTasksPage() {
         requirements: sp.requirements || "",
         knowledgeBase: sp.knowledgeBase || "",
         analysisPrompt: sp.analysisPrompt || "",
-        presetConversations: sp.presetConversations.map((pc) => ({
+        presetConversations: (sp.presetConversations || []).map((pc: any) => ({
           id: pc.id,
           title: pc.title,
           description: pc.description || "",
@@ -2760,6 +3390,7 @@ export default function TeacherTasksPage() {
               return (
                 <Card key={task.id} className="template-compact-card">
                   <div
+                    id={`task-card-${task.id}`}
                     className="cursor-pointer"
                     onClick={() => {
                       if (isExpanded) {
@@ -2788,19 +3419,46 @@ export default function TeacherTasksPage() {
                             {getStatusTag(task.status)}
                             {task.grade && <Tag theme="default" variant="light" size="small">{task.grade}</Tag>}
                             {task.subject && <Tag theme="primary" variant="light" size="small">{task.subject}</Tag>}
-                          </div>
-                          <div className="text-xs text-[#63666F]">
-                            {task.grade && `${task.grade} · `}{task.subject && `${task.subject} · `}更新于 {new Date(task.createdAt).toLocaleDateString()}
+                            {!isExpanded && (() => {
+                              const counts = task.subProjects?.reduce(
+                                (acc, sp) => {
+                                  acc.conversations += ((sp as any).presetConversations?.length ?? 0);
+                                  acc.quizzes += ((sp as any).quizActivities?.length ?? 0);
+                                  acc.projects += ((sp as any).projectSubmissions?.length ?? 0);
+                                  acc.explorations += ((sp as any).explorationActivities?.length ?? 0);
+                                  return acc;
+                                },
+                                { conversations: 0, quizzes: 0, projects: 0, explorations: 0 }
+                              ) ?? { conversations: 0, quizzes: 0, projects: 0, explorations: 0 };
+                              const badges = [
+                                { label: "对话", count: counts.conversations, theme: "default" as const },
+                                { label: "作业", count: counts.quizzes, theme: "primary" as const },
+                                { label: "项目", count: counts.projects, theme: "success" as const },
+                                { label: "探究", count: counts.explorations, theme: "warning" as const },
+                              ].filter((b) => b.count > 0);
+                              if (badges.length === 0) return null;
+                              return (
+                                <>
+                                  {badges.map((b) => (
+                                    <Tag key={b.label} theme={b.theme} variant="light" size="small">
+                                      {b.label} {b.count}
+                                    </Tag>
+                                  ))}
+                                </>
+                              );
+                            })()}
                           </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
                         <div className="flex gap-1 mr-2">
-                          {task.assignments.map((a) => (
-                            <Tag key={a.classId} theme="primary" variant="light" size="small">
-                              {a.class.name}
-                            </Tag>
-                          ))}
+                          {task.assignments.length > 0 && (
+                            <Tooltip content={task.assignments.map((a) => a.class.name).join("、")}>
+                              <Tag theme="primary" variant="light" size="small">
+                                班级 {task.assignments.length}
+                              </Tag>
+                            </Tooltip>
+                          )}
                         </div>
                         <Button
                           theme={task.status === "ENDED" ? "warning" : "default"}
@@ -2821,7 +3479,7 @@ export default function TeacherTasksPage() {
                             variant="text"
                             size="small"
                             icon={<ChartBarIcon />}
-                            onClick={() => router.push(`/teacher/tasks/${task.id}/insights`)}
+                            onClick={() => goTo(`/teacher/tasks/${task.id}/insights`)}
                           />
                         </Tooltip>
                         <Tooltip content="重置清理学生记录">
@@ -2980,6 +3638,27 @@ export default function TeacherTasksPage() {
                                   </Tag>
                                 ))}
                                 <span className="text-xs text-gray-400 ml-1">共 {totalLen.toLocaleString()} 字符</span>
+                              </div>
+                            );
+                          }
+                        } catch { /* ignore */ }
+                        return null;
+                      })()}
+
+                      {/* 关联图片组 */}
+                      {(task as any).imageGroupIds && (() => {
+                        try {
+                          const gIds = JSON.parse((task as any).imageGroupIds) as string[];
+                          const linkedGroups = imageGroups.filter((g) => gIds.includes(g.id));
+                          if (linkedGroups.length > 0) {
+                            return (
+                              <div className="text-sm text-[#63666F]">
+                                <span className="text-gray-500">图片组：</span>
+                                {linkedGroups.map((g) => (
+                                  <Tag key={g.id} theme="primary" variant="light" size="small" style={{ marginRight: 4 }}>
+                                    {g.name}（{g.imageCount}张）
+                                  </Tag>
+                                ))}
                               </div>
                             );
                           }
@@ -3256,7 +3935,7 @@ export default function TeacherTasksPage() {
                                             variant="text"
                                             size="small"
                                             icon={<ChartBarIcon />}
-                                            onClick={() => router.push(`/teacher/tasks/${task.id}/insights?pc=${pc.id}`)}
+                                            onClick={() => goTo(`/teacher/tasks/${task.id}/insights?pc=${pc.id}`)}
                                           >
                                             分析
                                           </Button>
@@ -3345,23 +4024,28 @@ export default function TeacherTasksPage() {
                                           <Button theme="primary" variant="text" size="small"
                                             icon={<BrowseIcon />}
                                             onClick={async () => {
-                                              {
-                                                const token = localStorage.getItem("token") || "";
-                                                const res = await fetch(`/api/exploration-activities/${e.id}`, {
-                                                  headers: { Authorization: `Bearer ${token}` },
-                                                });
-                                                if (res.ok) {
-                                                  const detail = await res.json();
-                                                  openPreview(detail.htmlContent || e.htmlContent);
-                                                  return;
-                                                }
+                                              const token = localStorage.getItem("token") || "";
+                                              const res = await fetch(`/api/exploration-activities/${e.id}`, {
+                                                headers: { Authorization: `Bearer ${token}` },
+                                              });
+                                              if (res.ok) {
+                                                const detail = await res.json();
+                                                // 详情返回纯净稿，本地渲染注入版（提交 + 伴学），与学生端一致。
+                                                openPreview(renderLocalPreview(detail.htmlContent || e.htmlContent || "", {
+                                                  enableSubmission: detail.enableSubmission,
+                                                  enableAiCompanion: detail.enableAiCompanion,
+                                                  collectProfile: detail.collectProfile ? parseCollectProfile(detail.collectProfile) : null,
+                                                  explorationId: detail.id,
+                                                }));
+                                                return;
                                               }
-                                              openPreview(e.htmlContent);
+                                              // 详情拉取失败：列表 htmlContent 已是渲染版，直接预览。
+                                              openPreview(e.htmlContent || "");
                                             }}>预览</Button>
                                           {e.enableSubmission && (
                                             <Button theme="success" variant="text" size="small"
                                               icon={<ChartBarIcon />}
-                                              onClick={() => router.push(`/teacher/tasks/${expandedTaskId}/exploration/${e.id}`)}>分析</Button>
+                                              onClick={() => goTo(`/teacher/tasks/${expandedTaskId}/exploration/${e.id}`)}>分析</Button>
                                           )}
                                           <Button theme="primary" variant="text" size="small"
                                             icon={<EditIcon />}
@@ -3370,6 +4054,13 @@ export default function TeacherTasksPage() {
                                             icon={<DeleteIcon />}
                                             loading={operatingExplorationId === e.id}
                                             onClick={() => handleDeleteExploration(e.id)}>删除</Button>
+                                          {/* 清除提交：仅在失效且有人提交时显示（与课堂作业「清除答题」口径一致） */}
+                                          {!e.enabled && (e._count?.ExplorationSubmission ?? 0) > 0 && (
+                                            <Button theme="warning" variant="text" size="small"
+                                              icon={<DeleteIcon />}
+                                              loading={clearingSubmissionsExplorationId === e.id}
+                                              onClick={() => handleClearExplorationSubmissions(e.id)}>清除提交</Button>
+                                          )}
                                           <Switch value={e.enabled} size="small"
                                             onChange={(val: boolean) => handleExplorationToggle(e, val)}
                                             disabled={togglingExplorationId === e.id} />
@@ -3389,8 +4080,11 @@ export default function TeacherTasksPage() {
                                           )}
                                         </div>
                                       </div>
-                                      {e.description && (
-                                        <div className="text-xs text-gray-400">{e.description}</div>
+                                      {/* 名称下方：描述 + 提交人数（开启提交才显示人数，与课堂作业「N人已答」对齐） */}
+                                      {(e.description || e.enableSubmission) && (
+                                        <div className="text-xs text-gray-400">
+                                          {[e.description || "", e.enableSubmission ? `${e._count?.ExplorationSubmission ?? 0}人已提交` : ""].filter(Boolean).join(" · ")}
+                                        </div>
                                       )}
                                     </div>
                                   ))}
@@ -3539,12 +4233,12 @@ export default function TeacherTasksPage() {
                                           <>
                                             <Button theme="default" variant="text" size="small"
                                               disabled={psIdx === 0 || reorderingProjectId === ps.id}
-                                              onClick={() => handleProjectReorder(ps.id, "up", ps.subProjectId || spId)}>
+                                              onClick={() => handleProjectReorder(ps.id, "up", ps.subProjectId)}>
                                               <ChevronUpIcon />
                                             </Button>
                                             <Button theme="default" variant="text" size="small"
                                               disabled={psIdx === allPs.length - 1 || reorderingProjectId === ps.id}
-                                              onClick={() => handleProjectReorder(ps.id, "down", ps.subProjectId || spId)}>
+                                              onClick={() => handleProjectReorder(ps.id, "down", ps.subProjectId)}>
                                               <ChevronDownIcon />
                                             </Button>
                                           </>
@@ -3595,6 +4289,21 @@ export default function TeacherTasksPage() {
                                             {(templates.filter((t: any) => t.type === "QUIZ_DESIGN") || []).map((t: any) => (<option key={t.id} value={t.id}>{t.name}</option>))}
                                           </select>
                                           {!selectedQuizTemplateId && <div className="mt-2 p-3 bg-yellow-50 rounded-lg text-xs text-yellow-700">提示：还没有作业设计模板？去「模板设置」页面创建一个。</div>}
+                                          {selectedQuizTemplateId && (() => {
+                                            const tpl: any = templates.find((t: any) => t.id === selectedQuizTemplateId);
+                                            if (!tpl) return null;
+                                            return (
+                                              <div className="mt-2">
+                                                <TemplatePreviewButton
+                                                  templateId={tpl.id}
+                                                  templateName={tpl.name}
+                                                  templateType={tpl.type}
+                                                  hasPreview={!!tpl.hasPreview}
+                                                  previewStale={!!tpl.previewStale}
+                                                />
+                                              </div>
+                                            );
+                                          })()}
                                         </div>
                                         <Textarea value={quizDesignTemplateContent} onChange={(v) => setQuizDesignTemplateContent(v)} placeholder="作业设计提示词..." rows={6} />
                                         <div className="flex gap-2 items-center">
@@ -3671,7 +4380,7 @@ export default function TeacherTasksPage() {
                                             {q.status === "INACTIVE" && (
                                               <>
                                                 <Button theme="primary" variant="text" size="small" icon={<EditIcon />} onClick={() => startEditQuiz(q)}>快编</Button>
-                                                <Button theme="primary" variant="text" size="small" icon={<FileIcon />} onClick={() => router.push(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/questions`)}>题目管理</Button>
+                                                <Button theme="primary" variant="text" size="small" icon={<FileIcon />} onClick={() => goTo(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/questions`)}>题目管理</Button>
                                                 <Button theme="default" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openQuizPreview(q)}>预览</Button>
                                                 {(q._count?.attempts ?? 0) > 0 && (
                                                   <Button theme="warning" variant="text" size="small" icon={<DeleteIcon />} loading={clearingAttemptsQuizId === q.id} onClick={() => handleClearAttempts(q.id)}>清除答题</Button>
@@ -3683,11 +4392,8 @@ export default function TeacherTasksPage() {
                                             {/* 生效中（ACTIVE）按钮 */}
                                             {q.status === "ACTIVE" && (
                                               <>
-                                                <Button theme="success" variant="text" size="small" icon={<ChartBarIcon />} onClick={() => router.push(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/report`)}>查看报告</Button>
+                                                <Button theme="success" variant="text" size="small" icon={<ChartBarIcon />} onClick={() => goTo(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/report`)}>查看报告</Button>
                                                 <Button theme="default" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openQuizPreview(q)}>预览</Button>
-                                                {(q._count?.attempts ?? 0) > 0 && (
-                                                  <Button theme="warning" variant="text" size="small" icon={<DeleteIcon />} loading={clearingAttemptsQuizId === q.id} onClick={() => handleClearAttempts(q.id)}>清除答题</Button>
-                                                )}
                                               </>
                                             )}
                                             <Switch
@@ -4107,6 +4813,32 @@ export default function TeacherTasksPage() {
               </p>
             </div>
 
+            {/* 引用图片组 */}
+            <div className="space-y-2">
+              <h4 className="font-medium text-sm text-[#63666F]">引用图片组（选填）</h4>
+              <div className="flex flex-wrap gap-2">
+                {imageGroups.map((g) => (
+                  <Tag
+                    key={g.id}
+                    theme={selectedImageGroupIds.includes(g.id) ? "primary" : "default"}
+                    variant={selectedImageGroupIds.includes(g.id) ? "dark" : "light"}
+                    className="cursor-pointer"
+                    onClick={() => toggleImageGroupSelection(g.id)}
+                  >
+                    {g.name}（{g.imageCount} 张）
+                  </Tag>
+                ))}
+                {imageGroups.length === 0 && (
+                  <span className="text-xs text-gray-400 py-1">
+                    暂无图片组，请先到「图片仓库」页面创建
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-gray-400">
+                选择后，该课堂下所有对话活动中的 AI 可根据学生问题智能发送组内图片（教师课前准备的素材图）
+              </p>
+            </div>
+
             <div className="flex gap-2 justify-end pt-2 border-t border-gray-100">
               <Button onClick={() => { setFormVisible(false); resetForm(); }}>取消</Button>
               <Button theme="primary" loading={saving} onClick={handleSave}>
@@ -4504,12 +5236,13 @@ export default function TeacherTasksPage() {
 
         {/* 互动探究 - 新建/编辑弹窗 */}
         <Dialog
-          header={explorationEditId ? "编辑互动设计提示词" : "新建互动探究"}
+          header={explorationEditId ? "编辑互动探究" : "新建互动探究"}
           visible={explorationModalVisible}
           onClose={() => setExplorationModalVisible(false)}
           footer={null}
-          width={720}
+          width={1040}
           destroyOnClose
+          closeOnOverlayClick={false}
         >
           <div className="space-y-4">
             {/* 标题 */}
@@ -4519,118 +5252,162 @@ export default function TeacherTasksPage() {
               placeholder="探究标题"
             />
 
-            {/* 互动设计提示词 */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm font-medium text-gray-600">编辑互动设计提示词</span>
-                <Button
-                  theme="primary" variant="outline" size="small"
-                  loading={generatingPrompt}
-                  onClick={autoGeneratePrompt}
-                >
-                  生成提示词
-                </Button>
+            {explorationHasSubmissions && (
+              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
+                ⚠️ 已有学生提交，HTML 内容已锁定，无法编辑或重新生成（可修改标题、设计意图、分析提示词）。如需改内容，请新建探究。
               </div>
-              <Textarea
-                value={explorationDesignPrompt}
-                onChange={(v) => setExplorationDesignPrompt(v)}
-                placeholder="描述你想要的互动网页：主题、互动机制、视觉风格等。点「生成提示词」时将以此为核心主题（留空则按课堂信息生成）"
-                rows={5}
-              />
-            </div>
+            )}
 
-            {/* 生成网页 / 上传HTML */}
-            <div className="flex gap-2">
-              <Button
-                theme="primary"
-                size="small"
-                icon={<PlayIcon />}
-                loading={generatingHtml}
-                onClick={handleGenerateHtml}
-                disabled={!explorationDesignPrompt.trim()}
-              >
-                生成网页
-              </Button>
-              <Button
-                theme="default"
-                variant="outline"
-                size="small"
-                icon={<FileIcon />}
-                onClick={handleUploadHtml}
-              >
-                上传HTML
-              </Button>
-              <Button
-                theme="default"
-                variant="outline"
-                size="small"
-                icon={<FileIcon />}
-                onClick={() => {
-                  if (!explorationHtml.trim()) {
-                    MessagePlugin.warning("请先生成或上传 HTML 内容");
-                    return;
-                  }
-                  // 通过 spId 查找课堂信息
-                  let taskGrade = "未知年级";
-                  let taskSubject = "未知学科";
-                  let taskTitle = "未知课题";
-                  try {
-                    const spTask = tasks.find(t => t.subProjects.some(sp => sp.id === explorationPanelSpId));
-                    if (spTask) {
-                      taskGrade = spTask.grade || "未知年级";
-                      taskSubject = spTask.subject || "未知学科";
-                      taskTitle = spTask.title;
-                    }
-                  } catch {}
-                  const safeName = (s: string) => s.replace(/[\\/:*?"<>|，。、？！：；【】（）""''\s]/g, "_");
-                  const filename = [safeName(taskTitle), safeName(taskGrade), safeName(taskSubject), safeName(explorationTitle)].join("_") + ".html";
-                  const blob = new Blob([explorationHtml], { type: "text/html;charset=utf-8" });
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = filename;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                }}
-              >
-                导出 HTML
-              </Button>
-            </div>
-
-            {/* 效果预览 + 源代码左右并排 */}
-            {explorationPreview && (
-              <div className="flex gap-3">
-                {/* 左侧：效果预览 */}
-                <div className="flex-1 space-y-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium text-gray-600">效果预览</span>
-                    <Button theme="default" variant="text" size="small" onClick={() => openPreview(explorationPreview)}>
-                      全屏预览
+            {/* 主区域：左对话流 + 右预览/源码 */}
+            <div className="flex gap-3" style={{ minHeight: 340 }}>
+              {/* 左栏：对话流 + 输入条 */}
+              <div className="w-[380px] shrink-0 flex flex-col border border-gray-200 rounded-lg overflow-hidden">
+                {/* 对话流 */}
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-gray-50" style={{ maxHeight: 300 }}>
+                  {chatMessages.length === 0 ? (
+                    <div className="text-sm text-gray-400 text-center px-4 py-16 leading-relaxed">
+                      描述你想要的互动网页（主题、互动机制、视觉风格等），发送后 AI 生成第一版。
+                      <br />也可点「AI 帮我写」自动生成设计意图，或「上传」HTML 后继续对话修改。
+                    </div>
+                  ) : (
+                    chatMessages.map((m, i) => (
+                      <div key={i} className={m.role === "user" ? "flex justify-end" : "flex justify-start"}>
+                        <div
+                          className={
+                            m.role === "user"
+                              ? "max-w-[85%] bg-blue-500 text-white text-sm rounded-lg rounded-br-sm px-3 py-2 whitespace-pre-wrap"
+                              : "max-w-[85%] bg-white text-gray-700 text-sm rounded-lg rounded-bl-sm px-3 py-2 border border-gray-200 whitespace-pre-wrap"
+                          }
+                        >
+                          {m.content}
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+                {/* 输入条 */}
+                <div className="border-t border-gray-200 p-2 space-y-2 bg-white">
+                  <Textarea
+                    value={draftInput}
+                    onChange={(v) => setDraftInput(v)}
+                    disabled={explorationHasSubmissions}
+                    placeholder={explorationHasSubmissions ? "已有学生提交，内容已锁定" : (htmlVersions.length === 0 ? "描述你想要的互动网页…" : "输入修改要求，如：把背景改成蓝色")}
+                    rows={3}
+                  />
+                  <div className="flex gap-2">
+                    <Button
+                      theme="default" variant="outline" size="small"
+                      loading={generatingPrompt}
+                      disabled={explorationHasSubmissions}
+                      onClick={autoGeneratePrompt}
+                    >
+                      AI 帮我写
+                    </Button>
+                    <Button
+                      theme="primary" size="small"
+                      loading={generating}
+                      onClick={handleSend}
+                      disabled={explorationHasSubmissions || !draftInput.trim()}
+                      className="flex-1"
+                    >
+                      发送
                     </Button>
                   </div>
-                  <div className="border border-gray-200 rounded-lg overflow-hidden" style={{ height: 360 }}>
-                    <iframe srcDoc={explorationPreview} className="w-full h-full" sandbox="allow-scripts allow-same-origin" title="预览" />
+                </div>
+              </div>
+
+              {/* 右栏：预览/源码 */}
+              <div className="flex-1 min-w-0 flex flex-col">
+                {/* 工具条 */}
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-sm font-medium text-gray-600">
+                    {htmlVersions.length > 0 ? `第 ${versionIndex + 1} 版` : "预览"}
+                  </span>
+                  <div className="flex items-center gap-0.5">
+                    <Button theme="default" variant="text" size="small" onClick={handleUndo} disabled={explorationHasSubmissions || versionIndex <= 0}>
+                      撤销
+                    </Button>
+                    <Button theme="default" variant="text" size="small" onClick={handleRedo} disabled={explorationHasSubmissions || versionIndex >= htmlVersions.length - 1}>
+                      重做
+                    </Button>
+                    <Button theme="default" variant="text" size="small" icon={<FileIcon />} onClick={handleUploadHtml} disabled={explorationHasSubmissions}>
+                      上传
+                    </Button>
+                    <Button theme="default" variant="text" size="small" icon={<FileIcon />} onClick={handleExportHtml}>
+                      导出
+                    </Button>
+                    {explorationHtml.trim() ? (
+                      detectInstrumentation(explorationHtml).needsAdaptation ? (
+                        <Tooltip content="该页面未接入提交采集，开启「启用提交」时将自动接入">
+                          <span className="text-xs text-gray-400 px-1">△ 未接入采集</span>
+                        </Tooltip>
+                      ) : (
+                        <Tooltip content="该页面已接入提交采集，学生得分/进度可正常上报">
+                          <span className="text-xs text-green-600 px-1">✓ 已接入采集</span>
+                        </Tooltip>
+                      )
+                    ) : null}
+                    {explorationPreview && (
+                      <Button theme="default" variant="text" size="small" onClick={() => openPreview(explorationPreview)}>
+                        全屏
+                      </Button>
+                    )}
                   </div>
                 </div>
 
-                {/* 右侧：源代码编辑（仅在有内容时显示） */}
-                {explorationHtml && (
-                  <div className="flex-1 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium text-gray-600">源代码</span>
-                      <span className="text-xs text-gray-400">修改即时同步到预览</span>
-                    </div>
+                {/* 预览/源码 tab */}
+                <div className="flex-1 flex flex-col border border-gray-200 rounded-lg overflow-hidden">
+                  <div className="flex border-b border-gray-200 bg-gray-50">
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("preview")}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === "preview" ? "border-blue-500 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+                    >
+                      预览
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab("code")}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === "code" ? "border-blue-500 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+                    >
+                      源码
+                    </button>
+                  </div>
+                  {activeTab === "preview" ? (
+                    <iframe
+                      srcDoc={explorationPreview || '<html><body style="display:flex;align-items:center;justify-content:center;height:100vh;color:#999;font-family:sans-serif">暂无内容</body></html>'}
+                      className="flex-1 w-full"
+                      sandbox="allow-scripts allow-same-origin"
+                      title="预览"
+                      style={{ minHeight: 300 }}
+                    />
+                  ) : (
                     <Textarea
                       value={explorationHtml}
-                      onChange={(v) => { setExplorationHtml(v); setExplorationPreview(v); }}
-                      placeholder="HTML 源代码，可在此直接修改"
-                      rows={16}
+                      onChange={(v) => { setExplorationHtml(v); setExplorationPreview(renderLocalPreview(v)); }}
+                      disabled={explorationHasSubmissions}
+                      onBlur={() => {
+                        // 手动编辑失焦时纳入版本栈，使手动改也能被撤销/重做
+                        const trimmed = explorationHtml.trim();
+                        if (!trimmed) return;
+                        const current = versionIndex >= 0 ? htmlVersions[versionIndex] : "";
+                        if (trimmed !== current) {
+                          const baseVersions = versionIndex >= 0 ? htmlVersions.slice(0, versionIndex + 1) : [];
+                          const newIndex = baseVersions.length;
+                          setHtmlVersions([...baseVersions, trimmed]);
+                          setVersionIndex(newIndex);
+                          setChatMessages((prev) => [...prev, { role: "ai", content: `✎ 已记录源码编辑（第 ${newIndex + 1} 版）` }]);
+                        }
+                      }}
+                      placeholder={explorationHasSubmissions ? "已有学生提交，HTML 内容已锁定，无法编辑" : "HTML 源代码，可在此直接修改（修改即时同步到预览）"}
+                      rows={12}
                       className="font-mono text-xs"
+                      style={{ minHeight: 300 }}
                     />
-                  </div>
-                )}
+                  )}
+                </div>
               </div>
-            )}
+            </div>
 
             {/* 启用提交功能 */}
             <div className="border-t border-gray-100 pt-3 space-y-2">
@@ -4641,7 +5418,18 @@ export default function TeacherTasksPage() {
                   size="small"
                   onChange={async (val: boolean) => {
                     if (val) {
-                      // 开启 → 保存当前 HTML → 立即弹出预览
+                      // 开启提交：先判断采集是否已接桩。
+                      // 新架构下提交通道由读取路径 renderExplorationHtml 渲染，不需要「确认注入」；
+                      // 仅当采集桩（改纯净稿本身）缺失时才需 AI 预览接入。
+                      const detection = detectInstrumentation(explorationHtml);
+                      if (!detection.needsAdaptation) {
+                        // 已接桩 → 直接开启，本地渲染预览（含提交注入），不再弹 AI 预览
+                        setExplorationEnableSubmission(true);
+                        syncConfirmedInjection(true);
+                        setExplorationPreview(renderLocalPreview(explorationHtml, { enableSubmission: true }));
+                        return;
+                      }
+                      // 未接桩 → 弹 AI 预览接入采集（确认注入）
                       setOriginalHtmlForInjection(explorationHtml);
                       syncConfirmedInjection(false);
                       // 立即调用预览 API 并弹出对话框
@@ -4682,9 +5470,9 @@ export default function TeacherTasksPage() {
                         MessagePlugin.warning("已有学生提交，无法关闭启用提交");
                         return;
                       }
-                      const cleanedHtml = removeSubmitFunctionality(explorationHtml);
-                      setExplorationHtml(cleanedHtml);
-                      setExplorationPreview(cleanedHtml);
+                      // 关闭提交：explorationHtml 恒为纯净稿，无需 remove；预览本地渲染（关提交）
+                      setExplorationHtml(explorationHtml);
+                      setExplorationPreview(renderLocalPreview(explorationHtml, { enableSubmission: false }));
                       setExplorationEnableSubmission(false);
                       syncConfirmedInjection(false);
                     }
@@ -4692,9 +5480,18 @@ export default function TeacherTasksPage() {
                 />
               </div>
               {confirmedInjection ? (
-                <div className="text-xs text-green-600 bg-green-50 rounded p-2">
-                  ✓ 已确认注入提交功能，点击保存即可生效。
-                </div>
+                detectInstrumentation(explorationHtml).needsAdaptation ? (
+                  <div className="text-xs text-amber-600 bg-amber-50 rounded p-2 flex items-center justify-between gap-2">
+                    <span>⚠️ 提交已启用，但采集接入未成功——仅采集基础数据（时长/操作/滚动），分数/关卡/作答暂无法上报。</span>
+                    <Button size="small" variant="text" theme="warning" loading={adapting} onClick={handleAdaptInstrumentation}>
+                      重试接入
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="text-xs text-green-600 bg-green-50 rounded p-2">
+                    ✓ 已启用提交并接入采集，分数/关卡/作答可正常上报，点击保存生效。
+                  </div>
+                )
               ) : explorationEnableSubmission ? (
                 <div className="text-xs text-amber-600 bg-amber-50 rounded p-2">
                   为互动探究的HTML注入提交功能，采集学生互动探究过程的数据用于分析，这是测试功能，未必成功。
@@ -4791,6 +5588,7 @@ export default function TeacherTasksPage() {
           header="提交功能预览"
           visible={injectionPreviewVisible}
           onClose={() => {
+            if (adapting) return; // AI 接入进行中，禁止关闭，避免与后台返回产生竞态
             setInjectionPreviewVisible(false);
             // 用 ref 读取真实值，避免 React 闭包捕获到旧 state
             if (confirmedInjectionRef.current) {
@@ -4799,12 +5597,12 @@ export default function TeacherTasksPage() {
               setAutoScoreScript(null);
               return;
             }
-            // 关闭时恢复原始状态
+            // 关闭时恢复原始状态（纯净稿）
             setExplorationEnableSubmission(false);
             syncConfirmedInjection(false);
             if (originalHtmlForInjection) {
               setExplorationHtml(originalHtmlForInjection);
-              setExplorationPreview(originalHtmlForInjection);
+              setExplorationPreview(renderLocalPreview(originalHtmlForInjection, { enableSubmission: false }));
             }
             setPreviewAnalysis(null);
             setPreviewError(null);
@@ -4814,14 +5612,15 @@ export default function TeacherTasksPage() {
           footer={
             <div className="flex justify-end gap-2">
               <Button
+                disabled={adapting}
                 onClick={() => {
                   setInjectionPreviewVisible(false);
-                  // 取消注入，恢复原始 HTML
+                  // 取消注入，恢复原始 HTML（纯净稿）
                   setExplorationEnableSubmission(false);
                   syncConfirmedInjection(false);
                   if (originalHtmlForInjection) {
                     setExplorationHtml(originalHtmlForInjection);
-                    setExplorationPreview(originalHtmlForInjection);
+                    setExplorationPreview(renderLocalPreview(originalHtmlForInjection, { enableSubmission: false }));
                   }
                   setPreviewAnalysis(null);
                   setPreviewError(null);
@@ -4831,22 +5630,38 @@ export default function TeacherTasksPage() {
               </Button>
               <Button
                 theme="primary"
-                onClick={() => {
-                  // 确认注入 → 调用注入函数修改 HTML
-                  const result = injectSubmitFunctionality(explorationHtml, {
-                    explorationId: explorationEditId || "",
-                    taskTitle: "",
-                  });
-                  // 暂时跳过自动评分脚本注入，先用基础跟踪和提交功能
-                  let finalHtml = result.html;
+                loading={adapting}
+                onClick={async () => {
+                  if (adapting) return;
+                  // ① 先自动尝试 AI 接入采集（非阻断：失败仅降级为基础采集，不影响提交）
+                  //    插桩改的是「纯净稿本身」（老师的 HTML），属内容改造；
+                  //    ⛔ 提交通道不再在此注入落库——提交/伴学统一由读取路径 renderExplorationHtml 渲染。
+                  let baseHtml = explorationHtml;
+                  const detection = detectInstrumentation(baseHtml);
+                  let adaptedOk = !detection.needsAdaptation; // 已接桩视为采集就绪，跳过 AI
+                  if (detection.needsAdaptation) {
+                    const adapted = await adaptHtmlWithAi(baseHtml);
+                    if (adapted) {
+                      baseHtml = adapted;
+                      adaptedOk = true;
+                    }
+                  }
+                  // ② 插桩后的纯净稿入版本栈（撤销一步即回到「插桩前」的原始 HTML）
+                  const finalHtml = baseHtml;
+                  const baseVersions = htmlVersions.slice(0, versionIndex + 1);
+                  const newIndex = baseVersions.length;
+                  setHtmlVersions([...baseVersions, finalHtml]);
+                  setVersionIndex(newIndex);
                   setExplorationHtml(finalHtml);
-                  setExplorationPreview(finalHtml);
+                  // ③ 预览：本地渲染注入版（提交 = true，伴学沿用当前开关）
+                  setExplorationPreview(renderLocalPreview(finalHtml, { enableSubmission: true }));
                   setExplorationEnableSubmission(true);
                   syncConfirmedInjection(true);
-                  if (result.warnings.length > 0) {
-                    result.warnings.forEach((w: string) => MessagePlugin.warning(w));
+                  // ③ 结果反馈：成功 / 降级
+                  if (adaptedOk) {
+                    MessagePlugin.success("✅ 已启用提交并接入采集，分数/关卡/作答结果可正常上报");
                   } else {
-                    MessagePlugin.success("提交功能已注入");
+                    MessagePlugin.warning("⚠️ 提交已启用，但 AI 采集接入未成功——目前仅采集基础数据（时长/操作/滚动），分数/关卡/作答暂无法上报");
                   }
                   setInjectionPreviewVisible(false);
                   setPreviewAnalysis(null);
@@ -4908,8 +5723,8 @@ export default function TeacherTasksPage() {
                   <div className="text-xs font-medium text-gray-500 mb-2">🔗 页面中的互动元素</div>
                   <div className="space-y-1 max-h-48 overflow-y-auto border border-gray-100 rounded p-2">
                     {previewAnalysis.interactiveElements.slice(0, 20).map((el: any, i: number) => {
-                      const name = typeof el === "object" ? (el.element || el.name || el.description || "?") : String(el);
-                      const desc = typeof el === "object" ? (el.description || "") : "";
+                      const name = pickElementName(el);
+                      const desc = pickElementDesc(el);
                       return (
                         <div key={i} className="text-xs text-gray-600 flex gap-2 py-0.5">
                           <span className="text-blue-400 shrink-0">•</span>
@@ -5141,8 +5956,10 @@ export default function TeacherTasksPage() {
                   <div className="text-xs text-blue-500">已提交</div>
                 </div>
                 <div className="bg-green-50 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-green-700">{analysisData.averageScore || 0}</div>
-                  <div className="text-xs text-green-500">平均分</div>
+                  <div className="text-2xl font-bold text-green-700">
+                    {analysisData.hasScoring ? (analysisData.averageScore ?? 0) : "—"}
+                  </div>
+                  <div className="text-xs text-green-500">{analysisData.hasScoring ? "平均分" : "不评分"}</div>
                 </div>
                 <div className="bg-orange-50 rounded-lg p-3 text-center">
                   <div className="text-2xl font-bold text-orange-700">{analysisData.totalStudents || 0}</div>
@@ -5212,7 +6029,9 @@ export default function TeacherTasksPage() {
                           <span className="text-gray-400">{new Date(record.submittedAt).toLocaleString()}</span>
                         </div>
                         <div className="flex gap-4 text-gray-500">
-                          <span>得分：<span className="text-orange-600 font-medium">{record.score}/{record.maxScore}</span></span>
+                          {analysisData.hasScoring && (
+                            <span>得分：<span className="text-orange-600 font-medium">{record.score}/{record.maxScore}</span></span>
+                          )}
                           <span>停留：<span className="text-gray-600">{record.timeSpent}秒</span></span>
                           <span>互动：<span className="text-gray-600">{record.interactions}次</span></span>
                           <span>操作：<span className="text-gray-600">{record.actionCount}条</span></span>
@@ -5393,13 +6212,12 @@ export default function TeacherTasksPage() {
             </div>
             <div>
               <label className="text-sm text-[#333]">文件大小限制（MB，默认 10）</label>
-              <Input
-                type="number"
+              <InputNumber
                 value={projForm.fileSizeLimit}
+                min={1}
                 onChange={(v) =>
                   setProjForm({ ...projForm, fileSizeLimit: Number(v) || 10 })
                 }
-                min={1}
               />
             </div>
           </div>

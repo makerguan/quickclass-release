@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { Input, Card, MessagePlugin, Dialog } from "tdesign-react";
+import { Input, Card, MessagePlugin, Dialog, Pagination, InputNumber } from "tdesign-react";
 import { SearchIcon, DeleteIcon, CheckCircleIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import TeacherLayout from "@/components/layout/TeacherLayout";
@@ -93,8 +93,10 @@ export default function TeacherConversationsPage() {
   
   // 分页
   const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState<number>(5);
   const [totalCount, setTotalCount] = useState(0);
-  const PAGE_SIZE = 5;
+  const [totalMessages, setTotalMessages] = useState(0);
+  const [totalStudents, setTotalStudents] = useState(0);
   
   // 删除确认弹窗
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
@@ -251,7 +253,7 @@ export default function TeacherConversationsPage() {
       if (selectedTaskId !== "all") params.set("taskId", selectedTaskId);
       if (activePcId !== "all") params.set("presetConversationId", activePcId);
       params.set("page", String(pageNum));
-      params.set("pageSize", String(PAGE_SIZE));
+      params.set("pageSize", String(pageSize));
 
       const res = await fetch(`/api/conversations/teacher?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
@@ -260,6 +262,8 @@ export default function TeacherConversationsPage() {
         const data = await res.json();
         setConversations(data.conversations || []);
         setTotalCount(data.total || 0);
+        setTotalMessages(data.totalMessages || 0);
+        setTotalStudents(data.totalStudents || 0);
       } else {
         MessagePlugin.error("获取对话记录失败");
       }
@@ -269,7 +273,7 @@ export default function TeacherConversationsPage() {
       setLoading(false);
       setFirstLoaded(true);
     }
-  }, [selectedClassId, selectedTaskId]);
+  }, [selectedClassId, selectedTaskId, pageSize]);
 
   useEffect(() => {
     fetchClasses();
@@ -298,7 +302,7 @@ export default function TeacherConversationsPage() {
   useEffect(() => {
     fetchConversations(undefined, currentPage, selectedPresetConversationId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedPresetConversationId, currentPage]);
+  }, [selectedPresetConversationId, currentPage, pageSize]);
 
   const handleSearch = () => {
     setCurrentPage(1);
@@ -454,19 +458,7 @@ export default function TeacherConversationsPage() {
     }
   };
 
-  const formatTime = (dateStr: string) => {
-    const d = new Date(dateStr);
-    return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
-  };
-
-  // 按学生分组统计
-  const studentStats: Record<string, { count: number; msgCount: number }> = {};
-  for (const conv of conversations) {
-    const name = conv.user.name;
-    if (!studentStats[name]) studentStats[name] = { count: 0, msgCount: 0 };
-    studentStats[name].count++;
-    studentStats[name].msgCount += conv.messages.length;
-  }
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
 
   return (
     <TeacherLayout>
@@ -705,7 +697,6 @@ export default function TeacherConversationsPage() {
                             </div>
                             <div className="flex items-center gap-2 mt-0.5">
                               <span className="text-xs text-[#63666F]">{conv.title}</span>
-                              <span className="text-xs text-gray-400">{formatTime(conv.updatedAt)}</span>
                               <span className="text-xs text-gray-400">{msgCount} 条消息</span>
                             </div>
                           </div>
@@ -756,7 +747,6 @@ export default function TeacherConversationsPage() {
                                 <span className="text-xs font-medium text-[#1A1A1A]">
                                   {msg.role === "user" ? conv.user.name : "AI 助手"}
                                 </span>
-                                <span className="text-xs text-gray-400">{formatTime(msg.createdAt)}</span>
                               </div>
                               <div className="text-sm text-[#333] break-words bg-[#F7F8FA] rounded-lg p-3 overflow-hidden w-full">
                                 {msg.role === "assistant" ? (
@@ -780,25 +770,31 @@ export default function TeacherConversationsPage() {
         )}
 
         {/* 分页 */}
-        {!loading && totalCount > PAGE_SIZE && (
-          <div className="flex items-center justify-center gap-2 mt-4">
-            <button
-              onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
-              disabled={currentPage === 1}
-              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              上一页
-            </button>
-            <span className="text-sm text-gray-500">
-              第 {currentPage} / {Math.ceil(totalCount / PAGE_SIZE)} 页
-            </span>
-            <button
-              onClick={() => setCurrentPage((p) => Math.min(Math.ceil(totalCount / PAGE_SIZE), p + 1))}
-              disabled={currentPage >= Math.ceil(totalCount / PAGE_SIZE)}
-              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              下一页
-            </button>
+        {!loading && totalCount > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-2 text-sm text-[#63666F]">
+              <span>每页</span>
+              <InputNumber
+                value={pageSize}
+                min={1}
+                max={100}
+                theme="column"
+                onChange={(val) => {
+                  const n = Math.max(1, Math.min(100, Number(val) || 1));
+                  setPageSize(n);
+                  setCurrentPage(1);
+                }}
+                style={{ width: 72 }}
+              />
+              <span>个对话，共 {totalCount} 个</span>
+            </div>
+            <Pagination
+              total={totalCount}
+              pageSize={pageSize}
+              current={Math.min(currentPage, totalPages)}
+              showJumper
+              onChange={(pageInfo) => setCurrentPage(pageInfo.current)}
+            />
           </div>
         )}
 
@@ -806,7 +802,7 @@ export default function TeacherConversationsPage() {
         {!loading && totalCount > 0 && !searchKeyword && (
           <div className="grid grid-cols-3 gap-4 mt-4">
             <Card className="text-center py-3">
-              <div className="text-xl font-bold text-[#0052D9]">{Object.keys(studentStats).length}</div>
+              <div className="text-xl font-bold text-[#0052D9]">{totalStudents}</div>
               <div className="text-xs text-[#63666F] mt-0.5">对话学生数</div>
             </Card>
             <Card className="text-center py-3">
@@ -814,9 +810,7 @@ export default function TeacherConversationsPage() {
               <div className="text-xs text-[#63666F] mt-0.5">对话总数</div>
             </Card>
             <Card className="text-center py-3">
-              <div className="text-xl font-bold text-[#0052D9]">
-                {conversations.reduce((sum, c) => sum + c.messages.length, 0)}
-              </div>
+              <div className="text-xl font-bold text-[#0052D9]">{totalMessages}</div>
               <div className="text-xs text-[#63666F] mt-0.5">消息总数</div>
             </Card>
           </div>

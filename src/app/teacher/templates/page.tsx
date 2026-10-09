@@ -14,6 +14,7 @@ import {
   FileIcon,
 } from "tdesign-icons-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
+import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 
 interface AnalysisTemplate {
   id: string;
@@ -23,6 +24,10 @@ interface AnalysisTemplate {
   isDefault: boolean;
   createdAt: string;
   updatedAt: string;
+  // 模板效果预览状态（由列表接口带下来，避免每张卡片各发一次请求）
+  hasPreview?: boolean;
+  previewStale?: boolean;
+  previewAt?: string | null;
 }
 
 interface TemplateVariable {
@@ -113,6 +118,11 @@ export default function TemplateSettingsPage() {
   // 导入 ref
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [importType, setImportType] = useState<"student" | "class" | "conversation" | "QUIZ_DESIGN" | "QUIZ_ANALYSIS" | "EXPLORATION_ANALYSIS">("student");
+  // 点「导入」时锁定的分类：文件选择是异步的，用 ref 保证"选文件时用的分类"和"点按钮时看到的分类"一致
+  const importTypeRef = useRef<typeof importType>("student");
+  // 批量导入进行中（按钮禁用 + 显示进度）
+  const [importing, setImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState("");
 
   // 导出模板（.md 文件，自动下载）
   const handleExport = (tpl: AnalysisTemplate) => {
@@ -132,68 +142,104 @@ export default function TemplateSettingsPage() {
     MessagePlugin.success("模板已导出");
   };
 
-  // 导入模板
+  // 导入模板：支持一次选择多个 .md 文件，逐个导入后汇总结果
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    // 先把 FileList 拷贝成数组：后面会清空 input，FileList 会被一并清掉
+    const files = Array.from(e.target.files || []);
+    if (files.length === 0) return;
 
-    // 只允许 .md 文件
-    if (!file.name.endsWith(".md")) {
-      MessagePlugin.warning("请选择 .md 格式的模板文件");
-      e.target.value = "";
-      return;
-    }
+    const type = importTypeRef.current;
+    const imported: string[] = [];
+    const skipped: string[] = [];
+    const failed: string[] = [];
 
+    setImporting(true);
     try {
-      const text = await file.text();
-      const trimmedText = text.trim();
-      if (!trimmedText) {
-        MessagePlugin.warning("模板文件为空");
-        e.target.value = "";
-        return;
-      }
-
-      // 模板名使用上传文件的文件名（去掉扩展名），保证导出文件名 = 导入文件名，可往返
-      const dotIndex = file.name.lastIndexOf(".");
-      const fileBaseName = dotIndex > 0 ? file.name.slice(0, dotIndex) : file.name;
-      const name = fileBaseName.trim();
-
-      // 模板内容保存整篇 Markdown 文本
-      const content = trimmedText;
-
-      if (!name) {
-        MessagePlugin.warning("模板文件格式不正确：无法从文件名解析模板名称");
-        e.target.value = "";
-        return;
-      }
-
       const token = localStorage.getItem("token");
-      const res = await fetch("/api/analysis-templates", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          type: importType,
-          name,
-          content,
-          isDefault: false,
-        }),
-      });
 
-      if (res.ok) {
-        MessagePlugin.success("模板已导入");
-        fetchTemplates();
-      } else {
-        const data = await res.json();
-        MessagePlugin.error(data.error || "导入失败");
+      for (let i = 0; i < files.length; i++) {
+        const file = files[i];
+        if (files.length > 1) setImportProgress(`导入中 ${i + 1}/${files.length}`);
+
+        // 只允许 .md 文件
+        if (!file.name.toLowerCase().endsWith(".md")) {
+          skipped.push(`${file.name}（不是 .md 文件）`);
+          continue;
+        }
+
+        let content = "";
+        try {
+          content = (await file.text()).trim();
+        } catch {
+          failed.push(`${file.name}（读取失败）`);
+          continue;
+        }
+        if (!content) {
+          skipped.push(`${file.name}（内容为空）`);
+          continue;
+        }
+
+        // 模板名使用上传文件的文件名（去掉扩展名），保证导出文件名 = 导入文件名，可往返
+        const dotIndex = file.name.lastIndexOf(".");
+        const name = (dotIndex > 0 ? file.name.slice(0, dotIndex) : file.name).trim();
+        if (!name) {
+          skipped.push(`${file.name}（无法从文件名解析模板名称）`);
+          continue;
+        }
+
+        try {
+          const res = await fetch("/api/analysis-templates", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              type,
+              name,
+              content,
+              isDefault: false,
+            }),
+          });
+
+          if (res.ok) {
+            imported.push(name);
+          } else {
+            const data = await res.json().catch(() => ({}) as { error?: string });
+            failed.push(`${name}（${data.error || `接口返回 ${res.status}`}）`);
+          }
+        } catch {
+          failed.push(`${name}（网络错误）`);
+        }
       }
-    } catch {
-      MessagePlugin.error("读取文件失败");
-    }
 
-    e.target.value = "";
+      if (imported.length > 0) fetchTemplates();
+
+      // 汇总：成功 / 跳过 / 失败各多少个，失败的逐条列出便于定位
+      const summaryParts: string[] = [];
+      if (imported.length > 0) summaryParts.push(`成功导入 ${imported.length} 个`);
+      if (skipped.length > 0) summaryParts.push(`跳过 ${skipped.length} 个`);
+      if (failed.length > 0) summaryParts.push(`失败 ${failed.length} 个`);
+      const summary = summaryParts.length > 0 ? summaryParts.join("，") : "没有可导入的文件";
+      // 逐条明细最多列 5 条，其余给个总数，避免提示条过长
+      const detailOf = (list: string[]) => {
+        const shown = list.slice(0, 5).join("；");
+        const rest = list.length > 5 ? `；等共 ${list.length} 个` : "";
+        return `${shown}${rest}`;
+      };
+
+      if (failed.length > 0) {
+        MessagePlugin.error(`${summary}；失败：${detailOf(failed)}${skipped.length > 0 ? `；跳过：${detailOf(skipped)}` : ""}`);
+      } else if (skipped.length > 0) {
+        MessagePlugin.warning(`${summary}；跳过：${detailOf(skipped)}`);
+      } else {
+        MessagePlugin.success(summary);
+      }
+    } finally {
+      setImporting(false);
+      setImportProgress("");
+      e.target.value = "";
+    }
   };
 
   // 获取模板列表
@@ -215,6 +261,8 @@ export default function TemplateSettingsPage() {
         if (data.templateVariables) {
           setTemplateVariables(data.templateVariables);
         }
+      } else {
+        MessagePlugin.error(`获取模板列表失败（${res.status}）`);
       }
     } catch {
       MessagePlugin.error("获取模板列表失败");
@@ -322,6 +370,7 @@ export default function TemplateSettingsPage() {
         ...userInputs,
         { name: "personalDialogContents", desc: "个人对话记录" },
         { name: "personalQuizStats", desc: "个人作业数据" },
+        { name: "personalExplorationStats", desc: "个人探究数据（用时/关卡/操作路径/作答结论）" },
         { name: "reportTime", desc: "报告生成时间（服务器真实时间）" },
       ];
     } else {
@@ -336,6 +385,7 @@ export default function TemplateSettingsPage() {
         { name: "personalDialogAnalysisReport", desc: "个人对话分析报告" },
         { name: "classDialogAnalysisReport", desc: "班级对话分析报告" },
         { name: "classQuizStats", desc: "全班作业数据" },
+        { name: "classExplorationStats", desc: "全班探究数据（完成率/探索用时/操作特征/结论摘要）" },
         { name: "reportTime", desc: "报告生成时间（服务器真实时间）" },
       ];
     }
@@ -622,6 +672,20 @@ export default function TemplateSettingsPage() {
   };
 
   // 渲染单个类别（可展开）
+  // 预览状态变化（首次生成 / 刷新后）→ 就地更新该模板，让按钮颜色立刻跟着变
+  const updatePreviewState = (id: string, state: "none" | "ok" | "stale") => {
+    const patch = (list: AnalysisTemplate[]) =>
+      list.map((t) =>
+        t.id === id ? { ...t, hasPreview: state !== "none", previewStale: state === "stale" } : t
+      );
+    setStudentTemplates(patch);
+    setClassTemplates(patch);
+    setConversationTemplates(patch);
+    setQuizDesignTemplates(patch);
+    setQuizAnalysisTemplates(patch);
+    setExplorationAnalysisTemplates(patch);
+  };
+
   const renderCategory = (type: "student" | "class" | "conversation" | "QUIZ_DESIGN" | "QUIZ_ANALYSIS" | "EXPLORATION_ANALYSIS") => {
     const config = TYPE_CONFIG[type];
     const Icon = config.icon;
@@ -702,13 +766,15 @@ export default function TemplateSettingsPage() {
                     variant="outline"
                     size="small"
                     icon={<UploadIcon />}
+                    disabled={importing}
                     onClick={(e) => {
                       e.stopPropagation();
+                      importTypeRef.current = type as typeof importType;
                       setImportType(type);
                       fileInputRef.current?.click();
                     }}
                   >
-                    导入
+                    {importing ? importProgress || "导入中…" : "导入"}
                   </Button>
                   <Button
                     theme="primary"
@@ -740,13 +806,15 @@ export default function TemplateSettingsPage() {
                       variant="outline"
                       size="small"
                       icon={<UploadIcon />}
+                      disabled={importing}
                       onClick={(e) => {
                         e.stopPropagation();
+                        importTypeRef.current = type as typeof importType;
                         setImportType(type);
                         fileInputRef.current?.click();
                       }}
                     >
-                      导入
+                      {importing ? importProgress || "导入中…" : "导入"}
                     </Button>
                     <Button
                       theme="primary"
@@ -779,6 +847,14 @@ export default function TemplateSettingsPage() {
                       </span>
                     </div>
                     <div className="flex items-center gap-1 flex-shrink-0">
+                      <TemplatePreviewButton
+                        templateId={tpl.id}
+                        templateName={tpl.name}
+                        templateType={tpl.type}
+                        hasPreview={!!tpl.hasPreview}
+                        previewStale={!!tpl.previewStale}
+                        onStateChange={(st) => updatePreviewState(tpl.id, st)}
+                      />
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -1018,6 +1094,7 @@ export default function TemplateSettingsPage() {
             ref={fileInputRef}
             type="file"
             accept=".md"
+            multiple
             className="hidden"
             onChange={handleImport}
           />

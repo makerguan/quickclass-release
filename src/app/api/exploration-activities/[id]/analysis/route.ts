@@ -3,6 +3,9 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
 import { generateText } from "ai";
+import { buildQfAnswersText } from "@/lib/exploration/qf-report";
+import { parseCollectProfile, detectCollectProfile } from "@/lib/exploration/collect-profile";
+import { removeSubmitFunctionality } from "@/lib/prompts/exploration-submit";
 
 // POST: 生成教学建议
 export async function POST(
@@ -54,15 +57,25 @@ export async function POST(
     // 汇总提交数据
     const submissions = exploration.ExplorationSubmission;
     const submittedCount = submissions.length;
-    const avgScore = submittedCount > 0
+    // 无评分探究（collectProfile.hasScoring=false）不统计分数，教学建议里不出现得分
+    const profile = parseCollectProfile(exploration.collectProfile) ??
+      detectCollectProfile(removeSubmitFunctionality(exploration.htmlContent));
+    const hasScoring = profile.hasScoring !== false;
+    const avgScore = hasScoring && submittedCount > 0
       ? Math.round(submissions.reduce((s, sub) => s + (sub.score || 0), 0) / submittedCount)
       : 0;
+    const scoreLine = hasScoring ? `平均得分：${avgScore}/100` : "平均得分：本探究无评分环节";
     const actionSummary = Object.entries(
       submissions.flatMap(s => s.ExplorationActionLog).reduce((acc, log) => {
         acc[log.type] = (acc[log.type] || 0) + 1;
         return acc;
       }, {} as Record<string, number>)
     ).map(([type, count]) => `${type}: ${count}次`).join("、");
+
+    // 学生填写的探究答案（QF 采集）聚成文本，一并喂给教学建议。
+    // ⚠️ GOTCHA：双轨采集下行为数据进 ExplorationSubmission，学生答案进 QfRecord；
+    //   早先教学建议只看行为数据，学生真正填写的答案被漏掉。
+    const qfAnswersText = await buildQfAnswersText(exploration.qfTaskId);
 
     // 构建提示词：effectivePrompt 存在则作为自定义模板，否则使用默认提示词框架
     let prompt: string;
@@ -74,8 +87,9 @@ export async function POST(
         "explorationDescription": exploration.description || "无",
         "exploration.description": exploration.description || "无",
         "submittedCount": String(submittedCount),
-        "avgScore": `${avgScore}/100`,
+        "avgScore": hasScoring ? `${avgScore}/100` : "本探究无评分环节",
         "actionSummary": actionSummary || "无",
+        "qfAnswers": qfAnswersText || "无",
       };
       let filledPrompt = effectivePrompt;
       for (const [key, value] of Object.entries(vars)) {
@@ -83,7 +97,7 @@ export async function POST(
       }
       // 不存在变量占位符时，追加数据段
       if (!effectivePrompt.includes("{") && !effectivePrompt.includes("}")) {
-        prompt = `${effectivePrompt}\n\n## 数据\n探究标题：${exploration.title}\n描述：${exploration.description || "无"}\n已提交人数：${submittedCount}\n平均得分：${avgScore}/100\n操作类型统计：${actionSummary || "无"}\n\n请生成教学改进建议。`;
+        prompt = `${effectivePrompt}\n\n## 数据\n探究标题：${exploration.title}\n描述：${exploration.description || "无"}\n已提交人数：${submittedCount}\n${scoreLine}\n操作类型统计：${actionSummary || "无"}\n\n## 学生作答内容\n${qfAnswersText || "暂无作答"}\n\n请生成教学改进建议。`;
       } else {
         prompt = filledPrompt;
       }
@@ -94,12 +108,16 @@ export async function POST(
 探究标题：${exploration.title}
 描述：${exploration.description || "无"}
 已提交人数：${submittedCount}
-平均得分：${avgScore}/100
+${scoreLine}
 操作类型统计：${actionSummary || "无"}
+
+## 学生作答内容
+${qfAnswersText || "暂无作答"}
 
 请生成 2-3 条简洁的教学改进建议，用中文回复。`;
     }
 
+    const { chatModel } = await createDashScopeClient();
     const { text: advice } = await generateText({
       model: chatModel,
       system: "你是一个中学教师教学助手，擅长根据学情数据给出教学建议。",
@@ -178,20 +196,28 @@ export async function GET(
         ? await prisma.user.count({ where: { classId: { in: allClassIds }, role: "STUDENT" } })
         : submittedCount);
 
-    // 分数统计
-    let averageScore = 0;
-    const scoreDistribution: Record<string, number> = {
-      "0-59": 0, "60-79": 0, "80-89": 0, "90-100": 0,
-    };
-    if (submittedCount > 0) {
-      const totalScore = submissions.reduce((sum, s) => sum + (s.score || 0), 0);
-      averageScore = Math.round((totalScore / submittedCount) * 10) / 10;
-      for (const s of submissions) {
-        const score = s.score || 0;
-        if (score < 60) scoreDistribution["0-59"]++;
-        else if (score < 80) scoreDistribution["60-79"]++;
-        else if (score < 90) scoreDistribution["80-89"]++;
-        else scoreDistribution["90-100"]++;
+    // 分数统计：无评分探究（collectProfile.hasScoring=false）不统计分数，返回 null。
+    // ⚠️ GOTCHA：collectProfile 由启用提交时 AI 分析得出；旧数据无此字段时，
+    //   在「去除注入脚本后的 HTML」上做确定性兜底，避免把注入的 `score:0` 误判为有评分。
+    const profile = parseCollectProfile(exploration.collectProfile) ??
+      detectCollectProfile(removeSubmitFunctionality(exploration.htmlContent));
+    const hasScoring = profile.hasScoring !== false;
+
+    let averageScore: number | null = null;
+    let scoreDistribution: Record<string, number> | null = null;
+    if (hasScoring) {
+      averageScore = 0;
+      scoreDistribution = { "0-59": 0, "60-79": 0, "80-89": 0, "90-100": 0 };
+      if (submittedCount > 0) {
+        const totalScore = submissions.reduce((sum, s) => sum + (s.score || 0), 0);
+        averageScore = Math.round((totalScore / submittedCount) * 10) / 10;
+        for (const s of submissions) {
+          const score = s.score || 0;
+          if (score < 60) scoreDistribution["0-59"]++;
+          else if (score < 80) scoreDistribution["60-79"]++;
+          else if (score < 90) scoreDistribution["80-89"]++;
+          else scoreDistribution["90-100"]++;
+        }
       }
     }
 
@@ -246,8 +272,8 @@ export async function GET(
         return {
           studentId: s.studentId,
           studentName: studentNameMap.get(s.studentId) || s.studentId,
-          score: s.score || 0,
-          maxScore: s.totalScore || 100,
+          score: hasScoring ? (s.score || 0) : null,
+          maxScore: hasScoring ? (s.totalScore || 100) : null,
           timeSpent: answers.timeSpent || 0,
           interactions: answers.interactions || 0,
           completedSections: answers.completedSections || [],
@@ -259,6 +285,7 @@ export async function GET(
     return NextResponse.json({
       explorationId: id,
       explorationTitle: exploration.title,
+      hasScoring,
       submittedCount,
       totalStudents: classStudentsCount || submittedCount,
       classIds: allClassIds,

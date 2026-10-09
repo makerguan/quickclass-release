@@ -11,10 +11,30 @@
  *   4. replaceUnicodeMath —— Unicode 数学符号兜底替换（× ÷ ≤ ≥ π √ 等）
  *
  * 朗读（speak）：按句切分逐条朗读，规避 Chrome 对超长 utterance 静默截断的已知问题。
+ *
+ * 音色（pickChineseVoice）：在**浏览器内置朗读**这条回退路径上挑音色。
+ *   这里**优先本机自带（localService）的中文音色**：名字含 Natural/Online 的微软音色
+ *   其实是**云端**音色，教室没有外网时反而不出声 —— 回退路径要的是"稳定出声"，
+ *   音质交给上面的服务端合成负责。
+ *
+ * 高质量朗读（speakSmart）——学生端统一入口：
+ *   先用 `/api/tts` 登记文本，再用原生 `<audio>` 播放 `/api/tts/audio/<id>`。
+ *   服务端是**流式**返回的（边合成边推），所以约半秒就能出声，且音色由服务端决定，
+ *   与学生电脑装了什么系统音色无关。服务端不可用、或浏览器拦截自动播放时，
+ *   自动回退到上面的浏览器内置朗读。
+ *
+ * 开关 / 音色 / 语速统一存在 `speech-settings`，多个使用朗读的组件共享同一份配置。
  */
 
+import {
+  DEFAULT_VOICE_RATE,
+  MAX_VOICE_RATE,
+  MIN_VOICE_RATE,
+  getSpeechSettings,
+} from "./speech-settings";
+
 // ---------- 语音默认语速（倍速） ----------
-export const DEFAULT_VOICE_RATE = 1.2;
+export { DEFAULT_VOICE_RATE };
 
 // ---------- 第三级：Unicode 数学符号 → 中文口语 ----------
 const UNICODE_MATH_MAP: Record<string, string> = {
@@ -358,29 +378,305 @@ export function textToSpeechText(markdown: string): string {
   return s;
 }
 
-/** 停止当前朗读 */
+// ---------- 音色选择（仅用于「浏览器内置朗读」这条回退路径） ----------
+// speechSynthesis 若不指定 voice，会用系统默认音色，质量完全取决于客户端环境：
+// 有的机器落到微软老式 SAPI（Microsoft David / Huihui 等）甚至 Linux 的 eSpeak。
+//
+// 这里挑音色的目标**不是"最好听"，而是"最可能出得了声"**（老师可能把 QuickClass
+// 部署在没有外网的教室里）：
+//   ① 先用 `localService === true` 滤出**本机自带**的音色 —— 这类音色离线可用
+//   ② 再按下面的关键词顺序匹配常见中文音色
+//   ③ 兜底：第一个中文音色；一个中文音色都没有时返回 null（交给浏览器默认）
+//
+// 为什么不优先 Natural/Online：那是微软的**云端**神经音色（音质确实最好），
+// 但需要联网 —— 没外网时选中它会**静音**，等于把"回退保底"这件事做没了。
+// 高音质由服务端合成（speakSmart）负责，这条路只负责"一定有声音"。
+const VOICE_NAME_PRIORITY = [
+  // 微软边缘/Windows 神经音色（在线，需系统已安装对应语音包）
+  "xiaoxiao",
+  "xiaoyi",
+  "xiaochen",
+  "xiaohan",
+  "yunxi",
+  "yunyang",
+  "yunjian",
+  "yunxia",
+  // 微软 Windows 本地音色
+  "huihui",
+  "yaoyao",
+  "kangkang",
+  // Chrome / macOS / 其他
+  "google 普通话",
+  "google 中文",
+  "ting-ting",
+  "tingting",
+  "mei-jia",
+  "meijia",
+  "sin-ji",
+  "sinji",
+];
+
+const ZH_LANG_RE = /^zh(-|_)?(cn|hans|sg|tw|hk)?/i;
+const ZH_NAME_RE = /chinese|中文|普通话|国语|國語/i;
+
+let cachedVoice: SpeechSynthesisVoice | null = null;
+
+function isChineseVoice(v: SpeechSynthesisVoice): boolean {
+  return ZH_LANG_RE.test(v.lang || "") || ZH_NAME_RE.test(v.name || "");
+}
+
+/** 从系统音色列表里挑一个最自然的中文音色；取不到时返回 null */
+export function pickChineseVoice(): SpeechSynthesisVoice | null {
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
+  const all = window.speechSynthesis.getVoices();
+  if (!all || all.length === 0) return null;
+
+  const zhPool = all.filter(isChineseVoice);
+  const candidates = zhPool.length > 0 ? zhPool : all;
+
+  // ① 本机自带的音色优先（离线可用）。若这台机器只有云端音色，就退回全集（行为同以前）
+  const localOnly = candidates.filter((v) => v.localService === true);
+  const pool = localOnly.length > 0 ? localOnly : candidates;
+
+  // ② 关键词优先级
+  for (const kw of VOICE_NAME_PRIORITY) {
+    const hit = pool.find((v) => (v.name || "").toLowerCase().includes(kw));
+    if (hit) return hit;
+  }
+
+  // ③ 兜底：池子里第一个不是云端音色的；实在没有就拿第一个
+  const plain = pool.find((v) => !/natural|online/i.test(v.name || ""));
+  return plain ?? pool[0] ?? null;
+}
+
+/** 取音色（带缓存）。Chrome 首次 getVoices() 常返回空数组，需等 voiceschanged 事件再取 */
+function resolveVoice(): SpeechSynthesisVoice | null {
+  if (cachedVoice) return cachedVoice;
+  cachedVoice = pickChineseVoice();
+  if (cachedVoice) return cachedVoice;
+  if (typeof window === "undefined" || !("speechSynthesis" in window)) return null;
+  window.speechSynthesis.addEventListener(
+    "voiceschanged",
+    () => {
+      if (!cachedVoice) cachedVoice = pickChineseVoice();
+    },
+    { once: true }
+  );
+  return null;
+}
+
+/** 停止当前朗读（服务端合成音频与浏览器内置朗读一起停） */
 export function stopSpeaking(): void {
-  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
-  window.speechSynthesis.cancel();
+  if (typeof window === "undefined") return;
+  releaseAudio();
+  setSpeakingOwner(null);
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
 }
 
 /** 朗读一段 Markdown 回答（清洗后按句切分，逐条朗读） */
-export function speak(markdown: string, rate = DEFAULT_VOICE_RATE): void {
+export function speak(markdown: string, rate = DEFAULT_VOICE_RATE, onEnd?: () => void): void {
   if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
   stopSpeaking();
   const clean = textToSpeechText(markdown);
   if (!clean) return;
+  const voice = resolveVoice();
   const sentences =
     clean
       .match(/[^。！？!?；;]+[。！？!?；;]?/g)
       ?.map((x) => x.trim())
       .filter(Boolean) ?? [];
   const chunks = sentences.length > 0 ? sentences : [clean];
-  for (const text of chunks) {
+  chunks.forEach((text, index) => {
     const utter = new SpeechSynthesisUtterance(text);
-    utter.lang = "zh-CN";
+    if (voice) {
+      utter.voice = voice;
+      utter.lang = voice.lang || "zh-CN";
+    } else {
+      utter.lang = "zh-CN";
+    }
     utter.rate = rate;
     utter.pitch = 1;
+    if (index === chunks.length - 1 && onEnd) {
+      utter.onend = onEnd;
+      utter.onerror = onEnd;
+    }
     window.speechSynthesis.speak(utter);
+  });
+}
+
+// ---------- 服务端高质量合成（音色可选，失败自动回退浏览器朗读） ----------
+
+/** 正在播放的服务端合成音频 */
+let currentAudio: HTMLAudioElement | null = null;
+/** 朗读请求序号：用于丢弃被新一段朗读取代的旧请求 */
+let speakSeq = 0;
+
+// ---------- 朗读状态广播（供"每条回答上的朗读按钮"显示播放中/已停止） ----------
+let speakingOwner: string | null = null;
+const speakingSubs = new Set<(owner: string | null) => void>();
+
+function setSpeakingOwner(owner: string | null): void {
+  if (speakingOwner === owner) return;
+  speakingOwner = owner;
+  speakingSubs.forEach((fn) => fn(owner));
+}
+
+/** 订阅"当前正在朗读哪一条"；返回取消订阅函数 */
+export function subscribeSpeakingOwner(cb: (owner: string | null) => void): () => void {
+  speakingSubs.add(cb);
+  cb(speakingOwner);
+  return () => {
+    speakingSubs.delete(cb);
+  };
+}
+
+function clampRate(rate: number): number {
+  if (!Number.isFinite(rate)) return DEFAULT_VOICE_RATE;
+  return Math.min(MAX_VOICE_RATE, Math.max(MIN_VOICE_RATE, rate));
+}
+
+/** 播放一定时间后仍未出声，判定为启动失败（避免一直干等） */
+function startWatchdog(ms: number): { cancel: () => void; promise: Promise<never> } {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const promise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("朗读启动超时")), ms);
+  });
+  return {
+    promise,
+    cancel: () => {
+      if (timer) clearTimeout(timer);
+    },
+  };
+}
+
+function releaseAudio(): void {
+  if (!currentAudio) return;
+  const audio = currentAudio;
+  currentAudio = null;
+  try {
+    audio.onended = null;
+    audio.onerror = null;
+    audio.pause();
+    audio.removeAttribute("src");
+    audio.load(); // 中止仍在进行的流式下载，省流量
+  } catch {
+    /* ignore */
   }
+}
+
+// ---------- 服务端高质量合成（流式播放，失败自动回退浏览器朗读） ----------
+
+/** 登记朗读文本，拿到可交给 <audio> 播放的 id */
+async function registerTts(text: string, voice: string): Promise<string> {
+  const res = await fetch("/api/tts", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ text, voice }),
+  });
+  if (!res.ok) throw new Error("登记朗读文本失败");
+  const data = (await res.json()) as { ok?: boolean; id?: string };
+  if (!data?.ok || !data.id) throw new Error("登记朗读文本失败");
+  return data.id;
+}
+
+/**
+ * 等待系统音色列表就绪（Chrome 首次 getVoices() 返回空数组，需等 voiceschanged 事件）。
+ * 超时仍为空 → 这台设备没有可用的语音引擎（安卓平板常见：无 GMS 或 Google 语音服务
+ * 不可达时 speechSynthesis 存在但永远无声），返回 false。
+ */
+function waitForVoices(timeoutMs = 1500): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
+      resolve(false);
+      return;
+    }
+    const synth = window.speechSynthesis;
+    if ((synth.getVoices() || []).length > 0) {
+      resolve(true);
+      return;
+    }
+    let done = false;
+    const finish = (ok: boolean) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      synth.removeEventListener("voiceschanged", onChange);
+      resolve(ok);
+    };
+    const onChange = () => {
+      if ((synth.getVoices() || []).length > 0) finish(true);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    synth.addEventListener("voiceschanged", onChange);
+  });
+}
+
+export type SpeakResult = "server" | "fallback" | "no-voice" | "none";
+
+/**
+ * 学生端朗读统一入口：优先服务端**流式**合成，失败自动回退浏览器内置朗读。
+ *
+ * @param markdown 回答原文（Markdown + LaTeX，内部会清洗成朗读文本）
+ * @param opts.owner 调用方标识（每条回答上的朗读按钮各自一个），用于回显"正在朗读"
+ */
+export async function speakSmart(
+  markdown: string,
+  opts: { owner?: string } = {}
+): Promise<SpeakResult> {
+  if (typeof window === "undefined") return "none";
+  const text = textToSpeechText(markdown);
+  if (!text) return "none";
+
+  const { voice, rate } = getSpeechSettings();
+  const seq = ++speakSeq;
+  releaseAudio();
+  if ("speechSynthesis" in window) window.speechSynthesis.cancel();
+
+  // ① 服务端流式合成：原生 <audio> 边收边播，实测约半秒出声
+  try {
+    const id = await registerTts(text, voice);
+    // 取文本期间又触发了新的朗读 → 丢弃这一段，也不回退（新的那段会自己播）
+    if (seq !== speakSeq) return "none";
+
+    const audio = new Audio(`/api/tts/audio/${id}`);
+    // 语速交给播放器变速（变速不变调），不必每个语速各自合成一份
+    audio.playbackRate = clampRate(rate);
+    currentAudio = audio;
+
+    const watchdog = startWatchdog(15000);
+    try {
+      await Promise.race([audio.play(), watchdog.promise]);
+    } catch (e) {
+      watchdog.cancel();
+      if (seq === speakSeq) releaseAudio();
+      throw e;
+    }
+    watchdog.cancel();
+
+    setSpeakingOwner(opts.owner ?? null);
+    const done = () => {
+      if (currentAudio === audio) {
+        currentAudio = null;
+        setSpeakingOwner(null);
+      }
+    };
+    audio.onended = done;
+    audio.onerror = done;
+    return "server";
+  } catch {
+    if (seq === speakSeq) releaseAudio();
+  }
+
+  // ② 回退：浏览器内置朗读（音色取决于学生电脑，但保证"读得出来"）。
+  // 安卓平板常见坑：speechSynthesis 存在但系统没有 TTS 引擎（无 GMS / Google 语音被墙），
+  // getVoices() 永远为空，speak() 不报错也不出声 —— 先确认真的有音色可用再回退。
+  if (seq !== speakSeq) return "none";
+  const hasVoice = await waitForVoices();
+  if (seq !== speakSeq) return "none";
+  if (!hasVoice) return "no-voice";
+  speak(markdown, rate, () => {
+    if (seq === speakSeq) setSpeakingOwner(null);
+  });
+  setSpeakingOwner(opts.owner ?? null);
+  return "fallback";
 }

@@ -5,6 +5,7 @@ import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
 import { aiQueue } from "@/lib/ai-queue";
 import { buildAiCompanionSystemPrompt } from "@/lib/prompts/ai-companion";
+import { buildImageInjection } from "@/lib/image-library";
 
 // POST: 学生AI伴学对话（流式），并在流结束后保存对话记录
 export async function POST(
@@ -45,7 +46,7 @@ export async function POST(
     const userId = String(payload.userId);
 
     // 构建system prompt（结合预生成提示词+实时上下文）
-    const systemPrompt = buildAiCompanionSystemPrompt({
+    let systemPrompt = buildAiCompanionSystemPrompt({
       aiCompanionPrompt: exploration.aiCompanionPrompt,
       title: exploration.title,
       description: exploration.description || undefined,
@@ -53,6 +54,22 @@ export async function POST(
       taskObjectives: exploration.SubProject?.task?.objectives,
       context: context || {},
     });
+
+    // 课堂引用的图片组：AI 伴学可智能发送组内图片（与 chat 路由同款注入）
+    try {
+      const task = exploration.SubProject?.task;
+      if (task) {
+        const imageInjection = await buildImageInjection(
+          (task as any).imageGroupIds,
+          task.teacherId
+        );
+        if (imageInjection) {
+          systemPrompt += imageInjection;
+        }
+      }
+    } catch {
+      // 图片组注入失败，忽略（不影响对话）
+    }
 
     const { chatModel } = await createDashScopeClient();
 

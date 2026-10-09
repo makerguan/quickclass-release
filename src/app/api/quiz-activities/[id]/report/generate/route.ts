@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
-import { getAIConfig } from "@/lib/ai";
+import { getAIConfig, chatCompletionsFetch } from "@/lib/ai";
 import { getReportTime } from "@/lib/prompts/insight";
-import { processChartBlocks } from "@/lib/report-charts";
+import { cleanInsightContent } from "@/lib/insight-clean";
 
 // 课堂作业分析模板变量替换
 function replaceQuizAnalysisVars(template: string, vars: Record<string, string>): string {
@@ -49,13 +49,35 @@ export async function POST(
     });
     if (!quiz) return NextResponse.json({ error: "作业不存在" }, { status: 404 });
 
+    // 确定分析班级：优先前端传的 classId，否则回退到作业第一个分配班级
+    const effectiveClassId = classId || quiz.SubProject?.task?.assignments?.[0]?.classId || null;
+
+    // 按班级过滤答题记录（仅统计本班学生）
+    const classAttempts = effectiveClassId
+      ? quiz.QuizAttempt.filter(a => a.User.classId === effectiveClassId)
+      : quiz.QuizAttempt;
+
     // 仅统计已完成答题的学生
-    const completedAttempts = quiz.QuizAttempt.filter(a => a.QuestionAttempt.length === quiz.Question.length);
+    const completedAttempts = classAttempts.filter(a => a.QuestionAttempt.length === quiz.Question.length);
     const totalStudents = completedAttempts.length;
     const passScore = quiz.passScore ?? 60;
     const classAvgScore = totalStudents > 0
       ? Math.round(completedAttempts.reduce((s, a) => s + a.score, 0) / totalStudents)
       : 0;
+
+    // 班级信息：真实班级名 + 班级名册总人数
+    let className = "本班";
+    let classSize = totalStudents;
+    if (effectiveClassId) {
+      const classInfo = await prisma.class.findUnique({
+        where: { id: effectiveClassId },
+        select: { name: true },
+      });
+      if (classInfo) className = classInfo.name;
+      classSize = await prisma.user.count({
+        where: { classId: effectiveClassId, role: "STUDENT" },
+      });
+    }
 
     // 各题正确率详情（分母 = 完成人数）
     const questionStatsRaw = quiz.Question.map((q) => {
@@ -118,7 +140,8 @@ export async function POST(
     const dataSection = [
       "## 检测信息",
       `作业名称：${quiz.title}`,
-      `班级：本班`,
+      `班级：${className}`,
+      `班级总人数：${classSize}人`,
       `参与人数：${totalStudents}人`,
       `合格线：${passScore}分`,
       `班级平均分：${classAvgScore}分`,
@@ -151,9 +174,9 @@ export async function POST(
     const quizAnalysisVars: Record<string, string> = {
       "quizTitle": quiz.title,
       "quiz.title": quiz.title,
-      "className": "本班",
+      "className": className,
       "totalStudents": String(totalStudents),
-      "classSize": String(totalStudents),
+      "classSize": String(classSize),
       "classAvgScore": `${classAvgScore}分`,
       "passScore": `${passScore}分`,
       "questionStats": questionStats || "无",
@@ -181,52 +204,34 @@ export async function POST(
       messages: [{ role: "user", content: prompt }],
     };
 
-    const aiResponse = await fetch(`${aiConfig.baseURL}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${aiConfig.apiKey}`,
-      },
-      body: JSON.stringify(requestBody),
-    });
+    // ⛔ DO NOT REVERT：不要改回裸 fetch——与探究报告同款故障面（网络抖动→fetch failed
+    //   直透前端），统一走 src/lib/ai.ts 的 chatCompletionsFetch（超时+网络级重试）。
+    const aiResponse = await chatCompletionsFetch(aiConfig, requestBody);
 
     if (!aiResponse.ok) {
       return NextResponse.json({ error: "AI 分析失败" }, { status: 500 });
     }
 
     const aiData = await aiResponse.json();
-    // 渲染 chart 数据块为确定性 SVG（无块时原样返回；失败降级表格，最坏 = 现状）
-    const content = processChartBlocks(aiData.choices?.[0]?.message?.content || "");
+    // 统一清理：chart 数据块渲染 + 剥 markdown 围栏 + 截取 HTML 文档主体（丢弃前后说明文字）
+    const content = cleanInsightContent(aiData.choices?.[0]?.message?.content || "");
 
     // 保存到 AIInsight（使用班级ID，不是task ID）
-    // 优先使用前端传递的 classId，否则使用第一个班级
-    const saveClassId = classId || quiz.SubProject?.task?.assignments?.[0]?.classId;
+    const saveClassId = effectiveClassId;
     if (saveClassId) {
       // 获取已有版本数量，用于设置新版本号
       const existingCount = await prisma.aIInsight.count({
         where: { type: "quiz_class", classId: saveClassId, scopeId: id },
       });
       
-      // 清理 content 中的 markdown 代码块标记（```html / ```HTML / ```）
-      // 注意：chart 块已在上方被替换为 SVG，此处只剥外层包裹 fence
-      let cleanContent = content;
-      const mdBlockMatch = cleanContent.match(/^\s*```(?:html|HTML)?\s*\n?([\s\S]*?)\n?\s*```\s*$/);
-      if (mdBlockMatch) {
-        cleanContent = mdBlockMatch[1].trim();
-      } else {
-        // fallback：简单剥离首尾标记
-        cleanContent = cleanContent.replace(/^\s*```(?:html|HTML)?\s*\n?/, "");
-        cleanContent = cleanContent.replace(/\n?\s*```\s*$/, "");
-        cleanContent = cleanContent.trim();
-      }
-      
       // 创建新版本（不删除旧版本）
+      // content 已由 cleanInsightContent 统一清理：chart 渲染 + 剥围栏 + 截取 HTML 主体（丢弃前后说明文字）
       await prisma.aIInsight.create({
         data: {
           type: "quiz_class",
           classId: saveClassId,
           scopeId: id,
-          content: cleanContent.trim(),
+          content: content.trim(),
           version: existingCount + 1,
         },
       });

@@ -1,0 +1,6 @@
+{
+  "version": "v2026.09.17",
+  "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
+  "changelog": "AI 伴学新增语音朗读功能：学生可在 AI 伴学对话中开启语音并调节语速，AI 回答完成后自动朗读，支持 markdown/公式/图标清洗，设置自动记忆",
+  "releaseDate": "2026-09-17"
+}
