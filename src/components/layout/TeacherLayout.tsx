@@ -106,6 +106,7 @@ export default function TeacherLayout({
           {!sidebarCollapsed && (
             <>
               <h2 className="text-lg font-bold text-[#0052D9]">QuickClass Agent</h2>
+              <p className="text-sm font-medium text-gray-700">宁创教学智能体</p>
             </>
           )}
           <button

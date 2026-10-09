@@ -1,6 +1,6 @@
 {
-  "version": "v2026.09.29",
+  "version": "v2026.10.09",
   "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
-  "changelog": "交互探究数据接入课堂级学情分析与教研科研：课堂全班/个人分析报告纳入探究参与度、探索时长、操作特征与探究结论；新增 {classExplorationStats}/{personalExplorationStats} 两个模板变量（老模板自动兜底追加）；论文与课题申报新增「交互探究数据」「探究报告」两类数据源，实证章节可引用真实探究过程数据",
-  "releaseDate": "2026-09-29"
+  "changelog": "品牌标识优化：教师登录页与教师端布局统一展示 QuickClass Agent / 宁创教学智能体 双语品牌名；交互探究数据大屏支持手动编辑、AI 重排与恢复默认，并补充采集字段与图型对照文档",
+  "releaseDate": "2026-10-09"
 }

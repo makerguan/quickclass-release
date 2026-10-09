@@ -52,10 +52,18 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#0052D9] to-[#00A870] flex items-center justify-center">
       <div className="bg-white rounded-2xl shadow-xl p-8 w-full max-w-md">
-        <h1 className="text-2xl font-bold text-center mb-2 text-[#1A1A1A]">
-          教师登录
-        </h1>
-        <p className="text-center text-gray-500 mb-8">QuickClass Agent: Student-centric, Class-focused.</p>
+        <div className="text-center mb-8">
+          <span className="inline-block px-3 py-1 rounded-full bg-blue-50 text-blue-600 text-xs font-medium mb-3">
+            教师端
+          </span>
+          <h1 className="text-3xl font-bold text-[#0052D9] mb-1">
+            QuickClass Agent
+          </h1>
+          <p className="text-xl font-semibold text-gray-800 mb-2">
+            宁创教学智能体
+          </p>
+          <p className="text-gray-500 text-sm">Student-centric, Class-focused.</p>
+        </div>
 
         <Form onSubmit={handleSubmit}>
           <Form.FormItem name="phone" rules={[{ required: true, message: "请输入手机号" }]}>
