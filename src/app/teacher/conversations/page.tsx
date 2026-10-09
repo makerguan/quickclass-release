@@ -793,6 +793,7 @@ export default function TeacherConversationsPage() {
               pageSize={pageSize}
               current={Math.min(currentPage, totalPages)}
               showJumper
+              showPageSize={false}
               onChange={(pageInfo) => setCurrentPage(pageInfo.current)}
             />
           </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Button, Tag, Loading, MessagePlugin } from "tdesign-react";
+import { Button, Tag, Loading, MessagePlugin, Pagination, InputNumber } from "tdesign-react";
 import {
   AddIcon,
   FileWordIcon,
@@ -25,6 +25,13 @@ interface ResearchProject {
 export default function ResearchListPage() {
   const [projects, setProjects] = useState<ResearchProject[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // 分页状态
+  // 与 images、knowledge-base、tasks 等教师端列表页保持一致：前端本地分页，
+  // 默认每页 10 条，隐藏页码选择器（showPageSize=false）。
+  // 🔗 RELATED: src/app/teacher/images/page.tsx、src/app/teacher/knowledge-base/page.tsx
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const loadProjects = async () => {
     setLoading(true);
@@ -72,6 +79,11 @@ export default function ResearchListPage() {
   const statusTagTheme = (status: string) =>
     status === "COMPLETED" ? "success" : status === "TITLES_READY" ? "warning" : "default";
 
+  // 分页计算
+  const totalPages = Math.max(1, Math.ceil(projects.length / pageSize));
+  const safePage = Math.min(currentPage, totalPages);
+  const pagedProjects = projects.slice((safePage - 1) * pageSize, safePage * pageSize);
+
   return (
     <TeacherLayout>
       <div className="p-6 w-full">
@@ -107,93 +119,124 @@ export default function ResearchListPage() {
             </Link>
           </div>
         ) : (
-          <div className="space-y-3">
-            {projects.map((p) => (
-              <div
-                key={p.id}
-                className="bg-white rounded-lg border border-gray-200 p-5 hover:border-[#0052D9] transition-colors"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-2xl">
-                        {p.projectType === "PAPER" ? "📄" : "📋"}
-                      </span>
-                      <h3 className="font-semibold text-lg text-[#1A1A1A]">
-                        {p.projectName}
-                      </h3>
-                      <Tag theme={typeTagTheme(p.projectType)} variant="light" size="small">
-                        {typeLabel(p.projectType)}
-                      </Tag>
-                      <Tag theme={statusTagTheme(p.status)} variant="light" size="small">
-                        {statusLabel(p.status)}
-                      </Tag>
-                    </div>
-                    {p.selectedTitle ? (
-                      <p className="text-sm text-gray-600 mb-1">
-                        <span className="text-gray-400">研究题目：</span>
-                        {p.selectedTitle}
+          <>
+            <div className="space-y-3">
+              {pagedProjects.map((p) => (
+                <div
+                  key={p.id}
+                  className="bg-white rounded-lg border border-gray-200 p-5 hover:border-[#0052D9] transition-colors"
+                >
+                  <div className="flex items-start justify-between">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-2xl">
+                          {p.projectType === "PAPER" ? "📄" : "📋"}
+                        </span>
+                        <h3 className="font-semibold text-lg text-[#1A1A1A]">
+                          {p.projectName}
+                        </h3>
+                        <Tag theme={typeTagTheme(p.projectType)} variant="light" size="small">
+                          {typeLabel(p.projectType)}
+                        </Tag>
+                        <Tag theme={statusTagTheme(p.status)} variant="light" size="small">
+                          {statusLabel(p.status)}
+                        </Tag>
+                      </div>
+                      {p.selectedTitle ? (
+                        <p className="text-sm text-gray-600 mb-1">
+                          <span className="text-gray-400">研究题目：</span>
+                          {p.selectedTitle}
+                        </p>
+                      ) : null}
+                      <p className="text-xs text-gray-400">
+                        更新于 {new Date(p.updatedAt).toLocaleString()}
                       </p>
-                    ) : null}
-                    <p className="text-xs text-gray-400">
-                      更新于 {new Date(p.updatedAt).toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2 ml-4">
-                    {p.status === "COMPLETED" && (
-                      <Button
-                        theme="primary"
-                        variant="outline"
-                        size="small"
-                        icon={<FileWordIcon />}
-                        onClick={async () => {
-                          try {
-                            const token = localStorage.getItem("token");
-                            const res = await fetch(
-                              `/api/research/projects/${p.id}/download`,
-                              { headers: { Authorization: `Bearer ${token}` } }
-                            );
-                            if (res.ok) {
-                              const blob = await res.blob();
-                              const url = URL.createObjectURL(blob);
-                              const a = document.createElement("a");
-                              a.href = url;
-                              a.download = `${p.selectedTitle || p.projectName}.docx`;
-                              a.click();
-                              URL.revokeObjectURL(url);
+                    </div>
+                    <div className="flex items-center gap-2 ml-4">
+                      {p.status === "COMPLETED" && (
+                        <Button
+                          theme="primary"
+                          variant="outline"
+                          size="small"
+                          icon={<FileWordIcon />}
+                          onClick={async () => {
+                            try {
+                              const token = localStorage.getItem("token");
+                              const res = await fetch(
+                                `/api/research/projects/${p.id}/download`,
+                                { headers: { Authorization: `Bearer ${token}` } }
+                              );
+                              if (res.ok) {
+                                const blob = await res.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement("a");
+                                a.href = url;
+                                a.download = `${p.selectedTitle || p.projectName}.docx`;
+                                a.click();
+                                URL.revokeObjectURL(url);
+                              }
+                            } catch (e) {
+                              MessagePlugin.error("下载失败");
                             }
-                          } catch (e) {
-                            MessagePlugin.error("下载失败");
-                          }
-                        }}
-                      >
-                        下载 Word
-                      </Button>
-                    )}
-                    <Link href={`/teacher/research/${p.id}`}>
+                          }}
+                        >
+                          下载 Word
+                        </Button>
+                      )}
+                      <Link href={`/teacher/research/${p.id}`}>
+                        <Button
+                          theme="default"
+                          variant="outline"
+                          size="small"
+                          icon={p.status === "COMPLETED" ? <EditIcon /> : <ChevronRightIcon />}
+                        >
+                          {p.status === "COMPLETED" ? "查看/编辑" : "继续"}
+                        </Button>
+                      </Link>
                       <Button
-                        theme="default"
-                        variant="outline"
+                        theme="danger"
+                        variant="text"
                         size="small"
-                        icon={p.status === "COMPLETED" ? <EditIcon /> : <ChevronRightIcon />}
+                        icon={<DeleteIcon />}
+                        onClick={() => handleDelete(p.id)}
                       >
-                        {p.status === "COMPLETED" ? "查看/编辑" : "继续"}
+                        删除
                       </Button>
-                    </Link>
-                    <Button
-                      theme="danger"
-                      variant="text"
-                      size="small"
-                      icon={<DeleteIcon />}
-                      onClick={() => handleDelete(p.id)}
-                    >
-                      删除
-                    </Button>
+                    </div>
                   </div>
                 </div>
+              ))}
+            </div>
+
+            {projects.length > 0 && (
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2 text-sm text-[#63666F]">
+                  <span>每页</span>
+                  <InputNumber
+                    value={pageSize}
+                    min={1}
+                    max={100}
+                    theme="column"
+                    onChange={(val) => {
+                      const n = Math.max(1, Math.min(100, Number(val) || 1));
+                      setPageSize(n);
+                      setCurrentPage(1);
+                    }}
+                    style={{ width: 72 }}
+                  />
+                  <span>个研究项目，共 {projects.length} 个</span>
+                </div>
+                <Pagination
+                  total={projects.length}
+                  pageSize={pageSize}
+                  current={safePage}
+                  showJumper
+                  showPageSize={false}
+                  onChange={(pageInfo) => setCurrentPage(pageInfo.current)}
+                />
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </div>
     </TeacherLayout>

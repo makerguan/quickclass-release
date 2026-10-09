@@ -4554,6 +4554,7 @@ export default function TeacherTasksPage() {
               pageSize={pageSize}
               current={safePage}
               showJumper
+              showPageSize={false}
               onChange={(pageInfo) => setCurrentPage(pageInfo.current)}
             />
           </div>
