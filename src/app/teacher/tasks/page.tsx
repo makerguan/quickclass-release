@@ -896,6 +896,40 @@ export default function TeacherTasksPage() {
   const [generating, setGenerating] = useState(false); // 多轮生成中
   const [savingExploration, setSavingExploration] = useState(false);
 
+  // ⚠️ GOTCHA：生成进度浮层（单例）
+  // 旧写法每秒 `msg.close()` + `MessagePlugin.loading(...)` 重建 —— 因为 TDesign 每次调用都向容器 push 一条
+  // 新 message（见 node_modules/tdesign-react/es/message/Message.js:203 renderElement），旧 loading 消息的 fadeOut
+  // 异步退出动画未跑完就被新消息盖住，栈顶那条永远显示 "0s" 且圆圈一直转（历史 bug：用户报「秒数一直是 0，圆圆一直滚动」）。
+  // 改用单一 React 浮层 + useState 计数，从根本上杜绝消息堆叠，秒数随真实耗时递增。
+  const [genOverlay, setGenOverlay] = useState<{ visible: boolean; text: string; seconds: number }>({
+    visible: false,
+    text: "",
+    seconds: 0,
+  });
+  const genTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const genStartRef = useRef<number>(0);
+  const startGenOverlay = (initialText: string) => {
+    genStartRef.current = Date.now();
+    setGenOverlay({ visible: true, text: initialText, seconds: 0 });
+    if (genTimerRef.current) clearInterval(genTimerRef.current);
+    genTimerRef.current = setInterval(() => {
+      setGenOverlay((prev) => ({ ...prev, seconds: Math.round((Date.now() - genStartRef.current) / 1000) }));
+    }, 1000);
+  };
+  const updateGenOverlay = (text: string) => setGenOverlay((prev) => ({ ...prev, text }));
+  const stopGenOverlay = () => {
+    if (genTimerRef.current) {
+      clearInterval(genTimerRef.current);
+      genTimerRef.current = null;
+    }
+    setGenOverlay((prev) => ({ ...prev, visible: false }));
+  };
+  useEffect(() => {
+    return () => {
+      if (genTimerRef.current) clearInterval(genTimerRef.current);
+    };
+  }, []);
+
   // 分析弹窗
   const [analysisModalVisible, setAnalysisModalVisible] = useState(false);
   const [analysisExplorationId, setAnalysisExplorationId] = useState<string | null>(null);
@@ -1144,13 +1178,7 @@ export default function TeacherTasksPage() {
   // 纯函数：调用 AI 对 HTML 插桩，成功返回改造后的 HTML，失败返回 null（不抛错、不改任何 state）
   const adaptHtmlWithAi = async (html: string): Promise<string | null> => {
     setAdapting(true);
-    const startAt = Date.now();
-    let msg = await MessagePlugin.loading("AI 接入采集中... 0s", 0);
-    const timer = setInterval(async () => {
-      const s = Math.round((Date.now() - startAt) / 1000);
-      msg.close();
-      msg = await MessagePlugin.loading(`AI 接入采集中... ${s}s`, 0);
-    }, 1000);
+    startGenOverlay("AI 接入采集中...");
     try {
       const token = localStorage.getItem("token") || "";
       const response = await fetch("/api/exploration-activities/generate", {
@@ -1181,8 +1209,7 @@ export default function TeacherTasksPage() {
     } catch {
       return null;
     } finally {
-      clearInterval(timer);
-      msg.close();
+      stopGenOverlay();
       setAdapting(false);
     }
   };
@@ -1232,14 +1259,7 @@ export default function TeacherTasksPage() {
     if (!explorationPanelSpId) return;
     const hadIdea = !!draftInput.trim();
     setGeneratingPrompt(true);
-    const startAt = Date.now();
-    let received = 0;
-    let msg = await MessagePlugin.loading("AI 思考中... 0s", 0);
-    const timer = setInterval(async () => {
-      const s = Math.round((Date.now() - startAt) / 1000);
-      msg.close();
-      msg = await MessagePlugin.loading(received > 0 ? `已生成 ${received} 字...` : `AI 思考中... ${s}s`, 0);
-    }, 1000);
+    startGenOverlay("AI 思考中...");
     let text = "";
     try {
       const token = localStorage.getItem("token") || "";
@@ -1265,7 +1285,7 @@ export default function TeacherTasksPage() {
         const { done, value } = await reader.read();
         if (done) break;
         text += decoder.decode(value, { stream: true });
-        received = text.length;
+        updateGenOverlay(`已生成 ${text.length} 字...`);
       }
       // 解析「标题：/提示词：」结构
       const titleMatch = text.match(/标题[：:]\s*(.+?)(?:\n|---|$)/);
@@ -1278,8 +1298,7 @@ export default function TeacherTasksPage() {
     } catch {
       MessagePlugin.error("生成提示词失败");
     } finally {
-      clearInterval(timer);
-      msg.close();
+      stopGenOverlay();
       setGeneratingPrompt(false);
     }
   };
@@ -1302,11 +1321,8 @@ export default function TeacherTasksPage() {
     setChatMessages((prev) => [...prev, { role: "user", content: instruction }]);
     setDraftInput("");
     setGenerating(true);
+    startGenOverlay("AI 思考中...");
 
-    const startAt = Date.now();
-    let msg = await MessagePlugin.loading("AI 思考中... 0s", 0);
-    let receivedBytes = 0;
-    let timer: NodeJS.Timeout | undefined = undefined;
     try {
       const token = localStorage.getItem("token") || "";
       const response = await fetch("/api/exploration-activities/generate", {
@@ -1320,29 +1336,20 @@ export default function TeacherTasksPage() {
         }),
       });
       if (!response.ok) {
-        msg.close();
         const err = await response.json().catch(() => ({ error: "生成失败" }));
         MessagePlugin.error(err.error || "生成失败");
-        setGenerating(false);
         return;
       }
       // 读取流式响应，实时更新进度
       const reader = response.body!.getReader();
       const decoder = new TextDecoder();
       let htmlContent = "";
-      timer = setInterval(async () => {
-        const s = Math.round((Date.now() - startAt) / 1000);
-        msg.close();
-        msg = await MessagePlugin.loading(receivedBytes > 0 ? `正在生成网页... ${receivedBytes.toLocaleString()} 字符` : `AI 思考中... ${s}s`, 0);
-      }, 1000);
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
         htmlContent += decoder.decode(value, { stream: true });
-        receivedBytes = htmlContent.length;
+        updateGenOverlay(`正在生成网页... ${htmlContent.length.toLocaleString()} 字符`);
       }
-      clearInterval(timer);
-      msg.close();
 
       // 剥离 markdown 代码块包裹与前后说明文字，只保留纯 HTML
       const clean = extractHtml(htmlContent);
@@ -1362,10 +1369,9 @@ export default function TeacherTasksPage() {
       setChatMessages((prev) => [...prev, { role: "ai", content: `✓ 已生成第 ${newIndex + 1} 版` }]);
       MessagePlugin.success("网页已更新");
     } catch {
-      clearInterval(timer);
-      msg.close();
       MessagePlugin.error("生成失败");
     } finally {
+      stopGenOverlay();
       setGenerating(false);
     }
   };
@@ -3290,6 +3296,16 @@ export default function TeacherTasksPage() {
 
   return (
     <TeacherLayout>
+      {/* 生成进度浮层：单一实例，滚动圈 + 真实递增秒数（替代会堆叠的 MessagePlugin.loading） */}
+      {genOverlay.visible && (
+        <div className="fixed inset-0 z-[3000] flex items-center justify-center bg-black/30">
+          <div className="bg-white rounded-xl px-10 py-7 flex flex-col items-center gap-3 shadow-2xl">
+            <span className="inline-block w-9 h-9 border-[3px] border-blue-100 border-t-[#0052D9] rounded-full animate-spin" />
+            <div className="text-sm text-gray-700 whitespace-nowrap">{genOverlay.text}</div>
+            <div className="text-xs text-gray-400 tabular-nums">{genOverlay.seconds}s</div>
+          </div>
+        </div>
+      )}
       <div className="space-y-6 pb-8">
         <div className="flex justify-between items-center">
           <div>
