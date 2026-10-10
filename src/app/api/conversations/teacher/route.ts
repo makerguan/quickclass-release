@@ -2,6 +2,31 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 
+/** 把多模态消息的 JSON content 解析成可读的文本摘要 */
+function normalizeMessageContent(content: string): string {
+  if (!content.startsWith("[")) return content;
+  try {
+    const parts = JSON.parse(content) as Array<
+      | { type: "text"; text: string }
+      | { type: "image_url" }
+      | { type: "audio_url" }
+    >;
+    if (!Array.isArray(parts)) return content;
+    const text = parts
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join(" ");
+    const hasImage = parts.some((p) => p.type === "image_url");
+    const hasAudio = parts.some((p) => p.type === "audio_url");
+    const tags: string[] = [];
+    if (hasImage) tags.push("[包含图片]");
+    if (hasAudio) tags.push("[包含语音]");
+    return [text, ...tags].filter(Boolean).join(" ") || content;
+  } catch {
+    return content;
+  }
+}
+
 // GET /api/conversations/teacher - 教师查看学生对话记录
 export async function GET(req: NextRequest) {
   try {
@@ -130,7 +155,10 @@ export async function GET(req: NextRequest) {
         subProject: PresetConversation.SubProject,
         SubProject: undefined,
       } : null,
-      messages: Message,
+      messages: Message.map((m) => ({
+        ...m,
+        content: normalizeMessageContent(m.content),
+      })),
     }));
 
     return NextResponse.json({ conversations, total, page, pageSize, totalMessages, totalStudents });

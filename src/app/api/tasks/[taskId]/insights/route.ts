@@ -16,6 +16,31 @@ import {
   buildPersonalExplorationStats,
 } from "@/lib/exploration/stats-aggregator";
 
+/** 把多模态消息的 JSON content 解析成可读的文本摘要（用于任务洞察分析） */
+function normalizeMessageContent(content: string): string {
+  if (!content.startsWith("[")) return content;
+  try {
+    const parts = JSON.parse(content) as Array<
+      | { type: "text"; text: string }
+      | { type: "image_url" }
+      | { type: "audio_url" }
+    >;
+    if (!Array.isArray(parts)) return content;
+    const text = parts
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join(" ");
+    const hasImage = parts.some((p) => p.type === "image_url");
+    const hasAudio = parts.some((p) => p.type === "audio_url");
+    const tags: string[] = [];
+    if (hasImage) tags.push("[包含图片]");
+    if (hasAudio) tags.push("[包含语音]");
+    return [text, ...tags].filter(Boolean).join(" ") || content;
+  } catch {
+    return content;
+  }
+}
+
 // ============================================================
 // 批量分析短期缓存：批量分析时多个学生请求会重复查询相同的
 // 任务级/班级级只读数据（课堂树、班级作业统计等），此处用
@@ -448,7 +473,7 @@ export async function POST(
         const activeStudents = new Set(conversations.map((c) => c.userId));
         dialogData = `参与学生：${activeStudents.size}/${students.length}人\n\n`;
         dialogData += conversations.slice(0, 10).map((c) => {
-          const msgs = c.Message.map((m) => `${m.role === "user" ? "学生" : "AI"}：${m.content.substring(0, 200)}`).join("\n");
+          const msgs = c.Message.map((m) => `${m.role === "user" ? "学生" : "AI"}：${normalizeMessageContent(m.content).substring(0, 200)}`).join("\n");
           return `${c.User?.name || "未知"} - ${c.title}:\n${msgs}`;
         }).join("\n\n---\n\n");
       } else {
@@ -468,7 +493,7 @@ export async function POST(
         ]);
         dialogData = `学生：${student?.name || "未知"}\n对话数：${conversations.length}\n\n`;
         dialogData += conversations.map((conv, i) => {
-          const msgs = conv.Message.map((m) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${m.content}`).join("\n");
+          const msgs = conv.Message.map((m) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${normalizeMessageContent(m.content)}`).join("\n");
           return `【对话 ${i + 1}】${conv.PresetConversation?.title || conv.title}\n${msgs}`;
         }).join("\n\n---\n\n");
       }

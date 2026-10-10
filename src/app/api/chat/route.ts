@@ -18,7 +18,8 @@ import { MATH_OUTPUT_RULES } from "@/lib/math-format";
 // 多模态消息内容类型
 type MessageContentPart =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "audio_url"; audio_url: { url: string } };
 
 type MessageContent = string | MessageContentPart[];
 
@@ -40,6 +41,18 @@ function extractTextContent(content: MessageContent): string {
 function hasImageContent(content: MessageContent): boolean {
   if (typeof content === "string") return false;
   return content.some((part) => part.type === "image_url");
+}
+
+// 检查消息是否包含音频
+function hasAudioContent(content: MessageContent): boolean {
+  if (typeof content === "string") return false;
+  return content.some((part) => part.type === "audio_url");
+}
+
+// 判断消息是否为多模态消息（图片 / 音频）
+function isMultimodalContent(content: MessageContent): boolean {
+  if (typeof content === "string") return false;
+  return content.some((part) => part.type === "image_url" || part.type === "audio_url");
 }
 
 export async function POST(req: NextRequest) {
@@ -118,13 +131,14 @@ export async function POST(req: NextRequest) {
     }
 
     // 写操作 2：保存用户消息（依赖 convId 已确定）
+    // 多模态消息把完整 JSON 存下来，刷新后仍能显示图片 / 音频
     await dbWrite(() =>
       prisma.message.create({
         data: {
           conversationId: convId!,
           role: "user",
-          content: hasImageContent(lastMessage.content)
-            ? textContent + " [包含图片]"
+          content: isMultimodalContent(lastMessage.content)
+            ? JSON.stringify(lastMessage.content)
             : textContent,
         },
       })
@@ -242,7 +256,7 @@ export async function POST(req: NextRequest) {
       if (typeof m.content === "string") {
         return { role: m.role as "user" | "assistant", content: m.content };
       }
-      // 多模态消息：将 image_url 转为 ai v6 SDK 的 image 格式
+      // 多模态消息：将 image_url / audio_url 转为 ai v6 SDK 的多模态格式
       const parts = m.content.map((part) => {
         if (part.type === "image_url") {
           const url = part.image_url.url;
@@ -262,6 +276,26 @@ export async function POST(req: NextRequest) {
             type: "image" as const,
             image: url,
             mediaType: "image/jpeg",
+          };
+        }
+        if (part.type === "audio_url") {
+          const url = part.audio_url.url;
+          // 如果是 Base64 data URL，提取编码数据
+          if (url.startsWith("data:")) {
+            const match = url.match(/^data:(audio\/\w+);base64,(.+)$/);
+            if (match) {
+              return {
+                type: "audio" as const,
+                audio: match[2],
+                mediaType: match[1],
+              };
+            }
+          }
+          // 如果是 URL 音频
+          return {
+            type: "audio" as const,
+            audio: url,
+            mediaType: "audio/mpeg",
           };
         }
         return { type: "text" as const, text: part.text };
@@ -334,6 +368,8 @@ export async function POST(req: NextRequest) {
               errMsg = /quota|配额|free|429|rate|limit/i.test(raw)
                 ? "AI 服务繁忙（限流或配额不足），请稍后重试"
                 : `AI 服务响应异常：${raw.slice(0, 100)}`;
+            } else if (hasAudioContent(lastMessage.content)) {
+              errMsg = "AI 模型返回了空响应（可能不支持音频输入，请检查模型配置）";
             } else if (hasImageContent(lastMessage.content)) {
               errMsg = "AI 模型返回了空响应（可能不支持图片输入，请检查模型配置）";
             } else {

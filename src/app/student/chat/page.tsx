@@ -8,6 +8,7 @@ import {
   AddIcon,
   FolderIcon,
   ChatIcon,
+  MicrophoneIcon,
 } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import SpeechControls from "@/components/speech/SpeechControls";
@@ -28,6 +29,7 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   images?: MessageImage[];
+  audioUrl?: string;
   createdAt?: string;
 }
 
@@ -110,32 +112,86 @@ interface Conversation {
   messages: { id: string; role: string; content: string; createdAt: string }[];
 }
 
-/** 将服务端返回的 messages 列表规范化为前端 Message 结构（页面内多处使用，统一收敛） */
+/** 将服务端返回的 messages 列表规范化为前端 Message 结构（页面内多处使用，统一收敛）
+ * 多模态消息 content 是 JSON 字符串，需要解析出文本、图片、音频。 */
 function normalizeMessages(
   list: { id: string; role: string; content: string; createdAt: string }[] | undefined
 ): Message[] {
-  return (list || []).map((m) => ({
-    id: m.id,
-    role: m.role as "user" | "assistant",
-    content: m.content,
-    createdAt: m.createdAt,
-  }));
+  return (list || []).map((m) => {
+    const parsed = parseStoredContent(m.content);
+    return {
+      id: m.id,
+      role: m.role as "user" | "assistant",
+      content: parsed.text,
+      images: parsed.images,
+      audioUrl: parsed.audioUrl,
+      createdAt: m.createdAt,
+    };
+  });
 }
 
-/** 将本地消息列表转换为对话接口要求的 API 格式（文本 / 图片多段内容） */
+/** 解析服务端存储的消息 content：
+ * - 普通文本直接返回；
+ * - 多模态 JSON 数组提取 text、image_url、audio_url。 */
+function parseStoredContent(content: string): {
+  text: string;
+  images?: MessageImage[];
+  audioUrl?: string;
+} {
+  if (!content.startsWith("[")) {
+    return { text: content };
+  }
+  try {
+    const parts = JSON.parse(content) as Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+      | { type: "audio_url"; audio_url: { url: string } }
+    >;
+    if (!Array.isArray(parts)) return { text: content };
+
+    const text = parts
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join(" ");
+    const images = parts
+      .filter((p): p is { type: "image_url"; image_url: { url: string } } => p.type === "image_url")
+      .map((p) => ({ url: p.image_url.url }));
+    const audioPart = parts.find(
+      (p): p is { type: "audio_url"; audio_url: { url: string } } => p.type === "audio_url"
+    );
+    return {
+      text,
+      images: images.length > 0 ? images : undefined,
+      audioUrl: audioPart?.audio_url.url,
+    };
+  } catch {
+    return { text: content };
+  }
+}
+
+/** 将本地消息列表转换为对话接口要求的 API 格式（文本 / 图片 / 音频多段内容） */
 function toApiMessages(messages: Message[]) {
   return messages.map((m) => {
-    if (m.images && m.images.length > 0) {
-      return {
-        role: m.role,
-        content: [
-          { type: "text", text: m.content },
-          ...m.images.map((img) => ({
-            type: "image_url",
+    const hasImages = m.images && m.images.length > 0;
+    const hasAudio = !!m.audioUrl;
+    if (hasImages || hasAudio) {
+      const parts: Array<
+        | { type: "text"; text: string }
+        | { type: "image_url"; image_url: { url: string } }
+        | { type: "audio_url"; audio_url: { url: string } }
+      > = [{ type: "text", text: m.content }];
+      if (hasImages) {
+        parts.push(
+          ...m.images!.map((img) => ({
+            type: "image_url" as const,
             image_url: { url: img.url },
-          })),
-        ],
-      };
+          }))
+        );
+      }
+      if (hasAudio) {
+        parts.push({ type: "audio_url" as const, audio_url: { url: m.audioUrl! } });
+      }
+      return { role: m.role, content: parts };
     }
     return { role: m.role, content: m.content };
   });
@@ -211,10 +267,12 @@ export default function StudentChatPage() {
   // 这里只记录最新一条 AI 回答的下标，供自动朗读时高亮对应的朗读按钮。
   const assistantIndexRef = useRef(-1);
 
-  // 图片
+  // 图片 / 音频附件
   const [pendingImages, setPendingImages] = useState<MessageImage[]>([]);
+  const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
   const activePresetRef = useRef<string | null>(null);
   const isSwitchingRef = useRef(false); // 防止 switch 函数重入
@@ -465,12 +523,37 @@ export default function StudentChatPage() {
     });
   };
 
+  // 音频附件处理：调用系统录音机，录完后以 base64 data URL 形式暂存
+  const handleAudioSelect = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (!file.type.startsWith("audio/")) {
+      MessagePlugin.error("请选择音频文件");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      MessagePlugin.error("音频不能超过 20MB");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const url = e.target?.result as string;
+      setPendingAudio(url);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const removePendingAudio = () => {
+    setPendingAudio(null);
+  };
+
   const removePendingImage = (index: number) => {
     setPendingImages((prev) => prev.filter((_, i) => i !== index));
   };
 
   // 发送消息（供自动发送和手动发送共用）
-  const sendMessage = async (text: string, images?: MessageImage[]) => {
+  const sendMessage = async (text: string, images?: MessageImage[], audioUrl?: string) => {
     if (!text.trim() || loading) return;
     stopSpeaking(); // 发送新消息，停止上一条朗读
     // 使用 ref 而非 state 检查当前活动，因为 state 在 setTimeout 中可能还是旧值
@@ -499,11 +582,13 @@ export default function StudentChatPage() {
       role: "user",
       content: text,
       images: images && images.length > 0 ? [...images] : undefined,
+      audioUrl,
     };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
     setInput("");
     if (images) setPendingImages([]);
+    if (audioUrl) setPendingAudio(null);
     setLoading(true);
 
     try {
@@ -624,12 +709,14 @@ export default function StudentChatPage() {
 
   // 手动发送
   const handleSend = async () => {
-    if (!input.trim() && pendingImages.length === 0) return;
-    const text = input || "(发送了图片)";
+    if (!input.trim() && pendingImages.length === 0 && !pendingAudio) return;
+    const text = input || (pendingAudio ? "(发送了语音)" : "(发送了图片)");
     const imgs = pendingImages.length > 0 ? [...pendingImages] : undefined;
+    const audio = pendingAudio || undefined;
     setInput("");
     setPendingImages([]);
-    await sendMessage(text, imgs);
+    setPendingAudio(null);
+    await sendMessage(text, imgs, audio);
   };
 
   const handleKeyDown = (value: string, context: { e: React.KeyboardEvent }) => {
@@ -946,6 +1033,11 @@ onClick={() => {
                         ))}
                       </div>
                     )}
+                    {msg.audioUrl && (
+                      <div className="mb-2">
+                        <audio src={msg.audioUrl} controls className="max-w-full" />
+                      </div>
+                    )}
                     {msg.role === "assistant" ? (
                       <div className="prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_pre]:bg-gray-800 [&_pre]:text-gray-100 [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_pre_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-gray-400 [&_blockquote]:pl-3 [&_blockquote]:italic [&_table]:text-xs [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1">
                         <Markdown>{msg.content}</Markdown>
@@ -971,9 +1063,9 @@ onClick={() => {
               </div>
             </div>
 
-            {pendingImages.length > 0 && (
+            {(pendingImages.length > 0 || pendingAudio) && (
               <div className="border-t border-gray-100 px-4 pt-3 pb-1">
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex gap-2 flex-wrap items-center">
                   {pendingImages.map((img, idx) => (
                     <div key={idx} className="relative group">
                       <img src={img.url} alt="待发送" className="w-16 h-16 object-cover rounded-lg border border-gray-200" />
@@ -985,6 +1077,17 @@ onClick={() => {
                       </button>
                     </div>
                   ))}
+                  {pendingAudio && (
+                    <div className="relative group flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white">
+                      <audio src={pendingAudio} controls className="h-8 w-40" />
+                      <button
+                        onClick={removePendingAudio}
+                        className="w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
@@ -1009,6 +1112,15 @@ onClick={() => {
                   title="选择图片"
                   disabled={!activePresetId}
                 />
+                <Button
+                  theme="default"
+                  variant="outline"
+                  size="large"
+                  icon={<MicrophoneIcon />}
+                  onClick={() => audioInputRef.current?.click()}
+                  title="语音输入"
+                  disabled={!activePresetId}
+                />
                 <Input
                   value={input}
                   onChange={(v) => setInput(v)}
@@ -1023,7 +1135,7 @@ onClick={() => {
                   icon={<SendIcon />}
                   onClick={handleSend}
                   loading={loading}
-                  disabled={!input.trim() && pendingImages.length === 0}
+                  disabled={!input.trim() && pendingImages.length === 0 && !pendingAudio}
                 >
                   发送
                 </Button>
@@ -1043,6 +1155,14 @@ onClick={() => {
                 multiple
                 className="hidden"
                 onChange={(e) => { handleImageSelect(e.target.files); e.target.value = ""; }}
+              />
+              <input
+                ref={audioInputRef}
+                type="file"
+                accept="audio/*"
+                capture
+                className="hidden"
+                onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ""; }}
               />
             </div>
           </>
