@@ -250,24 +250,29 @@ export default function ExplorationPanel({
           // ===== 可参与：显示互动内容（包含提交按钮） =====
           <div className="p-4">
             <div className="text-sm text-gray-500 mb-2">完成互动后，点击右下角的"提交成绩"按钮提交你的结果。</div>
+            {/* ⛔ DO NOT REVERT: iframe sandbox 必须包含 allow-popups，否则内部 <a target="_blank"> / window.open 会被浏览器静默拦截。
+                原因：探究 HTML 由教师/AI 生成，常嵌入外部资源链接，学生点击需弹出新标签页。
+                关联：src/app/teacher/tasks/[taskId]/exploration/[explorationId]/page.tsx 的预览 iframe 同理，若未来也支持外部链接需同步。
+                测试：修改后可用带 target="_blank" 的探究内容验证点击能否打开新标签页。 */}
             <iframe
               ref={iframeRef}
               srcDoc={htmlContentFinal}
               className="w-full rounded-lg border border-gray-200"
               style={{ height: "calc(100vh - 200px)" }}
-              sandbox="allow-scripts allow-same-origin allow-forms allow-autoplay"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-autoplay allow-popups allow-popups-to-escape-sandbox"
               title="探究内容"
             />
           </div>
         ) : (
           // ===== 无需提交：只展示活动内容 =====
           <div className="p-4">
+            {/* ⛔ DO NOT REVERT: 同上方可提交态 iframe，探究内容中外部链接需弹出新标签页，sandbox 必须带 allow-popups。 */}
             <iframe
               ref={iframeRef}
               srcDoc={htmlContentFinal}
               className="w-full rounded-lg border border-gray-200"
               style={{ height: "calc(100vh - 160px)" }}
-              sandbox="allow-scripts allow-same-origin allow-autoplay"
+              sandbox="allow-scripts allow-same-origin allow-autoplay allow-popups allow-popups-to-escape-sandbox"
               title="探究内容"
             />
           </div>
