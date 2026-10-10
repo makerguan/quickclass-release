@@ -283,6 +283,10 @@ export default function TeacherTasksPage() {
   const [generatingObjectives, setGeneratingObjectives] = useState(false);
   const [objectivesBackup, setObjectivesBackup] = useState<string | null>(null);
 
+  // AI 优化/生成对话活动目标
+  const [generatingConvObjective, setGeneratingConvObjective] = useState(false);
+  const [convObjectiveBackup, setConvObjectiveBackup] = useState<string | null>(null);
+
   // 学习活动 inline 编辑
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
   const [editingSubProjects, setEditingSubProjects] = useState<SubProject[]>([]);
@@ -741,6 +745,7 @@ export default function TeacherTasksPage() {
     setConvDialogTaskId(task.id);
     setConvDialogSpId(defaultSp.id);
     setConvDialogPc(null);
+    setConvObjectiveBackup(null);
     setConvForm({
       title: "",
       description: "",
@@ -779,6 +784,7 @@ export default function TeacherTasksPage() {
     setConvDialogTaskId(task.id);
     setConvDialogSpId(defaultSp?.id ?? null);
     setConvDialogPc(detail);
+    setConvObjectiveBackup(null);
     setConvForm({
       title: detail.title || "",
       description: detail.description || "",
@@ -853,6 +859,76 @@ export default function TeacherTasksPage() {
       MessagePlugin.error("网络错误");
     } finally {
       setConvDialogSaving(false);
+    }
+  };
+
+  // AI 优化/生成对话活动目标
+  // 根据课堂信息（课题、年级、学科）+ 对话活动名称 + 已输入目标，生成更贴学科特点与学生水平的目标描述。
+  // 为什么用独立接口而非复用 generate-objectives：课堂目标强制按素养维度一一对应（条数=维度数），
+  // 对话活动目标聚焦单次 AI 对话互动，不需要该约束。
+  // 🔗 RELATED：后端实现见 src/app/api/preset-conversations/optimize-objective/route.ts。
+  // ⛔ DO NOT REVERT to /api/tasks/generate-objectives：会把整节课的维度结构强加到单次对话活动上。
+  const handleAIOptimizeConversationObjective = async () => {
+    if (!convDialogTaskId) {
+      MessagePlugin.error("未找到关联课堂");
+      return;
+    }
+    const task = tasks.find((t) => t.id === convDialogTaskId);
+    if (!task) {
+      MessagePlugin.error("未找到关联课堂");
+      return;
+    }
+    if (!task.grade) {
+      MessagePlugin.error("该课堂未设置年级，无法优化");
+      return;
+    }
+    if (!task.subject) {
+      MessagePlugin.error("该课堂未设置学科，无法优化");
+      return;
+    }
+    if (!convForm.title?.trim()) {
+      MessagePlugin.error("请先填写对话活动名称");
+      return;
+    }
+
+    setGeneratingConvObjective(true);
+    startGenOverlay("AI 思考中...");
+    const currentDescription = convForm.description;
+    const wasOptimize = currentDescription.trim().length > 0;
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch("/api/preset-conversations/optimize-objective", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          taskTitle: task.title,
+          grade: task.grade,
+          subject: task.subject,
+          conversationTitle: convForm.title.trim(),
+          currentObjective: currentDescription.trim() || undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        MessagePlugin.error(data.error || "优化失败，请重试");
+        return;
+      }
+      setConvObjectiveBackup(currentDescription);
+      setConvForm((prev) => ({ ...prev, description: data.objective }));
+      MessagePlugin.success(wasOptimize ? "已优化对话活动目标" : "已生成对话活动目标");
+    } catch {
+      MessagePlugin.error("网络错误，请重试");
+    } finally {
+      stopGenOverlay();
+      setGeneratingConvObjective(false);
+    }
+  };
+
+  // 撤销 AI 生成/优化，恢复之前的对话活动目标
+  const restoreConvObjective = () => {
+    if (convObjectiveBackup !== null) {
+      setConvForm({ ...convForm, description: convObjectiveBackup });
+      setConvObjectiveBackup(null);
     }
   };
 
@@ -2834,6 +2910,7 @@ export default function TeacherTasksPage() {
       return;
     }
     setGeneratingObjectives(true);
+    startGenOverlay("AI 思考中...");
     const wasOptimize = formDescription.trim().length > 0;
     try {
       const token = localStorage.getItem("token") || "";
@@ -2862,6 +2939,7 @@ export default function TeacherTasksPage() {
     } catch {
       MessagePlugin.error("网络错误，请重试");
     } finally {
+      stopGenOverlay();
       setGeneratingObjectives(false);
     }
   };
@@ -4594,11 +4672,12 @@ export default function TeacherTasksPage() {
           onClose={() => { setFormVisible(false); resetForm(); }}
           footer={null}
           width={900}
+          top="48px"
           destroyOnClose
         >
           <div className="space-y-4">
-            <div className="flex gap-4">
-              <div className="flex-1 space-y-4">
+            <div className="flex gap-4 items-stretch">
+              <div className="flex-1 flex flex-col space-y-4">
                 <Input
                   value={formTitle}
                   onChange={(v) => setFormTitle(v)}
@@ -4683,34 +4762,36 @@ export default function TeacherTasksPage() {
                     />
                   </div>
                 </div>
-                <div className="flex items-center justify-between mb-1">
-                  <label className="block text-sm text-gray-700">课堂目标 <span className="text-red-500">*</span></label>
-                  <div className="flex items-center gap-2">
-                    {objectivesBackup !== null && (
-                      <span
-                        className="text-xs text-[#0052D9] cursor-pointer hover:underline"
-                        onClick={restoreObjectives}
+                <div>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-sm text-gray-700">课堂目标 <span className="text-red-500">*</span></label>
+                    <div className="flex items-center gap-2">
+                      {objectivesBackup !== null && (
+                        <span
+                          className="text-xs text-[#0052D9] cursor-pointer hover:underline"
+                          onClick={restoreObjectives}
+                        >
+                          撤销
+                        </span>
+                      )}
+                      <Button
+                        size="small"
+                        variant="outline"
+                        theme="primary"
+                        loading={generatingObjectives}
+                        onClick={handleAIObjectives}
                       >
-                        撤销
-                      </span>
-                    )}
-                    <Button
-                      size="small"
-                      variant="outline"
-                      theme="primary"
-                      loading={generatingObjectives}
-                      onClick={handleAIObjectives}
-                    >
-                      {formDescription.trim() ? "AI 优化" : "AI 生成"}
-                    </Button>
+                        AI 帮我写
+                      </Button>
+                    </div>
                   </div>
+                  <Textarea
+                    value={formDescription}
+                    onChange={(v) => setFormDescription(v)}
+                    placeholder="课堂目标（必填）。填写课题、年级、学科后，可点击右上角「AI 帮我写」按学科核心素养生成或优化"
+                    rows={8}
+                  />
                 </div>
-                <Textarea
-                  value={formDescription}
-                  onChange={(v) => setFormDescription(v)}
-                  placeholder="课堂目标（必填）。填写课题、年级、学科后，可点击右上角按钮按学科核心素养 AI 生成"
-                  rows={3}
-                />
               </div>
 
               <div className="flex-1 space-y-4">
@@ -5141,11 +5222,32 @@ export default function TeacherTasksPage() {
             </div>
 
             <div className="space-y-2">
-              <span className="text-sm font-medium text-gray-600">对话活动目标</span>
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-sm font-medium text-gray-600">对话活动目标</span>
+                <div className="flex items-center gap-2">
+                  {convObjectiveBackup !== null && (
+                    <span
+                      className="text-xs text-[#0052D9] cursor-pointer hover:underline"
+                      onClick={restoreConvObjective}
+                    >
+                      撤销
+                    </span>
+                  )}
+                  <Button
+                    variant="outline"
+                    theme="primary"
+                    size="small"
+                    loading={generatingConvObjective}
+                    onClick={handleAIOptimizeConversationObjective}
+                  >
+                    AI 帮我写
+                  </Button>
+                </div>
+              </div>
               <Textarea
                 value={convForm.description}
                 onChange={(v) => setConvForm({ ...convForm, description: v })}
-                placeholder="描述本次对话活动希望学生达成的目标"
+                placeholder="描述本次对话活动希望学生达成的目标；填写活动名称后，可点击右上角「AI 帮我写」生成或优化"
                 rows={2}
               />
             </div>
