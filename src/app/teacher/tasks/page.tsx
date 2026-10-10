@@ -148,6 +148,17 @@ const NEXT_STATUS_LABEL = {
   ENDED: "暂存",
 };
 
+// 稳定排序：生效的排前面，失效的沉底；组内保持原有相对顺序。
+// 用于课堂管理内四类活动列表（对话/探究/项目/作业），满足「失效操作必须把失效的放最后」。
+// reorder 均按 id 调后端、与下标无关，故渲染层排序不影响上下移逻辑。
+function sortEnabledFirst<T extends { enabled?: boolean; status?: string }>(list: T[]): T[] {
+  return list.slice().sort((a, b) => {
+    const aDisabled = a.status === "INACTIVE" || a.enabled === false;
+    const bDisabled = b.status === "INACTIVE" || b.enabled === false;
+    return (aDisabled ? 1 : 0) - (bDisabled ? 1 : 0);
+  });
+}
+
 // 从 AI 流式输出中提取纯 HTML（剥离 markdown 代码块包裹与前后说明文字）
 function extractHtml(text: string): string {
   if (!text) return "";
@@ -3905,7 +3916,7 @@ export default function TeacherTasksPage() {
                         ) : (
                           /* 只读模式 - 名片式独立展示对话活动 */
                           (() => {
-                            const allConversations = task.subProjects.flatMap(sp => sp.presetConversations);
+                            const allConversations = sortEnabledFirst(task.subProjects.flatMap(sp => sp.presetConversations));
                             if (allConversations.length === 0) {
                               return (
                                 <div className="bg-[#F7F8FA] rounded-lg p-3">
@@ -4015,7 +4026,7 @@ export default function TeacherTasksPage() {
                                 <div className="text-center py-3 text-sm text-gray-400">暂无探究，点击「新建探究」创建</div>
                               ) : (
                                 <div className="space-y-2">
-                                  {explorations.map((e, eIdx) => (
+                                  {sortEnabledFirst(explorations).map((e, eIdx) => (
                                     <div key={e.id} className="bg-white rounded-lg p-2">
                                       <div className="flex items-center justify-between mb-1">
                                         <div className="flex items-center gap-2 flex-wrap">
@@ -4155,9 +4166,9 @@ export default function TeacherTasksPage() {
 
                         <div className="bg-[#F7F8FA] rounded-lg p-3">
                           {(() => {
-                            const allPs = task.subProjects.flatMap(
+                            const allPs = sortEnabledFirst(task.subProjects.flatMap(
                               (sp: any) => (sp.projectSubmissions || []) as any[]
-                            );
+                            ));
                             if (allPs.length === 0) {
                               return (
                                 <p className="text-sm text-gray-400">
@@ -4382,7 +4393,7 @@ export default function TeacherTasksPage() {
                                   <div className="text-center py-3 text-sm text-gray-400">暂无作业，点击「新建作业」创建</div>
                                 ) : (
                                   <div className="space-y-2">
-                                    {quizzes.map((q, qIdx) => (
+                                    {sortEnabledFirst(quizzes).map((q, qIdx) => (
                                       <div key={q.id} className="bg-white rounded-lg p-2">
                                         <div className="flex items-center justify-between mb-1">
                                           <div className="flex items-center gap-2 flex-wrap">

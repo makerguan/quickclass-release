@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Markdown from "@/components/Markdown";
 import {
@@ -38,9 +38,10 @@ export default function QuizReportPage() {
   const [activeTab, setActiveTab] = useState<"overview" | "ai" | "details">("overview");
   const [aiReport, setAiReport] = useState("");
   const [generatingReport, setGeneratingReport] = useState(false);
-  // AI 报告版本管理
-  const [aiReportVersions, setAiReportVersions] = useState<{ id: string; content: string; version: number; createdAt: string }[]>([]);
+  // AI 报告版本管理（仅元数据；历史版正文按需拉取，见 handleSwitchVersion）
+  const [aiReportVersions, setAiReportVersions] = useState<{ id: string; version: number; createdAt: string }[]>([]);
   const [aiReportVersionIndex, setAiReportVersionIndex] = useState(0);
+  const latestAiContentRef = useRef(""); // 缓存最新版正文，切回最新版时免再请求
   const [deleteVersionDialogVisible, setDeleteVersionDialogVisible] = useState(false);
   const [deleteVersionInfo, setDeleteVersionInfo] = useState<{ id: string; version: number } | null>(null);
   const [deletingVersion, setDeletingVersion] = useState(false);
@@ -154,14 +155,15 @@ export default function QuizReportPage() {
     // 设置未参加和未完成学生名单
     setNotAttemptedStudents(data.notAttemptedStudents || []);
     setIncompleteStudents(data.incompleteStudents || []);
-    // 加载已保存的 AI 报告
+    // 加载已保存的 AI 报告（初始 GET 只回版本元数据，最新版正文由 aiContent 下发）
     if (data.aiReportVersions && data.aiReportVersions.length > 0) {
-      console.log("[handleViewReport] Setting AI report versions:", data.aiReportVersions.length);
       setAiReportVersions(data.aiReportVersions);
       setAiReportVersionIndex(0);
-      setAiReport(data.aiReportVersions[0].content);
+      latestAiContentRef.current = data.aiContent || "";
+      setAiReport(latestAiContentRef.current);
     } else {
       setAiReportVersions([]);
+      latestAiContentRef.current = "";
       setAiReport("");
     }
   };
@@ -187,16 +189,10 @@ export default function QuizReportPage() {
       if (data.content || data.aiContent) {
         const newContent = data.content || data.aiContent;
         
-        // 生成报告后，刷新获取所有版本
+        // 生成报告后，刷新获取所有版本（handleViewReport 已写入最新正文并 setAiReport）
         await handleViewReport();
-        
-        // 自动切换到最新版本（索引为0）
-        if (aiReportVersions.length > 0) {
-          setAiReportVersionIndex(0);
-          setAiReport(aiReportVersions[0].content);
-        } else {
-          setAiReport(newContent);
-        }
+        setAiReportVersionIndex(0);
+        setAiReport(latestAiContentRef.current || newContent);
         setActiveTab("ai");
         MessagePlugin.success("报告生成成功");
       } else {
@@ -210,12 +206,26 @@ export default function QuizReportPage() {
     }
   };
 
-  // 切换到指定版本
-  const handleSwitchVersion = (index: number) => {
-    if (aiReportVersions[index]) {
-      setAiReportVersionIndex(index);
-      setAiReport(aiReportVersions[index].content);
+  // 切换到指定版本：历史版正文按需拉取（初始 GET 只回元数据）
+  const handleSwitchVersion = async (index: number) => {
+    const v = aiReportVersions[index];
+    if (!v) return;
+    setAiReportVersionIndex(index);
+    // 最新版（index 0）正文已缓存，直接显示，免一次请求
+    if (index === 0 && latestAiContentRef.current) {
+      setAiReport(latestAiContentRef.current);
+      return;
     }
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/quiz-activities/${quizId}/report/versions/${v.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setAiReport(d.content || "");
+      }
+    } catch { /* 静默失败：保持当前显示 */ }
   };
 
   // 删除指定版本
@@ -232,10 +242,10 @@ export default function QuizReportPage() {
         setDeleteVersionDialogVisible(false);
         // 刷新数据
         await handleViewReport();
-        // 如果还有版本，切换到最新版本
+        // 如果还有版本，切换到最新版本（正文由 latestAiContentRef 缓存）
         if (aiReportVersions.length > 1) {
           setAiReportVersionIndex(0);
-          setAiReport(aiReportVersions[0].content);
+          setAiReport(latestAiContentRef.current);
         }
       } else {
         MessagePlugin.error("删除失败");
@@ -703,34 +713,39 @@ export default function QuizReportPage() {
                     <span className="text-gray-400 ml-2">| 点击表头排序</span>
                   </div>
                 </div>
-                <div className="px-5 py-2 border-b">
-                  <div className="flex items-center gap-3 text-xs">
-                    <button 
-                      onClick={() => handleSort("name")}
-                      className={`${sortBy === "name" ? "text-gray-800 font-medium" : "text-gray-400 hover:text-gray-600"}`}
-                    >
-                      {sortLabel("姓名")}
-                    </button>
-                    <button 
-                      onClick={() => handleSort("score")}
-                      className={`${sortBy === "score" ? "text-gray-800 font-medium" : "text-gray-400 hover:text-gray-600"}`}
-                    >
-                      {sortLabel("得分")}
-                    </button>
-                    <span className="text-gray-400">对比</span>
-                    {reportData.questionStats?.map((_: any, i: number) => (
-                      <button 
-                        key={i} 
-                        onClick={() => handleSort(`q${i}`)}
-                        className={`${sortBy === `q${i}` ? "text-gray-800 font-medium" : "text-gray-400 hover:text-gray-600"}`}
-                      >
-                        {sortLabel(`题${i + 1}`)}
-                      </button>
-                    ))}
-                  </div>
-                </div>
                 <div className="px-5 overflow-x-auto">
                   <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-gray-50 text-xs">
+                        <th className="py-2 pr-3 text-left">
+                          <button
+                            onClick={() => handleSort("name")}
+                            className={`${sortBy === "name" ? "text-gray-800 font-medium" : "text-gray-400 hover:text-gray-600"}`}
+                          >
+                            {sortLabel("姓名")}
+                          </button>
+                        </th>
+                        <th className="py-2 pr-3 text-center">
+                          <button
+                            onClick={() => handleSort("score")}
+                            className={`${sortBy === "score" ? "text-gray-800 font-medium" : "text-gray-400 hover:text-gray-600"}`}
+                          >
+                            {sortLabel("得分")}
+                          </button>
+                        </th>
+                        <th className="py-2 px-2 text-center text-gray-400">对比</th>
+                        {reportData.questionStats?.map((_: any, i: number) => (
+                          <th key={i} className="py-2 px-1 text-center">
+                            <button
+                              onClick={() => handleSort(`q${i}`)}
+                              className={`${sortBy === `q${i}` ? "text-gray-800 font-medium" : "text-gray-400 hover:text-gray-600"}`}
+                            >
+                              {sortLabel(`题${i + 1}`)}
+                            </button>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
                     <tbody>
                       {/* 已完成作业的学生（参与排序） */}
                       {getSortedRows(reportData.studentQuestionMatrix.filter((row: any) => !row.notAttempted && !row.incomplete)).map((row: any) => (

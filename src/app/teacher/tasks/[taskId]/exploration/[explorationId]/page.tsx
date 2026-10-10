@@ -253,9 +253,21 @@ export default function ExplorationAnalysisPage() {
     try {
       const token = localStorage.getItem("token");
 
-      const res = await fetch(`/api/exploration-activities/${explorationId}/analysis`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // ⚠️ GOTCHA / PERF：原先 7 个请求串行 await，链路被 RTT 累加放大，
+      // 导致「分析」页打开明显慢于课堂整体分析（后者仅 3 个请求）。
+      // 改为「3 波并行」：第 1 波互相独立（分析/班级列表/当前班级），
+      // 第 2 波依赖班级选择（提交列表/探究详情），第 3 波依赖详情里的 qfTaskId。
+      const [res, clsRes, curRes] = await Promise.all([
+        fetch(`/api/exploration-activities/${explorationId}/analysis`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch("/api/classes", {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch("/api/classes/current", {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
       if (!res.ok) {
         const errText = await res.text().catch(() => "请求失败");
         setError(errText);
@@ -265,20 +277,11 @@ export default function ExplorationAnalysisPage() {
       const data: AnalysisData = await res.json();
       setAnalysisData(data);
 
-      // 设置班级选择：优先用当前班级，否则用第一个
-      // 加载班级列表
-      const clsRes = await fetch("/api/classes", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
       if (clsRes.ok) {
         const clsData = await clsRes.json();
         setAllClasses(Array.isArray(clsData) ? clsData : []);
       }
 
-      // 获取当前班级
-      const curRes = await fetch("/api/classes/current", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
       let currentClassId = "";
       if (curRes.ok) {
         const curData = await curRes.json();
@@ -289,18 +292,20 @@ export default function ExplorationAnalysisPage() {
         : (data.classIds?.[0] || "");
       setSelectedClassId(targetClassId);
 
-      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions${targetClassId ? `?classId=${targetClassId}` : ""}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // 第 2 波：提交列表与探究详情都只依赖 targetClassId，可并行
+      const [subRes, detailRes] = await Promise.all([
+        fetch(`/api/exploration-activities/${explorationId}/submissions${targetClassId ? `?classId=${targetClassId}` : ""}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`/api/exploration-activities/${explorationId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
       if (subRes.ok) {
         const subData = await subRes.json();
         setSubmissions(Array.isArray(subData) ? subData : subData.submissions || []);
       }
 
-      // 拉取 QuickForm 收集数据（数据大屏）
-      const detailRes = await fetch(`/api/exploration-activities/${explorationId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
       let qfTaskId: string | null = null;
       if (detailRes.ok) {
         const detail = await detailRes.json();
@@ -308,31 +313,35 @@ export default function ExplorationAnalysisPage() {
         setQfTaskId(qfTaskId);
         setAiDashConfig(parseDashboardConfig(detail.dashboardConfig));
       }
+
+      // 第 3 波：QF 收集数据（依赖 qfTaskId）与 AI 报告版本（依赖 targetClassId）并行
+      const wave3: Promise<void>[] = [];
       if (qfTaskId) {
-        setQfLoading(true);
-        try {
-          const qfRes = await fetch(`/api/qf/records/${qfTaskId}?page=1&pageSize=500${targetClassId ? `&classId=${targetClassId}` : ""}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (qfRes.ok) {
-            const qfData = await qfRes.json();
-            setQfRecords(Array.isArray(qfData.items) ? qfData.items : []);
-            setQfTotal(typeof qfData.total === "number" ? qfData.total : 0);
+        wave3.push((async () => {
+          setQfLoading(true);
+          try {
+            const qfRes = await fetch(`/api/qf/records/${qfTaskId}?page=1&pageSize=500${targetClassId ? `&classId=${targetClassId}` : ""}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (qfRes.ok) {
+              const qfData = await qfRes.json();
+              setQfRecords(Array.isArray(qfData.items) ? qfData.items : []);
+              setQfTotal(typeof qfData.total === "number" ? qfData.total : 0);
+            }
+          } catch {
+            // QF 数据拉取失败不影响其它标签展示
+          } finally {
+            setQfLoading(false);
           }
-        } catch {
-          // QF 数据拉取失败不影响其它标签展示
-        } finally {
-          setQfLoading(false);
-        }
+        })());
       } else {
         setQfRecords([]);
         setQfTotal(0);
       }
-
-      // 加载已保存的 AI 报告版本
       if (targetClassId) {
-        await fetchAiVersions(targetClassId);
+        wave3.push(fetchAiVersions(targetClassId));
       }
+      await Promise.all(wave3);
     } catch (e: any) {
       console.error("获取分析数据失败", e);
       setError(e.message || "获取数据失败");

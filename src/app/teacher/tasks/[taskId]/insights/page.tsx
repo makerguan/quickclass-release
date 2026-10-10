@@ -103,7 +103,8 @@ interface Insight {
   starCount?: number;
 }
 
-interface PCInsight { id: string; userId?: string; studentName?: string; content: string; version: number; createdAt: string; starCount?: number; }
+// ⚠️ PERF：content 初始 GET 已不再下发（按需拉取），改为可选，避免类型误用
+interface PCInsight { id: string; userId?: string; studentName?: string; content?: string; version: number; createdAt: string; starCount?: number; }
 // 模板类型
 interface AnalysisTemplate {
   id: string;
@@ -144,6 +145,8 @@ export default function TaskInsightsPage() {
   const [pcDeleteVisible, setPcDeleteVisible] = useState(false);
   const [pcDeleting, setPcDeleting] = useState(false);
   const [pcStudentInsights, setPcStudentInsights] = useState<PCInsight[]>([]);
+  // 对话活动学生洞察正文缓存（展开时按需拉取，避免一次性下发 N 份完整 HTML）
+  const [studentContentCache, setStudentContentCache] = useState<Record<string, string>>({});
   const [pcStudents, setPcStudents] = useState<Array<{ id: string; name: string; convCount: number; msgCount: number; completedPresets: string[]; lastActiveAt: string | null }>>([]);
   const [selectedPCId, setSelectedPCId] = useState<string>("");
 
@@ -379,6 +382,21 @@ export default function TaskInsightsPage() {
 
 
 
+  // 对话活动学生洞察：展开时按需拉取正文（初始 GET 已改为只回元数据）
+  const loadStudentInsightContent = async (insightId: string) => {
+    if (!insightId || studentContentCache[insightId] != null) return;
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/preset-conversations/${selectedPCId}/insights/student/${insightId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setStudentContentCache((prev) => ({ ...prev, [insightId]: d.content || "" }));
+      }
+    } catch { /* 静默失败：保持加载态 */ }
+  };
+
   // ===== AI 生成 =====
 
   // 检查下级报告完整度，如果缺失则弹对话框
@@ -498,6 +516,11 @@ export default function TaskInsightsPage() {
           });
           setPcClassVersionIndex(0);
         } else {
+          const data = await res.json();
+          // 生成后把新正文写入缓存，避免展开态卡片卡在「加载中」
+          if (data?.id) {
+            setStudentContentCache((prev) => ({ ...prev, [data.id]: data.content || "" }));
+          }
           await fetchPCInsights(selectedPCId, selectedClassId);
         }
         MessagePlugin.success("分析已生成");
@@ -956,7 +979,13 @@ export default function TaskInsightsPage() {
                           return (
                             <div key={student.id} className={`border rounded-lg overflow-hidden ${!hasConv ? "opacity-50" : ""}`}>
                               <div className="flex items-center justify-between px-4 py-3 bg-[#F7F8FA] cursor-pointer"
-                                onClick={() => hasConv && setExpandedStudentId(isExpanded ? null : student.id)}>
+                                onClick={() => {
+                                  if (!hasConv) return;
+                                  const next = isExpanded ? null : student.id;
+                                  setExpandedStudentId(next);
+                                  // 展开时按需拉取该学生洞察正文（初始 GET 不含 content）
+                                  if (next && ins?.id) loadStudentInsightContent(ins.id);
+                                }}>
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {ins && <StarRating count={ins.starCount || 0} />}
                                   <div className="w-7 h-7 rounded-full bg-[#0052D9]/10 flex items-center justify-center">
@@ -974,7 +1003,13 @@ export default function TaskInsightsPage() {
                                                 ? "bg-[#0052D9] text-white"
                                                 : "bg-gray-100 text-gray-600 hover:bg-gray-200"
                                             }`}
-                                            onClick={(e) => { e.stopPropagation(); setStudentVersionIndex((p) => ({ ...p, [student.id]: i })); }}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setStudentVersionIndex((p) => ({ ...p, [student.id]: i }));
+                                              // 切换版本时按需拉取该版正文
+                                              const vins = versions[i];
+                                              if (vins?.id) loadStudentInsightContent(vins.id);
+                                            }}
                                             title={`第 ${v.version} 版${v.createdAt ? ` · ${formatInsightTime(v.createdAt)}` : ""}`}
                                           >
                                             v{v.version}
@@ -1019,7 +1054,11 @@ export default function TaskInsightsPage() {
                               </div>
 {isExpanded && ins && !requireStarRating && (
                                           <div className="px-4 py-3">
-                                            <InsightContent content={ins.content} />
+                                            {studentContentCache[ins.id] != null ? (
+                                              <InsightContent content={studentContentCache[ins.id]} />
+                                            ) : (
+                                              <div className="text-xs text-gray-400 py-4 text-center">加载中…</div>
+                                            )}
                                           </div>
                                         )}
                             </div>

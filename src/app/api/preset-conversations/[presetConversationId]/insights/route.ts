@@ -137,8 +137,15 @@ export async function GET(
         version: ins.version,
         createdAt: ins.createdAt.toISOString(),
       })),
+      // ⚠️ PERF：学生洞察正文体积大（每人一份完整 HTML 报告），初始 GET 不再下发 content，
+      // 老师展开某学生卡片时再由前端按需拉取（/insights/student/[insightId] GET），
+      // 砍掉打开「对话活动分析」时的 N 份冗余传输。starCount 仍需解析，从原始 content 现取。
       studentInsights: studentInsights.map((si) => ({
-        ...si,
+        id: si.id,
+        userId: si.userId,
+        studentName: si.studentName,
+        version: si.version,
+        createdAt: si.createdAt,
         starCount: parseStarCount(si.content),
       })),
     });
