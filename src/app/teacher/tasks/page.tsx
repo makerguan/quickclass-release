@@ -5128,6 +5128,7 @@ export default function TeacherTasksPage() {
           footer={null}
           width={720}
           destroyOnClose
+          top="48px"
         >
           <div className="space-y-4">
             <div className="space-y-2">
@@ -5271,6 +5272,7 @@ export default function TeacherTasksPage() {
           width={1040}
           destroyOnClose
           closeOnOverlayClick={false}
+          top="48px"
         >
           <div className="space-y-4">
             {/* 标题 */}
