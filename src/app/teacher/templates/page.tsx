@@ -110,6 +110,21 @@ export default function TemplateSettingsPage() {
   const [editIsDefault, setEditIsDefault] = useState(false);
   const [saving, setSaving] = useState(false);
 
+  // AI 帮我写（支持 conversation / QUIZ_DESIGN 两类，知识库见 src/lib/template-writing-guide.ts）
+  const [aiIntent, setAiIntent] = useState("");
+  const [aiGenerating, setAiGenerating] = useState(false);
+  // 生成前的内容快照（null=无快照），用于「撤销本次生成」
+  const [aiPrevContent, setAiPrevContent] = useState<string | null>(null);
+  const [aiWarning, setAiWarning] = useState<string | null>(null);
+  // 生成中已等待秒数（教师反馈：生成期间要有思考耗时提示，否则不知道是否卡住）
+  const [aiElapsed, setAiElapsed] = useState(0);
+  useEffect(() => {
+    if (!aiGenerating) return;
+    setAiElapsed(0);
+    const timer = setInterval(() => setAiElapsed((s) => s + 1), 1000);
+    return () => clearInterval(timer);
+  }, [aiGenerating]);
+
   // 删除确认
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
   const [deletingTemplate, setDeletingTemplate] = useState<AnalysisTemplate | null>(null);
@@ -282,6 +297,10 @@ export default function TemplateSettingsPage() {
     setEditName("");
     setEditContent("");
     setEditIsDefault(false);
+    // 重置 AI 生成状态，避免上一次弹窗的意图/快照/警告串场
+    setAiIntent("");
+    setAiPrevContent(null);
+    setAiWarning(null);
     setEditDialogVisible(true);
   };
 
@@ -292,7 +311,69 @@ export default function TemplateSettingsPage() {
     setEditName(template.name);
     setEditContent(template.content);
     setEditIsDefault(template.isDefault);
+    // 重置 AI 生成状态，避免上一次弹窗的意图/快照/警告串场
+    setAiIntent("");
+    setAiPrevContent(null);
+    setAiWarning(null);
     setEditDialogVisible(true);
+  };
+
+  // AI 帮我写/优化模板：editContent 非空走优化模式（保留教师设计），空走生成模式
+  // 🔗 RELATED：src/app/api/analysis-templates/generate/route.ts（同一套模式判定，前后端必须一致）
+  const handleGenerateAI = async () => {
+    if (aiGenerating) return;
+    const isOptimize = editContent.trim().length > 0;
+    if (!isOptimize && !aiIntent.trim()) {
+      MessagePlugin.warning(
+        editType === "QUIZ_DESIGN"
+          ? "请先用一句话描述你想让这份作业怎么出，例如：作业要分层，基础题和提升题都要有"
+          : "请先用一句话描述你的想法，例如：希望不同的学生有不同的成长"
+      );
+      return;
+    }
+    setAiGenerating(true);
+    setAiWarning(null);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch("/api/analysis-templates/generate", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          type: editType,
+          intent: aiIntent.trim(),
+          currentContent: isOptimize ? editContent : undefined,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        // 必须显式处理非 2xx：不读 error 就会把后端 400/500 静默吞掉
+        MessagePlugin.error(data?.error || "生成失败，请稍后重试");
+        return;
+      }
+      setAiPrevContent(editContent);
+      setEditContent(data.content as string);
+      if (data.warning) setAiWarning(data.warning as string);
+      MessagePlugin.success(
+        isOptimize
+          ? "AI 已基于现有内容优化，不满意可点「撤销本次生成」"
+          : "AI 已生成模板草稿，请检查调整后保存"
+      );
+    } catch {
+      MessagePlugin.error("生成失败，请检查网络后重试");
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  // 撤销本次 AI 生成，恢复生成前的内容
+  const handleUndoAI = () => {
+    if (aiPrevContent === null) return;
+    setEditContent(aiPrevContent);
+    setAiPrevContent(null);
+    setAiWarning(null);
   };
 
   // 获取当前模板类型可用的变量（只显示用户输入和系统计算的数据）
@@ -307,12 +388,12 @@ export default function TemplateSettingsPage() {
         { name: "convDescription", desc: "对话目标" },
         { name: "kbContent", desc: "知识库内容" },
         { name: "kbList", desc: "参考知识库列表" },
-        { name: "quizCount", desc: "题目数量" },
       ];
     }
     if (type === "QUIZ_ANALYSIS") {
       return [
         { name: "quizTitle", desc: "作业名称" },
+        { name: "quizCount", desc: "题目数量" },
         { name: "className", desc: "班级名称" },
         { name: "totalStudents", desc: "参与人数" },
         { name: "classSize", desc: "班级总人数" },
@@ -363,7 +444,6 @@ export default function TemplateSettingsPage() {
         { name: "convDescription", desc: "对话目标" },
         { name: "kbContent", desc: "知识库内容" },
         { name: "kbList", desc: "参考知识库列表" },
-        { name: "quizCount", desc: "题目数量" },
       ];
     } else if (type === "student") {
       return [
@@ -916,11 +996,11 @@ export default function TemplateSettingsPage() {
         )}
 
         {/* 模板编辑弹窗 */}
+        {/* ⛔ DO NOT REVERT：遮罩层禁止 onClick 关闭弹窗——教师反馈点击弹窗外会静默丢失未保存的模板内容，只允许 × / 取消 / 保存 关闭 */}
         <div
           className={`fixed inset-0 bg-black/30 z-50 flex items-center justify-center ${
             editDialogVisible ? "" : "hidden"
           }`}
-          onClick={() => setEditDialogVisible(false)}
         >
           <div
             className="bg-white rounded-2xl shadow-xl w-full max-w-[900px] mx-4 max-h-[90vh] overflow-y-auto"
@@ -991,6 +1071,59 @@ export default function TemplateSettingsPage() {
                   </label>
                   <span className="text-xs text-gray-400">{editContent.length} 字符</span>
                 </div>
+
+                {/* AI 帮我写（对话设计 + 课堂作业设计可用，扩展见 template-writing-guide.ts 的 TODO） */}
+                {editType === "conversation" || editType === "QUIZ_DESIGN" ? (
+                  <div className="mb-2 p-2 bg-[#F0F7FF] rounded-lg border border-[#C9DBFF]">
+                    {editType === "QUIZ_DESIGN" && (
+                      <p className="text-xs text-[#63666F] mb-1.5">
+                        模板只需描述「出什么题」（题型、难度、情境等）；题目的 JSON 输出格式由系统在出题时自动附加，不会显示在模板正文里，也无需编写。
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text"
+                        value={aiIntent}
+                        onChange={(e) => setAiIntent(e.target.value)}
+                        disabled={aiGenerating}
+                        placeholder={
+                          editType === "QUIZ_DESIGN"
+                            ? "想让这份作业怎么出？一句话描述，如：作业要分层，基础题和提升题都要有"
+                            : "想让这段对话怎么教？一句话描述，如：希望不同的学生有不同的成长"
+                        }
+                        className="flex-1 min-w-0 px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-[#0052D9] focus:border-transparent disabled:opacity-50"
+                      />
+                      <Button
+                        theme="primary"
+                        size="small"
+                        loading={aiGenerating}
+                        onClick={handleGenerateAI}
+                      >
+                        {editContent.trim() ? "AI 优化现有" : "AI 帮我写"}
+                      </Button>
+                    </div>
+                    {aiGenerating && (
+                      <p className="text-xs text-[#0052D9] mt-1.5">
+                        AI 正在思考并撰写模板，通常需要 10~40 秒（已等待 {aiElapsed} 秒），请勿关闭弹窗
+                      </p>
+                    )}
+                    {aiWarning && (
+                      <p className="text-xs text-[#ED7B2F] mt-1.5">注意：{aiWarning}</p>
+                    )}
+                    {aiPrevContent !== null && !aiGenerating && (
+                      <button
+                        onClick={handleUndoAI}
+                        className="text-xs text-[#0052D9] hover:underline mt-1.5"
+                      >
+                        撤销本次生成，恢复之前的内容
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  <div className="mb-2 px-2 py-1.5 bg-gray-50 rounded-lg text-xs text-gray-400">
+                    「AI 帮我写」即将支持当前模板类型（已支持：对话设计、课堂作业设计）
+                  </div>
+                )}
 
                 {/* 变量插入区域 */}
                 <div className="mb-2 p-2 bg-[#FFF9E6] rounded-lg">

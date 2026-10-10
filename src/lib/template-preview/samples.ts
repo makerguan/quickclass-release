@@ -99,10 +99,11 @@ const TYPE_EXTRA: Record<PreviewTemplateType, SampleVars> = {
     kbContent:
       "等量关系：两个数量之间相等的关系，可以用等号表示。例如「鸟有 2 只脚 = 2」「鱼有 1 条尾巴 = 1」。用符号表示等量关系是从算术走向代数的第一步。",
     kbList: "1. 等量关系的含义\n2. 用符号表示等量关系\n3. 从生活情境中找等量关系",
-    quizCount: "5",
+    // quizCount 已从变量清单移除（题量恒为 5，模板直接写死）；如存量模板仍引用，预览走缺值提示安全网
   },
   QUIZ_ANALYSIS: {
     quizTitle: "超声波传感器随堂小测",
+    quizCount: "5",
     classAvgScore: "82.5",
     classSize: "32",
     highScoreStudents: "王小明 100、李思思 95、张一鸣 95、刘欣然 90（共 14 人在 90 分以上）",

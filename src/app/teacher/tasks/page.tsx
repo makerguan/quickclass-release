@@ -5976,6 +5976,13 @@ export default function TeacherTasksPage() {
                               );
                             })}
                           </>
+                        ) : Object.keys(options).length === 0 ? (
+                          /* 兜底：主观题（填空/简答）无选项，预览若渲染空白教师会误以为题目缺失。
+                             出题协议已禁止主观题（⛔ DO NOT REVERT，见 src/lib/prompts/quiz.ts QUIZ_FORMAT_INSTRUCTIONS 注释），
+                             此分支仅防御历史/手动添加的主观题，只读展示参考答案。 */
+                          <div className="p-4 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800">
+                            本题为主观题（学生作答文字后由 AI 评分）。参考答案：{String(q.answer || "（无）")}
+                          </div>
                         ) : (
                           Object.entries(options).map(([k, v]) => {
                             const isMulti = q.type === "MULTIPLE_CHOICE";

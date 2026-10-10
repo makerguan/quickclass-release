@@ -174,6 +174,7 @@ export async function POST(
     const quizAnalysisVars: Record<string, string> = {
       "quizTitle": quiz.title,
       "quiz.title": quiz.title,
+      "quizCount": String(quiz.Question.length),
       "className": className,
       "totalStudents": String(totalStudents),
       "classSize": String(classSize),
