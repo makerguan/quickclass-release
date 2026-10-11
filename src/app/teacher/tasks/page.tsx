@@ -4248,10 +4248,11 @@ export default function TeacherTasksPage() {
                               (sp: any) => (sp.projectSubmissions || []) as any[]
                             ));
                             if (allPs.length === 0) {
+                              // 空状态样式与课堂作业、互动探究保持一致：居中提示 + 点击标题栏按钮创建
                               return (
-                                <p className="text-sm text-gray-400">
-                                  尚未布置项目。点击右上角「新建项目」。
-                                </p>
+                                <div className="text-center py-3 text-sm text-gray-400">
+                                  暂无项目，点击「新建项目」创建
+                                </div>
                               );
                             }
                             return (
