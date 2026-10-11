@@ -39,6 +39,10 @@ function loadKatexAssets(): { js: string; css: string; available: boolean } {
 // 模块加载时执行一次（Next.js 路由在 Node.js 环境中运行）
 const katexAssets = loadKatexAssets();
 
+// AI伴学机器人图标（内联 SVG，注入到 iframe 使用）
+// 与 ExplorationPanel.tsx 的 Robot2FilledIcon 保持一致，可爱圆头笑脸风格。
+const AI_COMPANION_ROBOT_SVG = `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M9 11.5C9.83 11.5 10.5 12.17 10.5 13S9.83 14.5 9 14.5H8.25C7.42 14.5 6.75 13.83 6.75 13S7.42 11.5 8.25 11.5H9Z"/><path d="M15 11.5C15.83 11.5 16.5 12.17 16.5 13S15.83 14.5 15 14.5H14.25C13.42 14.5 12.75 13.83 12.75 13S13.42 11.5 14.25 11.5H15Z"/><path d="M12 0C13.1 0 14 0.9 14 2C14 2.74 13.6 3.38 13 3.73V5C17.28 5 20.87 7.99 21.78 12H22C23.1 12 24 12.9 24 14S23.1 16 22 16H21.78C20.87 20.01 17.28 23 13 23H11C6.72 23 3.13 20.01 2.22 16H2C0.9 16 0 15.1 0 14S0.9 12 2 12H2.22C3.13 7.99 6.72 5 11 5V3.73C10.4 3.38 10 2.74 10 2C10 0.9 10.9 0 12 0ZM12 8.25C9.13 8.25 7.32 9.21 6.29 10.66C5.32 12.05 5.21 13.7 5.27 14.82C5.36 16.36 6.71 17.25 8.01 17.25H15.99C17.29 17.25 18.63 16.36 18.73 14.82C18.79 13.7 18.68 12.05 17.7 10.66C16.68 9.21 14.87 8.25 12 8.25Z"/></svg>`;
+
 // （历史机制退役 2026-09）曾用 AI_COMPANION_VERSION 版本号识别库里 HTML 的伴学注入新旧，
 // 读取时「版本一致直接放行、不一致剥旧注新」。现读取路径（renderExplorationHtml）入口
 // 无条件 purify 后永远注入当前版，不存在「放行库里旧注入」的路径，版本号随之退役。
@@ -57,17 +61,17 @@ export const aiCompanionCSS = `
 #ai-companion-root #ai-companion-trigger {
   position: fixed; bottom: 30px; right: 80px;
   width: 52px; height: 52px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #f97316 0%, #fb923c 100%);
   color: white; border: none; border-radius: 50%;
   cursor: pointer; z-index: 10001;
-  box-shadow: 0 4px 15px rgba(102,126,234,0.4);
+  box-shadow: 0 4px 15px rgba(249,115,22,0.4);
   display: flex; align-items: center; justify-content: center;
   font-size: 22px; transition: transform 0.2s, box-shadow 0.2s;
 }
-#ai-companion-root #ai-companion-trigger:hover { transform: scale(1.1); box-shadow: 0 6px 20px rgba(102,126,234,0.6); }
+#ai-companion-root #ai-companion-trigger:hover { transform: scale(1.1); box-shadow: 0 6px 20px rgba(249,115,22,0.6); }
 #ai-companion-root #ai-companion-trigger .pulse {
   position: absolute; width: 100%; height: 100%; border-radius: 50%;
-  background: rgba(102,126,234,0.3); animation: aiPulse 2s infinite;
+  background: rgba(249,115,22,0.3); animation: aiPulse 2s infinite;
 }
 @keyframes aiPulse { 0%{transform:scale(1);opacity:1} 100%{transform:scale(1.8);opacity:0} }
 
@@ -84,7 +88,7 @@ export const aiCompanionCSS = `
 
 /* 头部 */
 #ai-companion-root #ac-header {
-  padding: 14px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 14px 16px; background: linear-gradient(135deg, #f97316 0%, #fb923c 100%);
   color: white; display: flex; align-items: center; justify-content: space-between;
 }
 #ai-companion-root #ac-header .title { font-size: 14px; font-weight: 600; }
@@ -102,7 +106,7 @@ export const aiCompanionCSS = `
 #ai-companion-root #ac-messages::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
 
 #ai-companion-root .ac-msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.6; word-break: break-word; white-space: pre-wrap; }
-#ai-companion-root .ac-msg.user { align-self: flex-end; background: #667eea; color: white; border-bottom-right-radius: 4px; }
+#ai-companion-root .ac-msg.user { align-self: flex-end; background: #f97316; color: white; border-bottom-right-radius: 4px; }
 #ai-companion-root .ac-msg.assistant { align-self: flex-start; background: white; color: #1f2937; border-bottom-left-radius: 4px; border: 1px solid #e5e7eb; }
 #ai-companion-root .ac-msg.assistant code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
 #ai-companion-root .ac-msg.error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
@@ -119,19 +123,19 @@ export const aiCompanionCSS = `
   resize: none; min-height: 36px; max-height: 80px;
   font-family: inherit; line-height: 1.4;
 }
-#ai-companion-root #ac-input:focus { border-color: #667eea; }
+#ai-companion-root #ac-input:focus { border-color: #f97316; }
 #ai-companion-root #ac-send {
   width: 36px; height: 36px; border-radius: 50%;
-  background: #667eea; color: white; border: none;
+  background: #f97316; color: white; border: none;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   font-size: 16px; flex-shrink: 0; transition: background 0.2s;
 }
-#ai-companion-root #ac-send:hover:not(:disabled) { background: #5568d3; }
+#ai-companion-root #ac-send:hover:not(:disabled) { background: #ea580c; }
 #ai-companion-root #ac-send:disabled { background: #d1d5db; cursor: not-allowed; }
 
 /* 欢迎提示 */
 #ai-companion-root #ac-welcome { text-align: center; padding: 30px 20px; color: #9ca3af; }
-#ai-companion-root #ac-welcome .icon { font-size: 32px; margin-bottom: 8px; }
+#ai-companion-root #ac-welcome .icon { font-size: 32px; margin-bottom: 8px; color: #f97316; }
 #ai-companion-root #ac-welcome .text { font-size: 13px; line-height: 1.8; }
 
 /* 打字指示器 */
@@ -151,7 +155,7 @@ export const aiCompanionCSS = `
 #ai-companion-root .ac-msg pre code { background: transparent; padding: 0; color: inherit; font-size: inherit; }
 #ai-companion-root .ac-msg ul, #ai-companion-root .ac-msg ol { margin: 4px 0 4px 18px; padding: 0; }
 #ai-companion-root .ac-msg li { margin: 2px 0; }
-#ai-companion-root .ac-msg a { color: #667eea; text-decoration: underline; }
+#ai-companion-root .ac-msg a { color: #f97316; text-decoration: underline; }
 #ai-companion-root .ac-msg.assistant img { display: block; max-width: 100%; max-height: 260px; border-radius: 8px; margin: 6px 0; border: 1px solid #e5e7eb; cursor: zoom-in; }
 
 /* 公式容器样式 */
@@ -168,8 +172,8 @@ export const aiCompanionCSS = `
   cursor: pointer; flex-shrink: 0;
   transition: background 0.15s, color 0.15s;
 }
-#ai-companion-root .ac-play:hover { background: #e8ecf3; color: #667eea; }
-#ai-companion-root .ac-play.playing { background: rgba(102,126,234,0.15); color: #667eea; }
+#ai-companion-root .ac-play:hover { background: #e8ecf3; color: #f97316; }
+#ai-companion-root .ac-play.playing { background: rgba(249,115,22,0.15); color: #f97316; }
 #ai-companion-root .ac-play.loading { animation: acBlink 0.8s ease-in-out infinite; cursor: default; }
 @keyframes acBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 #ai-companion-root .ac-speak-err { display: none; font-size: 11px; color: #9ca3af; }
@@ -198,13 +202,13 @@ export const aiCompanionHTML = `
 <!-- AI伴学浮动按钮 -->
 <button id="ai-companion-trigger" title="AI伴学助手" style="display:flex">
   <span class="pulse"></span>
-  🤖
+  ${AI_COMPANION_ROBOT_SVG}
 </button>
 
 <!-- AI伴学对话框 -->
 <div id="ai-companion-panel" role="dialog" aria-label="AI伴学助手">
   <div id="ac-header">
-    <span class="title">🤖 AI伴学助手</span>
+    <span class="title">${AI_COMPANION_ROBOT_SVG} AI伴学助手</span>
     <div class="actions">
       <button id="ac-clear" title="清空对话" aria-label="清空对话">🗑</button>
       <button id="ac-close" title="关闭" aria-label="关闭">✕</button>
@@ -212,7 +216,7 @@ export const aiCompanionHTML = `
   </div>
   <div id="ac-messages">
     <div id="ac-welcome">
-      <div class="icon">🤖</div>
+      <div class="icon">${AI_COMPANION_ROBOT_SVG}</div>
       <div class="text">你好！我是你的AI学习伙伴<br/>遇到问题随时问我哦</div>
     </div>
   </div>

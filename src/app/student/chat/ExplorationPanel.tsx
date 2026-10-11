@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Button, MessagePlugin } from "tdesign-react";
+import { Robot2FilledIcon } from "tdesign-icons-react";
 import SpeechControls from "@/components/speech/SpeechControls";
 import { stopSpeaking } from "@/lib/speech";
 
@@ -226,8 +227,9 @@ export default function ExplorationPanel({
           <Button size="small" onClick={onBack}>← 返回</Button>
           <span className="text-sm font-medium text-[#1A1A1A]">互动探究</span>
           {aiCompanionOn && (
-            <span className="text-xs text-purple-600 bg-purple-50 px-2 py-0.5 rounded">
-              🤖 AI伴学已开启
+            <span className="text-xs text-orange-600 bg-orange-50 px-2 py-0.5 rounded inline-flex items-center gap-1">
+              <Robot2FilledIcon size="14px" className="text-orange-500" />
+              AI伴学已开启
             </span>
           )}
           <div className="flex-1" />
