@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { getAIConfig, chatCompletionsFetch } from "@/lib/ai";
-import { getReportTime } from "@/lib/prompts/insight";
+import { getReportTime, buildChartPolicySection } from "@/lib/prompts/insight";
 import { cleanInsightContent } from "@/lib/insight-clean";
 import { buildQfAnswersText } from "@/lib/exploration/qf-report";
 import { parseCollectProfile, detectCollectProfile } from "@/lib/exploration/collect-profile";
@@ -276,7 +276,15 @@ export async function POST(
     //   教师模板写没写，报告末尾都会被强加一行星级，绕过模板控制。
     const outputFormat = isHtmlOutput
       ? "\n\n## 输出格式\n直接输出完整的HTML内容，所有图表用纯 SVG 内联绘制，禁止引入任何外部 JS 图表库或 CDN 资源，保存为 .html 后离线可完整打开。"
-      : "\n\n## 字数限制\n" + wordLimitText + "\n\n## 输出格式\n直接输出分析内容（Markdown格式）";
+      // 📐 CONTRACT：text 分支按模板意图分流图表策略（与 quiz-activities/[id]/report/generate
+      // 同口径，共享 buildChartPolicySection）：模板含图表意图词（雷达图/饼图等）→ 注入 chart
+      // 协议 → 分析 AI 输出 ```chart 块 → 写库前渲染成 SVG → 前端 qc-chart 白名单直出；
+      // 未要求 → 注入画图禁令。
+      // ⛔ DO NOT REVERT：不要改回纯 Markdown 输出——曾因 text 分支无协议，文本型探究报告
+      // 永远无图，与学情分析线能力不对齐。
+      // ⚠️ GOTCHA：模板正文必须纯中文表述——isHtmlOutput 嗅探含 includes('chart')，模板混入
+      // 英文 chart 会被误判为网页型输出，与模板要求的 Markdown 形态错乱。
+      : "\n\n## 字数限制\n" + wordLimitText + "\n\n" + buildChartPolicySection(effectivePrompt ?? undefined) + "\n\n## 输出格式\n直接输出分析内容（Markdown格式）";
 
     const prompt = `${systemFrame}\n\n${dataSection}${templateSection}${outputFormat}`;
 

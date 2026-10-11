@@ -45,16 +45,86 @@ export function getDefaultConstraints(config: {
 }
 
 /**
+ * 📐 CONTRACT：图表输出协议（分析 AI 侧的唯一注入点）
+ *
+ * 为什么：渲染端 src/lib/report-charts.ts 的 CHART_RE 只认 ```chart 围栏块 +
+ * {"type":"...","data":[{"name","value"}]} 格式（写库前 cleanInsightContent 渲染成确定性 SVG）。
+ * 历史 bug（2026-10-11）：分析 AI 收不到协议 → 按训练语料里的 ECharts 习惯自发输出
+ * {"chart":"pie","data":{"categories":[..],"values":[..]}} 裸 JSON 行 → 渲染失败，报告里出现 JSON 源码。
+ *
+ * ⛔ DO NOT CHANGE FORMAT WITHOUT SYNCING report-charts.ts 的 validateChartSpec：
+ * type 枚举、data 形状（name/value 数组、scatter 的 x/y）与校验器逐字对应，改一处必须同步另一处。
+ * 🔗 RELATED：写作端模板协议说明 src/lib/template-writing-guide.ts（第 6/7 条）；
+ * 渲染管线 src/lib/insight-clean.ts（processChartBlocks）。
+ */
+const CHART_PROTOCOL_SECTION = (htmlMode: boolean): string => `## 图表输出协议（强制）
+仅当教师模板（"分析要求/输出要求"）明确要求报告插图时才画图；模板未要求插图时，禁止输出任何 chart 块或 JSON 图表代码。
+要求插图时，图表一律用 \`\`\`chart 围栏块输出，其余任何图表格式一律禁止（禁止 ECharts option JSON、禁止裸 JSON 行、禁止图片链接、禁止 ASCII 画图）。一个图一个块，${htmlMode ? "嵌入 HTML 正文对应位置（渲染端会把围栏块替换成现成 SVG 图）" : "紧跟对应小节之后独立成段"}：
+\`\`\`chart
+{"type":"pie","title":"各层级人数占比","data":[{"name":"优秀","value":1},{"name":"待观察","value":20},{"name":"待提升","value":18}]}
+\`\`\`
+规则：
+1. type 只能是：pie（占比）/ bar（对比）/ line（趋势）/ progress（达成度，value 取 0-100）/ radar（多维评估）/ scatter（两维分布，data 改用 {"name":"...","x":数值,"y":数值}）。
+1a. radar 维度必须 3-8 个：维度多于 8 个时先把逐题/逐项数据按知识维度归并（如 15 道题按考查知识点归并成 4-6 个维度）再画；超过 12 维渲染端会直接降级为表格，图就没了（2026-10-11 实测：15 题逐题进 radar → 「雷达图维度超过 12 个」降级）。
+2. data 必须是 {"name":"类目","value":数值} 数组，数值必须取自本提示词注入的真实数据变量，禁止编造、估算不存在的数据。
+3. 图标题写进 JSON 的 title 字段，正文不要再写"图1 xxx"标题行，也不要在图后重复罗列同一份数据；数值单位用 style:{"unit":"分"}，低于某值预警用 style:{"warnBelow":60}。`;
+
+/**
+ * 📐 CONTRACT：图表意图检测词表（text 报告线共享，学情分析 + 作业分析 + 探究分析三线同一口径）
+ *
+ * 意图词表宁宽勿严：漏判会让"要求插图"的模板收到画图禁令（直接不画图，后果更糟）；
+ * 误判无害——协议首句有"仅当模板明确要求插图时才画图"守卫。
+ *
+ * ⚠️ GOTCHA：词表里的英文 chart 是给手写/历史模板兜底的。作业/探究分析线帮写产物必须
+ * 纯中文（buildAnalysisWritingRules 已严禁英文 chart/html 字样）——因为那两条生成路由的
+ * isHtmlOutput 用 includes('chart') 嗅探模板正文，模板含英文 chart 会被误判为网页型输出，
+ * 与模板要求的 Markdown 形态错乱。中文意图词（雷达图/饼图/柱状图等）均不含嗅探子串
+ * （嗅探词是「图表协议」四字连排，不是「图表」二字），安全。
+ */
+export const CHART_INTENT_RE =
+  /chart|图表|插图|配图|画图|画一张|绘制|饼图|柱状图|折线图|雷达图|散点图|趋势图|进度条/i;
+
+/** text 报告未要求插图时的画图禁令（防分析 AI 自发画图输出系统不认识的 JSON 图表原文，历史 bug 见 CHART_PROTOCOL_SECTION 注释） */
+const TEXT_CHART_BAN_SECTION = `## 图表输出禁令\n本报告为纯文本 Markdown 格式，数据一律以 Markdown 表格呈现，禁止输出 chart 数据块或任何 JSON 图表代码。`;
+
+/**
+ * text（纯文本 Markdown）报告的图表策略段：按模板正文是否含图表意图词分流。
+ * 要求插图 → 注入 chart 协议（分析 AI 输出 ```chart 块，写库前 cleanInsightContent
+ * 渲染成确定性 SVG，前端 Markdown 组件直出雷达图等，qc-chart 白名单放行）；
+ * 未要求 → 注入画图禁令。不传模板视为未要求（老兼容链路安全）。
+ *
+ * 🔗 RELATED：学情线 buildConstraintsSection 内部复用；作业/探究分析线
+ * quiz-activities/[id]/report/generate 与 exploration-activities/[id]/analysis/generate
+ * 的 text outputFormat 分支直接调用（html 分支不走这里，网页型由 CHART_PROTOCOL_SECTION(true) 覆盖）。
+ */
+export function buildChartPolicySection(templateContent?: string): string {
+  const wantsCharts = !!templateContent && CHART_INTENT_RE.test(templateContent);
+  return wantsCharts ? CHART_PROTOCOL_SECTION(false) : TEXT_CHART_BAN_SECTION;
+}
+
+/**
  * 根据约束类型构建约束段落（追加到提示词末尾）
  * 当 isHtmlOutput 为 true 时，跳过字数限制和输出格式约束
+ *
+ * templateContent（可选）：教师模板原文，用于判断模板是否要求插图——
+ * 要求 → 注入图表协议；未要求 → 注入自发画图禁令（分析 AI 有自发画图倾向，见 CHART_PROTOCOL_SECTION 注释）。
+ * 不传时视为未要求（老兼容链路 getWordLimitPrompt 的硬编码模板均无图表概念，注入禁令安全）。
  */
 export function buildConstraintsSection(
   type: "student" | "class",
-  constraints: InsightConstraints
+  constraints: InsightConstraints,
+  templateContent?: string
 ): string {
-  if (constraints.isHtmlOutput) return ""; // HTML 输出不受约束
+  if (constraints.isHtmlOutput) {
+    // HTML 输出跳过星星/字数/Markdown 约束，但图表协议必须注入：
+    // HTML 型模板未必带示例块，AI 仍会自发画图，协议是渲染成功的唯一保障
+    return CHART_PROTOCOL_SECTION(true);
+  }
 
   const parts: string[] = [];
+
+  // 图表意图分流：要求插图 → 协议；没要求 → 禁令（防纯文本报告里出现系统不认识的 JSON 图表原文）
+  parts.push(buildChartPolicySection(templateContent));
 
   // 星星评分约束
   if (type === "student") {
@@ -310,8 +380,12 @@ export function renderInsightTemplate(options: TemplateRenderOptions): string {
     }
   }
 
-  // 追加约束条件
-  const constraintSection = buildConstraintsSection(isStudent ? "student" : "class", constraints);
+  // 追加约束条件（传原始模板原文供图表意图判断——渲染后的 content 已混入数据段，会误判关键词）
+  const constraintSection = buildConstraintsSection(
+    isStudent ? "student" : "class",
+    constraints,
+    templateContent
+  );
   if (constraintSection) {
     content += "\n\n---\n\n" + constraintSection;
   }

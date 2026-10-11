@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { getAIConfig, chatCompletionsFetch } from "@/lib/ai";
-import { getReportTime } from "@/lib/prompts/insight";
+import { getReportTime, buildChartPolicySection } from "@/lib/prompts/insight";
 import { cleanInsightContent } from "@/lib/insight-clean";
 
 // 课堂作业分析模板变量替换
@@ -197,7 +197,15 @@ export async function POST(
     const wordLimitText = wordLimit ? `整篇报告总字数控制在${wordLimit}字以内。` : "";
     const outputFormat = isHtmlOutput
       ? "\n\n## 输出格式\n直接输出完整的HTML内容，所有图表用纯 SVG 内联绘制，禁止引入任何外部 JS 图表库或 CDN 资源，保存为 .html 后离线可完整打开。"
-      : "\n\n## 字数限制\n" + wordLimitText + "\n\n## 输出格式\n直接输出分析内容（Markdown格式），末尾另起一行输出综合评分：\n评分：★★★★★★";
+      // 📐 CONTRACT：text 分支按模板意图分流图表策略——模板含图表意图词（雷达图/饼图等，见
+      // CHART_INTENT_RE）→ 注入 chart 协议，分析 AI 输出 ```chart 块，写库前 cleanInsightContent
+      // 渲染成 SVG，前端 Markdown 组件 qc-chart 白名单直出（2026-10-11 起文本型报告也能插图，
+      // 与学情分析线同口径）；模板未要求 → 注入画图禁令。
+      // ⛔ DO NOT REVERT：不要把协议注入改回纯 Markdown 输出——曾因 text 分支无协议，帮写模板
+      // 又教 AI「数据一律表格化」，文本型报告永远无图，与学情线能力不对齐。
+      // ⚠️ GOTCHA：意图检测用的 effectivePrompt（模板正文）必须保持纯中文表述——嗅探
+      // isHtmlOutput 含 includes('chart')，模板正文混入英文 chart 会被误判为网页型。
+      : "\n\n## 字数限制\n" + wordLimitText + "\n\n" + buildChartPolicySection(effectivePrompt ?? undefined) + "\n\n## 输出格式\n直接输出分析内容（Markdown格式），末尾另起一行输出综合评分：\n评分：★★★★★★";
     const prompt = `${systemFrame}\n\n${dataSection}${templateSection}${outputFormat}`;
 
     const requestBody: any = {
