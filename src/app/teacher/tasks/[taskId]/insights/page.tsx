@@ -12,6 +12,7 @@ import {
   InfoCircleIcon,
 } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
+import ExportPdfButton from "@/components/ExportPdfButton";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import { usePromptPreview, PromptPreviewDialog } from "@/components/prompt-preview";
 import { formatInsightTime } from "@/lib/format-time";
@@ -62,9 +63,12 @@ function InsightContent({ content, className = "" }: { content: string; classNam
       </div>
     );
   }
+  // 文本型分支：data-insight-body 是 ExportPdfButton 的定位锚点（closest 向上查找），
+  // 丢了该属性导出按钮静默失效。🔗 RELATED：src/components/ExportPdfButton.tsx
   return (
-    <div className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
+    <div data-insight-body className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
       <Markdown>{content}</Markdown>
+      <ExportPdfButton title="学情分析报告" />
     </div>
   );
 }
@@ -436,17 +440,21 @@ export default function TaskInsightsPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        const newInsight = { id: data.id, content: data.content, version: data.version, createdAt: new Date().toISOString() };
-        setTaskClassInsight(newInsight);
-        setTaskClassInsightVersions((prev) => {
-          const updated = data.previousContent
-            ? [{ id: data.previousId, content: data.previousContent, version: data.version - 1, createdAt: "" }, newInsight]
-            : [newInsight];
-          return updated;
-        });
-        setTaskClassVersionIndex(0);
-        setExpandedTaskClass(true);
+        // ⛔ DO NOT REVERT to local version-list rebuild ([previousContent, newInsight], version = new-1).
+        // Why removed (2026-10-11): (1) in-place rebuild silently drops all historical versions
+        // from the UI — DB still has them, symptom was "versions missing until page refresh";
+        // (2) the rebuilt list puts the PREVIOUS version first, so index 0 highlighted the old
+        // version button while setTaskClassInsight(newInsight) showed the NEW content — version
+        // and content desynced until refresh.
+        // Current contract: generate → full refetch via fetchTaskInsights, which atomically sets
+        // taskClassInsight = versions[0] (latest, server returns version desc) and index = 0.
+        // Server data is the single source of truth. Same pattern as generateStudentInsight below.
+        // 🔗 RELATED: fetchTaskInsights (sets [0] + index 0), generatePCInsight class branch (same
+        // fix), src/app/api/tasks/[taskId]/insights/route.ts POST (returns only previousContent,
+        // NOT the full version list — insufficient for local rebuild).
         if (data.previousContent) setPreviousInsights((p) => ({ ...p, task_class: data.previousContent }));
+        await fetchTaskInsights(selectedClassId);
+        setExpandedTaskClass(true);
         MessagePlugin.success("班级学情洞察已生成");
       } else {
         const err = await res.json().catch(() => ({}));
@@ -505,16 +513,12 @@ export default function TaskInsightsPage() {
       });
       if (res.ok) {
         if (type === "class") {
-          const data = await res.json();
-          const newInsight = { id: data.id, content: data.content, version: data.version, createdAt: new Date().toISOString() };
-          setPcClassInsight(newInsight);
-          setPcClassInsightVersions((prev) => {
-            const updated = data.previousContent
-              ? [{ id: data.previousId, content: data.previousContent, version: data.version - 1, createdAt: "" }, newInsight]
-              : [newInsight];
-            return updated;
-          });
-          setPcClassVersionIndex(0);
+          // ⛔ DO NOT REVERT to local version-list rebuild — same desync bug as generateClassInsight:
+          // in-place rebuild drops historical versions from the UI and highlights the OLD version
+          // button (index 0 = previous in rebuilt list) while showing the NEW content.
+          // Generate → full refetch (fetchPCInsights atomically sets insight = versions[0] latest
+          // + index 0). 🔗 RELATED: fetchPCInsights (bottom of this file), generateClassInsight (same fix).
+          await fetchPCInsights(selectedPCId, selectedClassId);
         } else {
           const data = await res.json();
           // 生成后把新正文写入缓存，避免展开态卡片卡在「加载中」

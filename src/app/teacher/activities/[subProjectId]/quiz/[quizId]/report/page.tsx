@@ -2,6 +2,7 @@
 import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Markdown from "@/components/Markdown";
+import ExportPdfButton from "@/components/ExportPdfButton";
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -653,9 +654,22 @@ export default function QuizReportPage() {
               {aiReport ? (() => {
                   // 先剥离可能的 markdown 代码块标记
                   const cleanReport = stripMarkdownCodeBlock(aiReport);
+                  // ⛔ DO NOT ADD `<div` BACK to this HTML sniff. Why removed (2026-10-11):
+                  // text-format reports now legitimately contain `<div class="qc-chart">` chart
+                  // blocks (chart protocol → processChartBlocks → wrap() in report-charts.ts).
+                  // Matching '<div' misrouted those mixed reports into the iframe branch
+                  // (srcDoc renders Markdown source as raw HTML) → every Markdown line break /
+                  // heading collapsed into one blob; only the radar chart showed.
+                  // HTML-style reports always start with <!DOCTYPE / <html — guaranteed by
+                  // cleanInsightContent, which slices saved HTML docs to those markers.
+                  // Mixed Markdown + qc-chart content MUST go through the shared <Markdown>
+                  // component below, which natively renders qc-chart segments (with XSS blacklist).
+                  // 🔗 RELATED: src/components/Markdown.tsx (qc-chart contract + splitChartSegments),
+                  // src/lib/insight-clean.ts (HTML doc slicing), src/lib/report-charts.ts (wrap).
+                  // 🧪 MEASURED (DB 2026-10-11): all 5 quiz HTML-style reports have DOCTYPE/<html;
+                  // the 2 bare-'<div' reports are qc-chart mixed Markdown — this fix's exact targets.
                   const isHtml = cleanReport.includes('<!DOCTYPE') ||
-                    cleanReport.includes('<html') ||
-                    (cleanReport.includes('<div') && cleanReport.includes('</div>'));
+                    cleanReport.includes('<html');
 
                   return isHtml ? (
                     <div className="relative group">
@@ -681,8 +695,11 @@ export default function QuizReportPage() {
                       />
                     </div>
                   ) : (
-                    <div className="prose prose-sm max-w-none">
+                    // 文本型分支：data-insight-body 是 ExportPdfButton 的定位锚点，
+                    // 丢了该属性导出按钮静默失效。🔗 RELATED：src/components/ExportPdfButton.tsx
+                    <div data-insight-body className="prose prose-sm max-w-none">
                       <Markdown>{cleanReport}</Markdown>
+                      <ExportPdfButton title="作业 AI 分析报告" />
                     </div>
                   );
                 })() : (

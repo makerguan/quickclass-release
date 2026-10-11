@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Card, Select, Button, MessagePlugin, Tag } from "tdesign-react";
 import { RefreshIcon, UserIcon, ChartBarIcon, InfoCircleIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
+import ExportPdfButton from "@/components/ExportPdfButton";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import { usePromptPreview, PromptPreviewDialog } from "@/components/prompt-preview";
 import { formatInsightTime } from "@/lib/format-time";
@@ -46,9 +47,12 @@ function InsightContent({ content, className = "" }: { content: string; classNam
       </div>
     );
   }
+  // 文本型分支：data-insight-body 是 ExportPdfButton 的定位锚点（closest 向上查找），
+  // 丢了该属性导出按钮静默失效。🔗 RELATED：src/components/ExportPdfButton.tsx
   return (
-    <div className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
+    <div data-insight-body className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
       <Markdown>{content}</Markdown>
+      <ExportPdfButton title="学情分析报告" />
     </div>
   );
 }

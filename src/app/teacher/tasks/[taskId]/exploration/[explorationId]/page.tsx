@@ -5,6 +5,7 @@ import { useRouter, useParams } from "next/navigation";
 import { Button, Tag, Select, MessagePlugin, Dialog, Switch, InputNumber } from "tdesign-react";
 import { ArrowLeftIcon, ChartBarIcon, RefreshIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
+import ExportPdfButton from "@/components/ExportPdfButton";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import QuickFormDashboard, { type QfRecordItem, analyzeFields } from "@/components/exploration/QuickFormDashboard";
 import QuickFormRecordList from "@/components/exploration/QuickFormRecordList";
@@ -102,9 +103,12 @@ function InsightContent({ content, className = "" }: { content: string; classNam
       </div>
     );
   }
+  // 文本型分支：data-insight-body 是 ExportPdfButton 的定位锚点（closest 向上查找），
+  // 丢了该属性导出按钮静默失效。🔗 RELATED：src/components/ExportPdfButton.tsx
   return (
-    <div className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
+    <div data-insight-body className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
       <Markdown>{content}</Markdown>
+      <ExportPdfButton title="探究 AI 分析报告" />
     </div>
   );
 }
@@ -536,6 +540,10 @@ export default function ExplorationAnalysisPage() {
           setAiReport(null);
           setAiVersionIndex(0);
         }
+      } else {
+        // ⚠️ GOTCHA：if(res.ok) 必须带 else——无 else 会静默吞掉 500，老师生成成功后
+        // 版本列表拉取失败会停在旧列表，误以为生成没生效（2026-10-11 修复版本号不对应时补上）。
+        MessagePlugin.error("获取分析报告版本失败");
       }
     } catch { /* ignore */ }
   };
@@ -561,21 +569,21 @@ export default function ExplorationAnalysisPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        const newInsight: InsightVersion = {
-          id: data.id,
-          content: data.content,
-          version: data.version,
-          createdAt: data.createdAt,
-        };
-        setAiReportVersions((prev) => {
-          const updated = data.previousContent
-            ? [{ id: data.previousId, content: data.previousContent, version: data.version - 1, createdAt: "" }, newInsight]
-            : [newInsight];
-          return updated;
-        });
-        setAiVersionIndex(0);
-        setAiReport(newInsight);
-        MessagePlugin.success("AI 分析报告已生成");
+        // ⛔ DO NOT REVERT to local version-list rebuild ([previousContent, newInsight], version = new-1).
+        // Why removed (2026-10-11): (1) in-place rebuild silently drops all historical versions
+        // from the UI — DB still has them; symptom was "version buttons wrong until page refresh"
+        // (e.g. DB has v1+v2, after generating v3 only v2/v3 shown, v1 gone).
+        // (2) previous version's content came raw from DB without cleanInsightContent and with
+        // an empty createdAt, diverging from what GET returns after refresh.
+        // (3) `version = data.version - 1` is a guess, not the stored value.
+        // Server data is the single source of truth: refetch the full version list — it also
+        // selects the newest version (fetchAiVersions sets versions[0] + index 0).
+        // 🔗 RELATED: fetchAiVersions (refetch + select newest); same fix done the same day in
+        // src/app/teacher/tasks/[taskId]/insights/page.tsx (generateTaskClassInsight);
+        // src/app/api/exploration-activities/[id]/analysis/generate/route.ts POST returns only
+        // previousContent, NOT the full version list — insufficient for a local rebuild.
+        await fetchAiVersions(selectedClassId);
+        MessagePlugin.success(`AI 分析报告已生成（v${data.version}）`);
       } else {
         const err = await res.json().catch(() => ({}));
         MessagePlugin.error(err.error || "生成失败");
@@ -664,6 +672,26 @@ export default function ExplorationAnalysisPage() {
               恢复默认
             </Button>
           )}
+          {/* 提交统计自动刷新（2026-10-11 从顶部导航移入本 tab）：
+              轮询只刷新提交统计数据（refreshLiveData），放顶部会让人以为它也作用于 AI 报告等其他 tab。 */}
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-xs text-gray-500">自动刷新</span>
+            <Switch size="small" value={autoRefresh} onChange={(v) => setAutoRefresh(!!v)} />
+            {/* ⚠️ GOTCHA：默认 theme 是左右加减号（row），width 64 时两个按钮各占约 30px，
+                数字「15」被挤到只剩几像素、根本看不清；改用上下加减号（column）+ 加宽到 72 才能正常显示秒数。 */}
+            <InputNumber
+              size="small"
+              theme="column"
+              value={refreshSeconds}
+              min={5}
+              max={300}
+              step={5}
+              disabled={!autoRefresh}
+              onChange={(v) => setRefreshSeconds(Number(v) || 15)}
+              style={{ width: 72 }}
+            />
+            <span className="text-xs text-gray-400">秒</span>
+          </div>
         </div>
       );
 
@@ -1203,24 +1231,8 @@ export default function ExplorationAnalysisPage() {
             {lastUpdated && (
               <span className="text-xs text-gray-400">最后更新 {lastUpdated}</span>
             )}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">自动刷新</span>
-              <Switch size="small" value={autoRefresh} onChange={(v) => setAutoRefresh(!!v)} />
-              {/* ⚠️ GOTCHA：默认 theme 是左右加减号（row），width 64 时两个按钮各占约 30px，
-                  数字「15」被挤到只剩几像素、根本看不清；改用上下加减号（column）+ 加宽到 72 才能正常显示秒数。 */}
-              <InputNumber
-                size="small"
-                theme="column"
-                value={refreshSeconds}
-                min={5}
-                max={300}
-                step={5}
-                disabled={!autoRefresh}
-                onChange={(v) => setRefreshSeconds(Number(v) || 15)}
-                style={{ width: 72 }}
-              />
-              <span className="text-xs text-gray-400">秒</span>
-            </div>
+            {/* 2026-10-11：「自动刷新」开关+秒数已移入「统计信息」tab 的 QF 大屏工具栏 ——
+                轮询只刷提交统计数据，与 AI 报告等其他 tab 无关，控件应与被刷新内容同处一 tab。 */}
             <Button
               theme="default"
               variant="outline"
