@@ -4,7 +4,7 @@ import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
 import { aiQueue } from "@/lib/ai-queue";
 import { dbWrite } from "@/lib/db-queue";
-import { generateText } from "ai";
+import { generateText, streamText } from "ai";
 import {
   ANALYST_SYSTEM,
   buildTaskClassPrompt,
@@ -498,6 +498,132 @@ export async function POST(
         }).join("\n\n---\n\n");
       }
       return NextResponse.json({ prompt: promptText, dialogData });
+    }
+
+    // ------------------------------------------------------------
+    // ?stream=1 流式生成（试点：班级洞察）：复用 isPreview 模式只构建
+    // 提示词（不调 AI），然后 streamText 边生成边转发给前端（浮层实时
+    // 显示"正在生成 X 字"）；全文读完后照旧空内容检查 + cleanInsightContent
+    // + dbWrite 落库。不带 stream=1 的旧路径（下方非流式分支）行为不变。
+    // 注意：流无法像 coalesceGeneration 那样共享给第二个消费者，本分支
+    // 不做请求合并——前端浮层遮罩已挡住同页重复点击；跨标签页并发会
+    // 各生成一个版本，版本机制可容纳。客户端中途断开时消费循环中断，
+    // 落库被跳过，不会写入不完整数据。
+    // ------------------------------------------------------------
+    if (type === "class" && new URL(req.url).searchParams.get("stream") === "1") {
+      const prompt = await generateTaskClassInsightWithTemplate(chatModel, taskNormalized, classId, insightDataSource, effectivePrompt, {
+        insightLevel, classWordLimit: isHtmlOutput ? undefined : classWordLimit, starCount, requireStarRating, isHtmlOutput,
+      }, true);
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            await aiQueue.enqueue(async () => {
+              const { textStream } = streamText({
+                model: chatModel as Parameters<typeof streamText>[0]["model"],
+                system: ANALYST_SYSTEM,
+                messages: [{ role: "user", content: prompt }],
+                // 网关默认输出上限 4096 tokens（实测硬上限 65536）：不传时长报告会被截断
+                maxOutputTokens: 65536,
+              });
+              let full = "";
+              for await (const delta of textStream) {
+                full += delta;
+                controller.enqueue(encoder.encode(delta));
+              }
+              // 空内容检查（与非流式分支同一口径）
+              if (!full.trim()) throw new Error("AI 返回了空内容，请重试");
+              const cleanedContent = cleanInsightContent(full);
+              // 版本查询 + 写入作为一个原子段走 dbWrite 串行队列（与非流式分支同一口径）
+              await dbWrite(async () => {
+                const existingInsight = await prisma.aIInsight.findFirst({
+                  where: { classId, type: insightType, userId: null, scopeId: taskId },
+                  orderBy: { version: "desc" },
+                });
+                const version = (existingInsight?.version || 0) + 1;
+                await prisma.aIInsight.create({
+                  data: {
+                    type: insightType,
+                    classId,
+                    userId: null,
+                    scopeId: taskId,
+                    content: cleanedContent,
+                    version,
+                  },
+                });
+              });
+            });
+            controller.close();
+          } catch (e) {
+            console.error("Generate task insight (stream) error:", e);
+            // 客户端断开（关页/刷新）时流已取消，error() 会再抛——兜住即可；
+            // 前端收到流错误按"生成失败/中断"提示，断开场景全文未落库，无脏数据
+            try { controller.error(e); } catch { /* 流已被客户端取消 */ }
+          }
+        },
+      });
+      return new Response(stream, {
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+      });
+    }
+
+    // 同上的流式出口（第二期：学生洞察）：type=student + ?stream=1。与非流式
+    // 分支同一提示词函数（promptOnly 模式），落库 userId=studentId、scopeId=taskId。
+    // 同样不做请求合并；客户端中途断开时消费循环中断，落库被跳过，不会写入不完整数据。
+    if (type === "student" && new URL(req.url).searchParams.get("stream") === "1") {
+      const prompt = await generateTaskStudentInsightWithTemplate(chatModel, taskNormalized, classId, studentId, insightDataSource, effectivePrompt, {
+        insightLevel, studentWordLimit: isHtmlOutput ? undefined : studentWordLimit, starCount, requireStarRating, isHtmlOutput,
+      }, true);
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            await aiQueue.enqueue(async () => {
+              const { textStream } = streamText({
+                model: chatModel as Parameters<typeof streamText>[0]["model"],
+                system: ANALYST_SYSTEM,
+                messages: [{ role: "user", content: prompt }],
+                // 网关默认输出上限 4096 tokens（实测硬上限 65536）：不传时长报告会被截断
+                maxOutputTokens: 65536,
+              });
+              let full = "";
+              for await (const delta of textStream) {
+                full += delta;
+                controller.enqueue(encoder.encode(delta));
+              }
+              // 空内容检查（与非流式分支同一口径）
+              if (!full.trim()) throw new Error("AI 返回了空内容，请重试");
+              const cleanedContent = cleanInsightContent(full);
+              // 版本查询 + 写入作为一个原子段走 dbWrite 串行队列（与非流式分支同一口径）
+              await dbWrite(async () => {
+                const existingInsight = await prisma.aIInsight.findFirst({
+                  where: { classId, type: insightType, userId: studentId, scopeId: taskId },
+                  orderBy: { version: "desc" },
+                });
+                const version = (existingInsight?.version || 0) + 1;
+                await prisma.aIInsight.create({
+                  data: {
+                    type: insightType,
+                    classId,
+                    userId: studentId,
+                    scopeId: taskId,
+                    content: cleanedContent,
+                    version,
+                  },
+                });
+              });
+            });
+            controller.close();
+          } catch (e) {
+            console.error("Generate task student insight (stream) error:", e);
+            // 客户端断开（关页/刷新）时流已取消，error() 会再抛——兜住即可
+            try { controller.error(e); } catch { /* 流已被客户端取消 */ }
+          }
+        },
+      });
+      return new Response(stream, {
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+      });
     }
 
     // 同目标生成去重：同一（任务+班级+类型+学生）的生成进行中时，

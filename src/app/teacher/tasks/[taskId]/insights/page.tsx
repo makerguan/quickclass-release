@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   Button, Card, Select, Tag, Loading, MessagePlugin,
@@ -17,6 +17,7 @@ import TeacherLayout from "@/components/layout/TeacherLayout";
 import { usePromptPreview, PromptPreviewDialog } from "@/components/prompt-preview";
 import { formatInsightTime } from "@/lib/format-time";
 import { cleanInsightContent } from "@/lib/insight-clean";
+import { GenOverlay, useGenOverlay } from "@/components/GenOverlay";
 
 // ===== 辅助函数 =====
 
@@ -168,6 +169,9 @@ export default function TaskInsightsPage() {
   const [loadingStudentId, setLoadingStudentId] = useState<string | null>(null);
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
   const [batchAnalyzing, setBatchAnalyzing] = useState(false);
+  // 任一 AI 生成（课堂全班/个生、对话全班/个生）进行中：浮层无遮罩，所有生成
+  // 按钮统一 disabled 做视觉层防重复；数据层兜底是 generatingRef
+  const [generatingBusy, setGeneratingBusy] = useState(false);
   // 批量分析进度：done/total，显示在"一键分析全部"按钮上
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   // 学生学情分析版本切换：studentId -> 选中的版本在 versions 数组中的下标（0 表示最新）
@@ -377,9 +381,12 @@ export default function TaskInsightsPage() {
           completedPresets: [],
           lastActiveAt: null,
         })));
+        // 返回原始数据：生成回调用它在刷新结果里定位新版本 id（写正文缓存）
+        return data;
       }
     } catch { /* ignore */ }
     finally { setPcLoading(false); }
+    return null;
   };
 
   
@@ -403,9 +410,26 @@ export default function TaskInsightsPage() {
 
   // ===== AI 生成 =====
 
+  // 生成过程浮层（试点：全班洞察入口）。流式接口：首字符前显示文案+秒数（60s 切
+  // "数据量较大..."），首字符后显示真实字数。浮层为非阻塞三态（见 GenOverlay.tsx），
+  // 重复提交防护用 ref guard：state 闭包在同一渲染周期读不到新值，不可靠。
+  // 🔗 RELATED: src/components/GenOverlay.tsx（组件与 hook，先在 tasks/page.tsx 内联实现）
+  const { genOverlay, startGenOverlay, updateGenOverlay, stopGenOverlay } = useGenOverlay();
+  // 生成进行中标记（同步 ref）：课堂/对话层级的全部生成入口共用（页面同一时刻
+  // 只跑一个 AI 生成，浮层是全局单例）；state 闭包在同一渲染周期读不到新值，故用 ref
+  const generatingRef = useRef(false);
+  // 浮层非阻塞后用户可在生成期间切换班级；完成回调需区分「发起班级」与「当前班级」，
+  // 只有两者一致才刷新列表覆盖当前视图（切回原班时 useEffect 会自动重新拉取）
+  const selectedClassIdRef = useRef(selectedClassId);
+  useEffect(() => { selectedClassIdRef.current = selectedClassId; }, [selectedClassId]);
+  // 对话层级：生成完成回调需区分「发起的对话活动」与「当前选中的对话活动」
+  const selectedPCIdRef = useRef(selectedPCId);
+  useEffect(() => { selectedPCIdRef.current = selectedPCId; }, [selectedPCId]);
+
   // 检查下级报告完整度，如果缺失则弹对话框
   const checkAndGenerateClassInsight = async () => {
     if (!selectedClassId) return;
+    if (generatingRef.current) return; // 生成中不重复进入（也避免白弹缺失检查框）
     // 只有 TASK_INSIGHTS 模式才需要检查
     if (insightDataSource === "TASK_INSIGHTS") {
       const token = localStorage.getItem("token");
@@ -430,16 +454,36 @@ export default function TaskInsightsPage() {
 
   const generateClassInsight = async () => {
     if (!selectedClassId) return;
+    if (generatingRef.current) return; // 生成中不重复发起（按钮 disabled 只是视觉层，数据层兜底在此）
+    const originClassId = selectedClassId;
+    generatingRef.current = true;
+    setGeneratingBusy(true);
     setLoadingClassInsight(true);
+    startGenOverlay("AI 思考中...");
+    // 首 token 前的排队/思考期仍可能长达数十秒，60s 后切为真实状态提示
+    const hintTimer = setTimeout(() => updateGenOverlay("数据量较大，AI 仍在分析中..."), 60_000);
+    let received = 0;
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`/api/tasks/${taskId}/insights`, {
+      const res = await fetch(`/api/tasks/${taskId}/insights?stream=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ classId: selectedClassId, type: "class" }),
       });
-      if (res.ok) {
-        const data = await res.json();
+      const contentType = res.headers.get("content-type") || "";
+      if (res.ok && contentType.includes("text/plain")) {
+        // 流式：首字符到达 → "正在生成 X 字"（真实字数递增）；流结束 = 服务端已清理落库
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          if (received === 0) clearTimeout(hintTimer);
+          received = text.length;
+          updateGenOverlay(`正在生成 ${received.toLocaleString()} 字...`);
+        }
         // ⛔ DO NOT REVERT to local version-list rebuild ([previousContent, newInsight], version = new-1).
         // Why removed (2026-10-11): (1) in-place rebuild silently drops all historical versions
         // from the UI — DB still has them, symptom was "versions missing until page refresh";
@@ -452,16 +496,22 @@ export default function TaskInsightsPage() {
         // 🔗 RELATED: fetchTaskInsights (sets [0] + index 0), generatePCInsight class branch (same
         // fix), src/app/api/tasks/[taskId]/insights/route.ts POST (returns only previousContent,
         // NOT the full version list — insufficient for local rebuild).
-        if (data.previousContent) setPreviousInsights((p) => ({ ...p, task_class: data.previousContent }));
-        await fetchTaskInsights(selectedClassId);
-        setExpandedTaskClass(true);
-        MessagePlugin.success("班级学情洞察已生成");
+        if (selectedClassIdRef.current !== originClassId) {
+          // 生成期间用户已切到其他班级：不覆盖当前视图的数据（切回原班时 useEffect 自动拉取）
+          MessagePlugin.success("班级学情洞察已生成（已切换班级，切回后可查看）");
+        } else {
+          await fetchTaskInsights(originClassId);
+          setExpandedTaskClass(true);
+          MessagePlugin.success("班级学情洞察已生成");
+        }
       } else {
         const err = await res.json().catch(() => ({}));
         MessagePlugin.error(err.error || "生成洞察失败");
       }
-    } catch { MessagePlugin.error("网络错误"); }
-    finally { setLoadingClassInsight(false); }
+    } catch {
+      MessagePlugin.error(received > 0 ? "生成中断，内容未保存，请重试" : "生成失败，请重试");
+    }
+    finally { clearTimeout(hintTimer); stopGenOverlay(); generatingRef.current = false; setGeneratingBusy(false); setLoadingClassInsight(false); }
   };
 
   const generateStudentInsight = async (studentId: string) => {
@@ -470,26 +520,56 @@ export default function TaskInsightsPage() {
       MessagePlugin.warning("批量分析进行中，请等待完成后再单独分析");
       return;
     }
+    if (generatingRef.current) {
+      MessagePlugin.warning("已有分析任务进行中，请等待完成");
+      return;
+    }
+    const originClassId = selectedClassId;
+    generatingRef.current = true;
+    setGeneratingBusy(true);
     setLoadingStudentId(studentId);
     setExpandedStudentId(studentId);
+    startGenOverlay("AI 思考中...");
+    // 首 token 前的排队/思考期可能长达数十秒，60s 后切为真实状态提示
+    const hintTimer = setTimeout(() => updateGenOverlay("数据量较大，AI 仍在分析中..."), 60_000);
+    let received = 0;
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`/api/tasks/${taskId}/insights`, {
+      const res = await fetch(`/api/tasks/${taskId}/insights?stream=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ classId: selectedClassId, type: "student", studentId }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.previousContent) setPreviousInsights((p) => ({ ...p, [studentId]: data.previousContent }));
-        await fetchTaskInsights(selectedClassId);
-        MessagePlugin.success("学生分析已生成");
+      const contentType = res.headers.get("content-type") || "";
+      if (res.ok && contentType.includes("text/plain")) {
+        // 流式：首字符到达 → "正在生成 X 字"（真实字数递增）；流结束 = 服务端已清理落库
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          if (received === 0) clearTimeout(hintTimer);
+          received = text.length;
+          updateGenOverlay(`正在生成 ${received.toLocaleString()} 字...`);
+        }
+        // 生成 → 全量刷新（与 generateClassInsight 同一契约，禁止本地重建版本列表）
+        if (selectedClassIdRef.current !== originClassId) {
+          // 生成期间用户已切到其他班级：不覆盖当前视图的数据（切回原班时 useEffect 自动拉取）
+          MessagePlugin.success("学生分析已生成（已切换班级，切回后可查看）");
+        } else {
+          await fetchTaskInsights(originClassId);
+          MessagePlugin.success("学生分析已生成");
+        }
       } else {
         const err = await res.json().catch(() => ({}));
         MessagePlugin.error(err.error || "生成分析失败");
       }
-    } catch { MessagePlugin.error("网络错误"); }
-    finally { setLoadingStudentId(null); }
+    } catch {
+      MessagePlugin.error(received > 0 ? "生成中断，内容未保存，请重试" : "生成失败，请重试");
+    }
+    finally { clearTimeout(hintTimer); stopGenOverlay(); generatingRef.current = false; setGeneratingBusy(false); setLoadingStudentId(null); }
   };
 
   const generatePCInsight = async (type: "class" | "student", studentId?: string) => {
@@ -499,41 +579,77 @@ export default function TaskInsightsPage() {
       return;
     }
     if (type === "student" && !studentId) return;
+    if (generatingRef.current) {
+      MessagePlugin.warning("已有分析任务进行中，请等待完成");
+      return;
+    }
+    const originPCId = selectedPCId;
+    const originClassId = selectedClassId;
+    generatingRef.current = true;
+    setGeneratingBusy(true);
     if (type === "student") {
       setLoadingStudentId(studentId!);
     } else {
       setLoadingClassInsight(true);
     }
+    startGenOverlay("AI 思考中...");
+    // 首 token 前的排队/思考期可能长达数十秒，60s 后切为真实状态提示
+    const hintTimer = setTimeout(() => updateGenOverlay("数据量较大，AI 仍在分析中..."), 60_000);
+    let received = 0;
+    let fullText = "";
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`/api/preset-conversations/${selectedPCId}/insights`, {
+      const res = await fetch(`/api/preset-conversations/${selectedPCId}/insights?stream=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ classId: selectedClassId, type, ...(studentId ? { studentId } : {}) }),
       });
-      if (res.ok) {
-        if (type === "class") {
-          // ⛔ DO NOT REVERT to local version-list rebuild — same desync bug as generateClassInsight:
-          // in-place rebuild drops historical versions from the UI and highlights the OLD version
-          // button (index 0 = previous in rebuilt list) while showing the NEW content.
-          // Generate → full refetch (fetchPCInsights atomically sets insight = versions[0] latest
-          // + index 0). 🔗 RELATED: fetchPCInsights (bottom of this file), generateClassInsight (same fix).
-          await fetchPCInsights(selectedPCId, selectedClassId);
-        } else {
-          const data = await res.json();
-          // 生成后把新正文写入缓存，避免展开态卡片卡在「加载中」
-          if (data?.id) {
-            setStudentContentCache((prev) => ({ ...prev, [data.id]: data.content || "" }));
-          }
-          await fetchPCInsights(selectedPCId, selectedClassId);
+      const contentType = res.headers.get("content-type") || "";
+      if (res.ok && contentType.includes("text/plain")) {
+        // 流式：首字符到达 → "正在生成 X 字"（真实字数递增）；流结束 = 服务端已清理落库
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          if (received === 0) clearTimeout(hintTimer);
+          received = text.length;
+          updateGenOverlay(`正在生成 ${received.toLocaleString()} 字...`);
         }
-        MessagePlugin.success("分析已生成");
+        if (!text.trim()) throw new Error("AI 返回了空内容，请重试");
+        fullText = text;
+        // ⛔ DO NOT REVERT to local version-list rebuild — same desync bug as generateClassInsight:
+        // in-place rebuild drops historical versions from the UI and highlights the OLD version
+        // button (index 0 = previous in rebuilt list) while showing the NEW content.
+        // Generate → full refetch (fetchPCInsights atomically sets insight = versions[0] latest
+        // + index 0). 🔗 RELATED: fetchPCInsights (bottom of this file), generateClassInsight (same fix).
+        // 生成期间用户切走班级/对话活动时不覆盖当前视图（切回时 useEffect 自动拉取）
+        if (selectedPCIdRef.current !== originPCId || selectedClassIdRef.current !== originClassId) {
+          MessagePlugin.success("分析已生成（已切换视图，切回后可查看）");
+        } else {
+          const data = await fetchPCInsights(originPCId, originClassId);
+          if (type === "student" && studentId) {
+            // 流式响应是纯文本、无 insight id；从刷新结果定位该学生的最新版本，
+            // 把刚看到的全文写入正文缓存，避免展开卡片再发一次按需拉取
+            const fresh = (data?.studentInsights || []).filter((i: PCInsight) => i.userId === studentId)[0];
+            if (fresh?.id) setStudentContentCache((prev) => ({ ...prev, [fresh.id]: fullText }));
+          }
+          MessagePlugin.success("分析已生成");
+        }
       } else {
         const err = await res.json().catch(() => ({}));
         MessagePlugin.error(err.error || "生成失败");
       }
-    } catch { MessagePlugin.error("网络错误"); }
-    finally { 
+    } catch {
+      MessagePlugin.error(received > 0 ? "生成中断，内容未保存，请重试" : "生成失败，请重试");
+    }
+    finally {
+      clearTimeout(hintTimer);
+      stopGenOverlay();
+      generatingRef.current = false;
+      setGeneratingBusy(false);
       if (type === "student") {
         setLoadingStudentId(null);
       } else {
@@ -723,20 +839,6 @@ export default function TaskInsightsPage() {
     return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
   };
 
-  const formatLastActive = (dateStr: string | null) => {
-    if (!dateStr) return "未活跃";
-    const d = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    if (diffMins < 60) return `${diffMins} 分钟前`;
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours} 小时前`;
-    const diffDays = Math.floor(diffHours / 24);
-    if (diffDays < 7) return `${diffDays} 天前`;
-    return formatDate(dateStr);
-  };
-
   const currentClass = classes[0];
   const pcOptions = currentClass?.subProjects.flatMap((sp) =>
     sp.presetConversations.map((pc) => ({ label: `${sp.title} / ${pc.title}`, value: pc.id }))
@@ -917,6 +1019,7 @@ export default function TaskInsightsPage() {
                         </div>
                         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                           <Button theme="primary" variant="text" size="small" loading={loadingClassInsight || promptPreviewLoading}
+                            disabled={generatingBusy}
                             onClick={() => withPromptPreview(
                               () => selectedPCId && selectedClassId ? {
                                 endpoint: `/api/preset-conversations/${selectedPCId}/insights`,
@@ -966,7 +1069,7 @@ export default function TaskInsightsPage() {
                                 () => batchAnalyzeAllStudents()
                               );
                             }}
-                            disabled={pcStudents.filter((s) => s.convCount > 0).length === 0}
+                            disabled={generatingBusy || pcStudents.filter((s) => s.convCount > 0).length === 0}
                           >
                             {batchAnalyzing ? `分析中 ${batchProgress.done}/${batchProgress.total}` : "一键分析全部"}
                           </Button>
@@ -1042,6 +1145,7 @@ export default function TaskInsightsPage() {
                                   {hasConv && (
                                     <>
                                       <Button theme="primary" variant="text" size="small" loading={isAnalyzing}
+                                        disabled={generatingBusy}
                                         onClick={(e) => { e.stopPropagation(); withPromptPreview(
                                           () => selectedPCId && selectedClassId ? {
                                             endpoint: `/api/preset-conversations/${selectedPCId}/insights`,
@@ -1139,6 +1243,7 @@ export default function TaskInsightsPage() {
                         </Button>
                       )}
                       <Button theme="primary" size="small" loading={loadingClassInsight || promptPreviewLoading}
+                        disabled={generatingBusy}
                         icon={!loadingClassInsight ? <ChartBarIcon /> : undefined}
                         onClick={() => withPromptPreview(
                           () => taskId && selectedClassId ? {
@@ -1200,7 +1305,7 @@ export default function TaskInsightsPage() {
                             () => batchAnalyzeAllStudents()
                           );
                         }}
-                        disabled={currentClass.students.filter((s) => s.convCount > 0).length === 0}
+                        disabled={generatingBusy || currentClass.students.filter((s) => s.convCount > 0).length === 0}
                       >
                         {batchAnalyzing ? `分析中 ${batchProgress.done}/${batchProgress.total}` : "一键分析全部"}
                       </Button>
@@ -1227,7 +1332,7 @@ export default function TaskInsightsPage() {
                               {ins && <Tag theme="success" variant="light" size="small">V{ins.version}</Tag>}
                               {!hasConv && <Tag theme="default" variant="outline" size="small">无对话</Tag>}
                               {hasConv && !ins && !requireStarRating && <span className="text-xs text-[#BBBBBB]">未评分</span>}
-                              {hasConv && <span className="text-xs text-[#63666F]">{formatLastActive(student.lastActiveAt)}</span>}
+                              {/* 最后活跃时间已移除（对齐对话活动层级）：它跟在 V 版本号后面，常被误读为版本生成时间（2026-10-11 用户反馈）；如需恢复，数据源是 student.lastActiveAt */}
                               {versions.length > 1 && (
                                 <div className="flex items-center gap-1 ml-1 pl-2 border-l border-gray-200">
                                   <span className="text-xs text-gray-400">版本：</span>
@@ -1266,6 +1371,7 @@ export default function TaskInsightsPage() {
                               {hasConv && (
                                 <>
                                   <Button theme="primary" variant="text" size="small" loading={isLoading}
+                                    disabled={generatingBusy}
                                     onClick={(e) => { e.stopPropagation(); withPromptPreview(
                                       () => taskId && selectedClassId ? {
                                         endpoint: `/api/tasks/${taskId}/insights`,
@@ -1526,5 +1632,6 @@ export default function TaskInsightsPage() {
       </Dialog>
     </>
   );
-  return <TeacherLayout>{mainContent}</TeacherLayout>;
+  // 生成过程浮层挂在主内容分支即可：loading/错误分支不触发生成
+  return <TeacherLayout>{mainContent}<GenOverlay {...genOverlay} /></TeacherLayout>;
 }

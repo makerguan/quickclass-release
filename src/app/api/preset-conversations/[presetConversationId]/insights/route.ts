@@ -4,7 +4,7 @@ import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
 import { aiQueue } from "@/lib/ai-queue";
 import { dbWrite } from "@/lib/db-queue";
-import { generateText } from "ai";
+import { generateText, streamText } from "ai";
 import {
   ANALYST_SYSTEM,
   buildConversationClassPrompt,
@@ -316,6 +316,89 @@ export async function POST(
         },
       },
     } as any;
+
+    // ------------------------------------------------------------
+    // ?stream=1 流式生成（第二期：对话活动班级/学生洞察）：与 tasks insights
+    // 路由同一模式——promptOnly 构建提示词（不调 AI）+ streamText 边生成边转发
+    // （前端浮层实时显示"正在生成 X 字"）；全文读完后照旧空内容检查 +
+    // cleanInsightContent + dbWrite 落库。不带 stream=1 的旧路径（下方非流式
+    // 分支）行为不变。不做请求合并；客户端中途断开时消费循环中断，落库被跳过，
+    // 不会写入不完整数据。
+    // ------------------------------------------------------------
+    if (new URL(req.url).searchParams.get("stream") === "1") {
+      let prompt: string;
+      if (effectivePrompt) {
+        const classConfig = { insightLevel, classWordLimit: isHtmlOutput ? 0 : classWordLimit, starCount, isHtmlOutput };
+        const studentConfig = { insightLevel, studentWordLimit: isHtmlOutput ? undefined : studentWordLimit, classWordLimit: isHtmlOutput ? undefined : classWordLimit, starCount, requireStarRating };
+        prompt = type === "class"
+          ? await generatePCClassInsightWithTemplate(chatModel, pcNormalized, classId, effectivePrompt, classConfig, true)
+          : await generatePCStudentInsightWithTemplate(chatModel, pcNormalized, classId, studentId!, effectivePrompt, studentConfig, true);
+      } else {
+        prompt = type === "class"
+          ? await generatePCClassInsight(chatModel, pcNormalized, classId, null, {
+            insightLevel, classWordLimit: classWordLimit ?? undefined, starCount
+          }, true)
+          : await generatePCStudentInsight(chatModel, pcNormalized, classId, studentId!, null, {
+            insightLevel, studentWordLimit: studentWordLimit ?? undefined, classWordLimit: classWordLimit ?? undefined, starCount, requireStarRating
+          }, true);
+      }
+      const pcInsightType = type === "class" ? "pc_class" : "pc_student";
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            await aiQueue.enqueue(async () => {
+              const { textStream } = streamText({
+                model: chatModel as Parameters<typeof streamText>[0]["model"],
+                system: ANALYST_SYSTEM,
+                messages: [{ role: "user", content: prompt }],
+                // 网关默认输出上限 4096 tokens（实测硬上限 65536）：不传时长报告会被截断
+                maxOutputTokens: 65536,
+              });
+              let full = "";
+              for await (const delta of textStream) {
+                full += delta;
+                controller.enqueue(encoder.encode(delta));
+              }
+              // 空内容检查（与非流式分支同一口径）
+              if (!full.trim()) throw new Error("AI 返回了空内容，请重试");
+              const cleanedContent = cleanInsightContent(full);
+              // 版本查询 + 写入作为一个原子段走 dbWrite 串行队列（与非流式分支同一口径）
+              await dbWrite(async () => {
+                const existing = await prisma.aIInsight.findFirst({
+                  where: {
+                    classId,
+                    type: pcInsightType,
+                    scopeId: presetConversationId,
+                    ...(type === "student" ? { userId: studentId } : { userId: null }),
+                  },
+                  orderBy: { version: "desc" },
+                });
+                const version = (existing?.version || 0) + 1;
+                await prisma.aIInsight.create({
+                  data: {
+                    type: pcInsightType,
+                    classId,
+                    userId: type === "student" ? studentId : null,
+                    scopeId: presetConversationId,
+                    content: cleanedContent,
+                    version,
+                  },
+                });
+              });
+            });
+            controller.close();
+          } catch (e) {
+            console.error("Generate PC insight (stream) error:", e);
+            // 客户端断开（关页/刷新）时流已取消，error() 会再抛——兜住即可
+            try { controller.error(e); } catch { /* 流已被客户端取消 */ }
+          }
+        },
+      });
+      return new Response(stream, {
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+      });
+    }
 
 let content: string;
 

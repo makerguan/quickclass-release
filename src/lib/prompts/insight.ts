@@ -22,10 +22,15 @@ import type { BuildConversationClassParams, BuildConversationStudentParams, Buil
 // ─────────────────────────────────────────────
 
 export interface InsightConstraints {
+  /**
+   * 指数评价开关。true = 学生分析只输出 6-10 个 ★、不写报告正文
+   * （产品决策 2026-10-11 用户拍板："无论网页版还是文本版，启用指数就只算星星"）。
+   * ⛔ DO NOT ADD REPORT GENERATION BACK WHEN THIS IS TRUE。
+   */
   requireStarRating: boolean;
   studentWordLimit?: number | null;
   classWordLimit?: number | null;
-  /** 生成 HTML 输出时跳过字数限制和 Markdown 格式约束 */
+  /** 生成 HTML 输出时跳过字数限制和 Markdown 格式约束（requireStarRating=true 时整段短路，不生效） */
   isHtmlOutput?: boolean;
 }
 
@@ -103,22 +108,74 @@ export function buildChartPolicySection(templateContent?: string): string {
 }
 
 /**
+ * 学生分析的"指数模式"强约束段（只输出 ★，不写报告）。
+ * 📐 CONTRACT：单一定义，buildConstraintsSection 两处引用（顶部短路 + 非 HTML 分支），
+ * 改星星数量区间/措辞必须改这一处，禁止复制字面量。
+ *
+ * ⚠️ GOTCHA（2026-10-11 实测）：HTML 型模板正文写着"生成 HTML 可视化报告"时，
+ * 仅靠"只输出星星、禁止其他文字"会被模板正文压过——AI 仍生成 9000 字符完整报告。
+ * 必须显式声明"忽略上文模板的输出格式要求 + 本规则最高优先级"，实测才服从。
+ */
+const STAR_ONLY_SECTION = `## 评分输出规则（最高优先级，强制）
+本次只做指数评分，不生成任何报告。
+1. 忽略上文模板中关于输出形态的一切要求（包括"生成 HTML 网页报告/网页文件/图表"等），模板内容只作为评分维度参考
+2. 你的全部输出必须只有一行五角星（★），数量 6-10 个，例如：★★★★★★（6个星）到 ★★★★★★★★★★（10个星）
+3. 禁止输出 HTML、Markdown、JSON、解释文字、标题、换行说明等任何其他内容
+4. 星星数量代表本次对话整体表现评分`;
+
+/**
  * 根据约束类型构建约束段落（追加到提示词末尾）
  * 当 isHtmlOutput 为 true 时，跳过字数限制和输出格式约束
+ *
+ * 指数模式（type=student 且 requireStarRating=true）在最前面短路返回 STAR_ONLY_SECTION：
+ * HTML 分支与报告/字数/格式约束全部跳过——产品决策（2026-10-11 用户拍板）：
+ * "无论网页版还是文本版，启用指数就只算星星，不写报告"。
+ * 实测（2026-10-11）：此前 HTML 模板 + 指数模式仍生成 8998 字符完整 HTML 报告落库，
+ * 而前端学情页在 requireStarRating=true 时隐藏正文展开区（tasks/[taskId]/insights/page.tsx
+ * 学生行 isExpanded && !requireStarRating），报告生成即扔，浪费约 1-2 分钟/人。
  *
  * templateContent（可选）：教师模板原文，用于判断模板是否要求插图——
  * 要求 → 注入图表协议；未要求 → 注入自发画图禁令（分析 AI 有自发画图倾向，见 CHART_PROTOCOL_SECTION 注释）。
  * 不传时视为未要求（老兼容链路 getWordLimitPrompt 的硬编码模板均无图表概念，注入禁令安全）。
+ *
+ * 🔗 RELATED：前端指数解析 tasks/[taskId]/insights/page.tsx 与
+ * preset-conversations/[id]/insights/route.ts GET 的 parseStarCount（从落库正文解析 ★）；
+ * 前端正文隐藏条件 tasks/[taskId]/insights/page.tsx 学生行（指数模式仍只显示指数星）。
  */
 export function buildConstraintsSection(
   type: "student" | "class",
   constraints: InsightConstraints,
   templateContent?: string
 ): string {
+  // ⛔ DO NOT REVERT：指数模式必须先于 isHtmlOutput 分支短路。
+  // 历史教训：此前 HTML 分支在指数模式下仍返回"报告 + 末尾★"约束，AI 生成
+  // 8998 字符完整报告落库（库中 2026-10-11 前的 pc_student 记录可证），前端却
+  // 只显示星星。现在短路后 AI 只输出一行 ★，落库即指数，parseStarCount 照常解析。
+  if (type === "student" && constraints.requireStarRating) {
+    return STAR_ONLY_SECTION;
+  }
+
   if (constraints.isHtmlOutput) {
-    // HTML 输出跳过星星/字数/Markdown 约束，但图表协议必须注入：
+    // HTML 输出跳过字数/Markdown 约束，但图表协议必须注入：
     // HTML 型模板未必带示例块，AI 仍会自发画图，协议是渲染成功的唯一保障
-    return CHART_PROTOCOL_SECTION(true);
+    // ⚠️ GOTCHA（2026-10-11）：星星评分不能跟着跳过——前端学生行指数由
+    // parseStarCount(content) 从正文字面 ★ 实时解析（AIInsight 无 starCount
+    // 落库字段），此前 HTML 分支整段 return 后，HTML 型模板的学生报告全部
+    // 无 ★，课堂学情页学生行指数全空（对话活动链路 config 不传 isHtmlOutput
+    // 故一直正常，仅课堂 HTML 型模板必现）。student 报告必须在可见位置附加
+    // 一行纯文本 ★ 评分。
+    // （2026-10-11 起 requireStarRating=true 时已在函数开头短路返回 STAR_ONLY_SECTION，
+    // 本 HTML 分支只会被"HTML 模板 + 未启用指数"走到，报告+末尾★ 行为保持不变。）
+    // 🔗 RELATED：tasks/[taskId]/insights/route.ts GET 的 parseStarCount、
+    // preset-conversations/[id]/insights/route.ts GET 同名函数（同一解析口径）。
+    const starSection = type === "student"
+      ? `
+
+## 评分输出规则（强制）
+报告末尾（</body> 标签之前）必须附加一行可见的五角星评分，例如：★★★★★★（6 个）到 ★★★★★★★★★★（10 个）。
+星星数量代表本次分析整体表现评分；这一行必须是纯文本 ★ 字符（禁止用 CSS、图标或图片实现），星星前后禁止添加说明文字。`
+      : "";
+    return CHART_PROTOCOL_SECTION(true) + starSection;
   }
 
   const parts: string[] = [];
@@ -126,10 +183,11 @@ export function buildConstraintsSection(
   // 图表意图分流：要求插图 → 协议；没要求 → 禁令（防纯文本报告里出现系统不认识的 JSON 图表原文）
   parts.push(buildChartPolicySection(templateContent));
 
-  // 星星评分约束
+  // 星星评分约束（指数模式已在函数开头短路，这里 requireStarRating 恒为 false，
+  // 保留原分支仅为类型完整性；约束文本与顶部短路共用 STAR_ONLY_SECTION 单一定义）
   if (type === "student") {
     if (constraints.requireStarRating) {
-      parts.push(`## 评分输出规则（强制）\n学生分析必须按以下规则输出：\n1. 只输出 6-10 个五角星（★），禁止输出任何其他文字\n2. 示例：★★★★★★（6个星）到 ★★★★★★★★★★（10个星）\n3. 星星数量代表本次对话整体表现评分\n4. 禁止在星星前后添加任何说明文字`);
+      parts.push(STAR_ONLY_SECTION);
     } else {
       parts.push(`## 评分输出规则\n学生分析报告末尾必须附加 6-10 个五角星（★）评分，例如：★★★★★★\n星星数量代表本次对话整体表现评分。`);
     }
