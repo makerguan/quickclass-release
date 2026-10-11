@@ -2,8 +2,26 @@
 
 import { useState, useEffect, useRef } from "react";
 import { Button, MessagePlugin } from "tdesign-react";
-import { Robot2FilledIcon } from "tdesign-icons-react";
 import SpeechControls from "@/components/speech/SpeechControls";
+
+// 可爱的 AI 学伴机器人图标（与 iframe 内伴学浮窗保持一致）
+const AiCompanionRobotIcon = ({ size = "14px", className = "" }: { size?: string; className?: string }) => (
+  <svg
+    viewBox="0 0 24 24"
+    width={size}
+    height={size}
+    fill="currentColor"
+    aria-hidden="true"
+    className={className}
+  >
+    <path d="M12 2C12.55 2 13 2.45 13 3V4.07C16.39 4.55 19.04 7.06 19.82 10.36C20.21 10.49 20.5 10.85 20.5 11.29V13.71C20.5 14.26 20.05 14.71 19.5 14.71H18.97C18.46 18.11 15.53 20.71 12 20.71C8.47 20.71 5.54 18.11 5.03 14.71H4.5C3.95 14.71 3.5 14.26 3.5 13.71V11.29C3.5 10.85 3.79 10.49 4.18 10.36C4.96 7.06 7.61 4.55 11 4.07V3C11 2.45 11.45 2 12 2Z" />
+    <circle cx="8.8" cy="11" r="1.6" fill="white" />
+    <circle cx="15.2" cy="11" r="1.6" fill="white" />
+    <circle cx="8.8" cy="11" r="0.7" fill="currentColor" />
+    <circle cx="15.2" cy="11" r="0.7" fill="currentColor" />
+    <path d="M9.2 14.3C9.2 14.3 10.4 15.6 12 15.6C13.6 15.6 14.8 14.3 14.8 14.3" stroke="white" strokeWidth="1.2" strokeLinecap="round" fill="none" />
+  </svg>
+);
 import { stopSpeaking } from "@/lib/speech";
 
 interface ExplorationPanelProps {
@@ -228,7 +246,7 @@ export default function ExplorationPanel({
           <span className="text-sm font-medium text-[#1A1A1A]">互动探究</span>
           {aiCompanionOn && (
             <span className="text-xs text-orange-600 bg-orange-50 px-2 py-0.5 rounded inline-flex items-center gap-1">
-              <Robot2FilledIcon size="14px" className="text-orange-500" />
+              <AiCompanionRobotIcon size="14px" className="text-orange-500" />
               AI伴学已开启
             </span>
           )}

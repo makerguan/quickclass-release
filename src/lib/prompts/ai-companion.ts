@@ -40,8 +40,8 @@ function loadKatexAssets(): { js: string; css: string; available: boolean } {
 const katexAssets = loadKatexAssets();
 
 // AI伴学机器人图标（内联 SVG，注入到 iframe 使用）
-// 与 ExplorationPanel.tsx 的 Robot2FilledIcon 保持一致，可爱圆头笑脸风格。
-const AI_COMPANION_ROBOT_SVG = `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M9 11.5C9.83 11.5 10.5 12.17 10.5 13S9.83 14.5 9 14.5H8.25C7.42 14.5 6.75 13.83 6.75 13S7.42 11.5 8.25 11.5H9Z"/><path d="M15 11.5C15.83 11.5 16.5 12.17 16.5 13S15.83 14.5 15 14.5H14.25C13.42 14.5 12.75 13.83 12.75 13S13.42 11.5 14.25 11.5H15Z"/><path d="M12 0C13.1 0 14 0.9 14 2C14 2.74 13.6 3.38 13 3.73V5C17.28 5 20.87 7.99 21.78 12H22C23.1 12 24 12.9 24 14S23.1 16 22 16H21.78C20.87 20.01 17.28 23 13 23H11C6.72 23 3.13 20.01 2.22 16H2C0.9 16 0 15.1 0 14S0.9 12 2 12H2.22C3.13 7.99 6.72 5 11 5V3.73C10.4 3.38 10 2.74 10 2C10 0.9 10.9 0 12 0ZM12 8.25C9.13 8.25 7.32 9.21 6.29 10.66C5.32 12.05 5.21 13.7 5.27 14.82C5.36 16.36 6.71 17.25 8.01 17.25H15.99C17.29 17.25 18.63 16.36 18.73 14.82C18.79 13.7 18.68 12.05 17.7 10.66C16.68 9.21 14.87 8.25 12 8.25Z"/></svg>`;
+// 与 ExplorationPanel.tsx 保持一致：圆头、大眼睛、微笑的可爱风格，更适合学生认知。
+const AI_COMPANION_ROBOT_SVG = `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M12 2C12.55 2 13 2.45 13 3V4.07C16.39 4.55 19.04 7.06 19.82 10.36C20.21 10.49 20.5 10.85 20.5 11.29V13.71C20.5 14.26 20.05 14.71 19.5 14.71H18.97C18.46 18.11 15.53 20.71 12 20.71C8.47 20.71 5.54 18.11 5.03 14.71H4.5C3.95 14.71 3.5 14.26 3.5 13.71V11.29C3.5 10.85 3.79 10.49 4.18 10.36C4.96 7.06 7.61 4.55 11 4.07V3C11 2.45 11.45 2 12 2Z"/><circle cx="8.8" cy="11" r="1.6" fill="white"/><circle cx="15.2" cy="11" r="1.6" fill="white"/><circle cx="8.8" cy="11" r="0.7" fill="currentColor"/><circle cx="15.2" cy="11" r="0.7" fill="currentColor"/><path d="M9.2 14.3C9.2 14.3 10.4 15.6 12 15.6C13.6 15.6 14.8 14.3 14.8 14.3" stroke="white" stroke-width="1.2" stroke-linecap="round" fill="none"/></svg>`;
 
 // （历史机制退役 2026-09）曾用 AI_COMPANION_VERSION 版本号识别库里 HTML 的伴学注入新旧，
 // 读取时「版本一致直接放行、不一致剥旧注新」。现读取路径（renderExplorationHtml）入口
@@ -125,10 +125,14 @@ export const aiCompanionCSS = `
 }
 #ai-companion-root #ac-input:focus { border-color: #f97316; }
 #ai-companion-root #ac-send {
-  width: 36px; height: 36px; border-radius: 50%;
-  background: #f97316; color: white; border: none;
+  width: 36px; height: 36px; min-width: 36px; min-height: 36px;
+  max-width: 36px; max-height: 36px;
+  padding: 0; border: none; border-radius: 50%;
+  box-sizing: border-box; aspect-ratio: 1;
+  overflow: hidden; clip-path: circle(50%);
+  background: #f97316; color: white;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
-  font-size: 16px; flex-shrink: 0; transition: background 0.2s;
+  flex-shrink: 0; transition: background 0.2s;
 }
 #ai-companion-root #ac-send:hover:not(:disabled) { background: #ea580c; }
 #ai-companion-root #ac-send:disabled { background: #d1d5db; cursor: not-allowed; }
@@ -192,6 +196,14 @@ export const aiCompanionCSS = `
 #ai-companion-root #ai-companion-panel.open { display: flex !important; }
 #ai-companion-root #ac-messages { display: flex !important; flex-direction: column !important; flex: 1 !important; overflow-y: auto !important; }
 #ai-companion-root #ac-input-area { display: flex !important; }
+#ai-companion-root #ac-send {
+  width: 36px !important; height: 36px !important;
+  min-width: 36px !important; min-height: 36px !important;
+  max-width: 36px !important; max-height: 36px !important;
+  padding: 0 !important; border-radius: 50% !important;
+  aspect-ratio: 1 !important; flex-shrink: 0 !important;
+  overflow: hidden !important; clip-path: circle(50%) !important;
+}
 `.trim();
 
 /**
@@ -222,7 +234,9 @@ export const aiCompanionHTML = `
   </div>
   <div id="ac-input-area">
     <textarea id="ac-input" rows="1" placeholder="输入你的问题..." maxlength="500"></textarea>
-    <button id="ac-send" aria-label="发送">➤</button>
+    <button id="ac-send" aria-label="发送" style="width:36px;height:36px;padding:0;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M3 12l18-9v18L3 12z"/></svg>
+    </button>
   </div>
 </div>
 </div>
