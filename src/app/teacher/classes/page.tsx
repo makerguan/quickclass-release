@@ -16,7 +16,7 @@ import {
   Tooltip,
 } from "tdesign-react";
 import { copyText } from "@/lib/clipboard";
-import { AddIcon, ShareIcon, CopyIcon, DeleteIcon, CheckCircleIcon, UserIcon, UploadIcon, FileIcon } from "tdesign-icons-react";
+import { AddIcon, ShareIcon, CopyIcon, DeleteIcon, CheckCircleIcon, UserIcon, UploadIcon, FileIcon, EditIcon } from "tdesign-icons-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import * as XLSX from "xlsx";
 
@@ -46,6 +46,10 @@ export default function TeacherClassesPage() {
   const [importText, setImportText] = useState("");
   const [importLoading, setImportLoading] = useState(false);
   const [editOpenInviteCode, setEditOpenInviteCode] = useState(false);
+  const [renameVisible, setRenameVisible] = useState(false);
+  const [renameClass, setRenameClass] = useState<ClassItem | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameLoading, setRenameLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -191,6 +195,57 @@ export default function TeacherClassesPage() {
       }
     } catch {
       MessagePlugin.error("网络错误");
+    }
+  };
+
+  // 📐 CONTRACT: 重命名只提交 { name }，绝不能把整个班级对象一起发。
+  // 为什么：PUT /api/classes/[classId]（src/app/api/classes/[classId]/route.ts）会把 body 中
+  // 出现的字段全部写入 prisma.class.update；Prisma 对 undefined 字段跳过不更新，
+  // 因此只发 name 时邀请码/描述/AI 配置/学生名单均不受影响
+  // （现有 handleToggleOpenInviteCode 只发 { openInviteCode } 已在线上验证此行为）。
+  // ⛔ DO NOT REVERT: 不要改成"先 GET 全量再回传全量"——会把其它配置字段用旧值/空值覆盖回去。
+  const openRename = (cls: ClassItem) => {
+    setRenameClass(cls);
+    setRenameName(cls.name);
+    setRenameVisible(true);
+  };
+
+  const handleRename = async () => {
+    if (!renameClass) return;
+    const name = renameName.trim();
+    if (!name) {
+      MessagePlugin.warning("请输入班级名称");
+      return;
+    }
+    if (name === renameClass.name) {
+      setRenameVisible(false);
+      setRenameClass(null);
+      return;
+    }
+    setRenameLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/classes/${renameClass.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        MessagePlugin.success("班级名称已更新");
+        setRenameVisible(false);
+        setRenameClass(null);
+        fetchClasses();
+      } else {
+        const data = await res.json();
+        MessagePlugin.error(data.error || "修改失败");
+      }
+    } catch {
+      MessagePlugin.error("网络错误");
+    } finally {
+      setRenameLoading(false);
     }
   };
 
@@ -396,7 +451,7 @@ export default function TeacherClassesPage() {
     },
     {
       colKey: "action",
-      width: 420,
+      width: 480,
       title: "操作",
       cell: ({ row }: { row: ClassItem }) => (
         <div className="flex gap-2">
@@ -431,6 +486,17 @@ export default function TeacherClassesPage() {
               onClick={() => router.push(`/teacher/classes/${row.id}`)}
             >
               详情
+            </Button>
+          </Tooltip>
+          <Tooltip content="修改班级名称">
+            <Button
+              theme="default"
+              variant="text"
+              size="small"
+              icon={<EditIcon />}
+              onClick={() => openRename(row)}
+            >
+              改名
             </Button>
           </Tooltip>
           <Tooltip content="复制分享信息给学生">
@@ -718,6 +784,34 @@ export default function TeacherClassesPage() {
             </Button>
           </div>
         </div>
+      </Dialog>
+
+      <Dialog
+        header="修改班级名称"
+        visible={renameVisible}
+        onClose={() => { setRenameVisible(false); setRenameClass(null); }}
+        footer={null}
+        width={420}
+      >
+        {renameClass && (
+          <div className="space-y-4">
+            <p className="text-gray-500 text-sm">
+              只修改班级名称，邀请码、学生名单及其它配置均不受影响；学生端将同步显示新名称。
+            </p>
+            <Input
+              value={renameName}
+              onChange={(val) => setRenameName(val)}
+              placeholder="请输入新的班级名称"
+              maxlength={30}
+            />
+            <div className="flex gap-2 justify-end">
+              <Button onClick={() => { setRenameVisible(false); setRenameClass(null); }}>取消</Button>
+              <Button theme="primary" loading={renameLoading} onClick={handleRename}>
+                保存
+              </Button>
+            </div>
+          </div>
+        )}
       </Dialog>
     </TeacherLayout>
   );
