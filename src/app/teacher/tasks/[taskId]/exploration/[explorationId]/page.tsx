@@ -32,6 +32,8 @@ interface AnalysisData {
   submittedCount: number;
   totalStudents: number | null;
   classIds: string[];
+  // 各班级提交数（2026-10-13 起由 analysis GET 返回，供默认班级选择）
+  classSubmittedCounts?: Record<string, number>;
   averageScore: number;
   scoreDistribution: Record<string, number>;
   avgTimeSpent: number;
@@ -291,9 +293,25 @@ export default function ExplorationAnalysisPage() {
         const curData = await curRes.json();
         currentClassId = curData.class?.id || "";
       }
-      const targetClassId = data.classIds?.includes(currentClassId)
-        ? currentClassId
-        : (data.classIds?.[0] || "");
+      // 默认班级：优先「当前班级且有提交」；否则选第一个有提交的班级；
+      // 都没有提交才退回原行为（当前班级在列用它，否则 classIds[0]）。
+      // ⚠️ GOTCHA（2026-10-13）：教师多班时，当前班级可能无提交，原先直接用它导致
+      //   点「分析」看不到任何提交数据（课堂列表却显示 N 份提交，来自全量 _count）。
+      // ⛔ DO NOT REVERT: 退回旧逻辑会复现「后台显示有人提交，分析页却为空」。
+      // 🔗 RELATED: analysis GET 返回 classSubmittedCounts；tasks/page.tsx openAnalysisModal 同款逻辑
+      const firstClassWithSub = (data.classIds || []).find(
+        (c: string) => (data.classSubmittedCounts?.[c] ?? 0) > 0
+      );
+      let targetClassId = "";
+      if (currentClassId && (data.classSubmittedCounts?.[currentClassId] ?? 0) > 0) {
+        targetClassId = currentClassId;
+      } else if (firstClassWithSub) {
+        targetClassId = firstClassWithSub;
+      } else {
+        targetClassId = data.classIds?.includes(currentClassId)
+          ? currentClassId
+          : (data.classIds?.[0] || "");
+      }
       setSelectedClassId(targetClassId);
 
       // 第 2 波：提交列表与探究详情都只依赖 targetClassId，可并行

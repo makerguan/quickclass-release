@@ -1349,10 +1349,26 @@ export default function TeacherTasksPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        // 尝试用当前班级，否则用第一个，否则无班级
-        const targetClassId = data.classIds?.includes(currentClassId)
-          ? currentClassId
-          : (data.classIds?.[0] || "");
+        // 默认班级：优先「当前班级且有提交」；否则选第一个有提交的班级；
+        // 都没有提交才退回原行为（当前班级在列用它，否则 classIds[0]）。
+        // ⚠️ GOTCHA（2026-10-13）：教师多班时，当前班级可能无提交，原先直接用它导致
+        //   点「分析」看不到任何提交数据（课堂列表却显示 N 份提交，来自全量 _count）。
+        // ⛔ DO NOT REVERT: 退回旧逻辑会复现「后台显示有人提交，分析页却为空」。
+        // 🔗 RELATED: analysis GET 返回 classSubmittedCounts；
+        //   exploration 分析页 page.tsx fetchData 是同款逻辑，改一处务必同步另一处。
+        const firstClassWithSub = (data.classIds || []).find(
+          (c: string) => (data.classSubmittedCounts?.[c] ?? 0) > 0
+        );
+        let targetClassId = "";
+        if (currentClassId && (data.classSubmittedCounts?.[currentClassId] ?? 0) > 0) {
+          targetClassId = currentClassId;
+        } else if (firstClassWithSub) {
+          targetClassId = firstClassWithSub;
+        } else {
+          targetClassId = data.classIds?.includes(currentClassId)
+            ? currentClassId
+            : (data.classIds?.[0] || "");
+        }
         setAnalysisClassId(targetClassId);
         if (targetClassId) {
           const res2 = await fetch(`/api/exploration-activities/${explorationId}/analysis?classId=${targetClassId}`, {
@@ -2064,7 +2080,14 @@ export default function TeacherTasksPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        // 重新拉取列表（_count 归零后，编辑锁定自然解除）
+        // ⚠️ GOTCHA（2026-10-13）：统一清单卡片「N份提交」meta 来自 /api/tasks 的 _count
+        //   （buildUnifiedActs 读 t.subProjects[].explorationActivities[]._count.ExplorationSubmission），
+        //   原先这里只刷新旧面板 explorations state，导致已清除提交、卡片仍显示「N份提交」。
+        // ⛔ DO NOT REVERT：必须先 fetchTasks() 归零统一清单计数（编辑锁定 / 卡片 meta 都依赖它）。
+        // 🔗 RELATED：handleClearAttempts 同款修复（作业「N人已答」）；
+        //   reorderAcrossTypes 633-637 行的「先 fetchTasks 再面板兜底重拉」是同一模式。
+        fetchTasks();
+        // 旧面板列表来自独立 state（fetchTasks 不更新），面板开着时单独重拉保持一致
         if (explorationPanelSpId) {
           const refreshRes = await fetch(`/api/exploration-activities?subProjectId=${explorationPanelSpId}`, {
             headers: { Authorization: `Bearer ${token}` },
@@ -2937,7 +2960,13 @@ export default function TeacherTasksPage() {
       });
       const data = await res.json();
       if (res.ok) {
-        // 刷新列表
+        // ⚠️ GOTCHA（2026-10-13）：统一清单卡片「N人已答」meta 来自 /api/tasks 的 _count
+        //   （buildUnifiedActs 读 t.subProjects[].quizActivities[]._count.attempts），
+        //   原先这里只刷新旧面板 quizzes state，导致已清除答题、卡片仍显示「N人已答」。
+        // ⛔ DO NOT REVERT：必须先 fetchTasks() 归零统一清单计数（清除答题按钮显隐也依赖它）。
+        // 🔗 RELATED：handleClearExplorationSubmissions 同款修复（探究「N份提交」）。
+        fetchTasks();
+        // 旧面板列表来自独立 state（fetchTasks 不更新），面板开着时单独重拉保持一致
         if (quizPanelSpId) {
           const refreshRes = await fetch(`/api/quiz-activities?subProjectId=${quizPanelSpId}`, {
             headers: { Authorization: `Bearer ${token}` },
@@ -3928,17 +3957,19 @@ export default function TeacherTasksPage() {
                                         <Button theme="primary" variant="text" size="small"
                                           icon={<EditIcon />}
                                           onClick={() => openEditExploration(raw)}>编辑</Button>
-                                        <Button theme="primary" variant="text" size="small"
-                                          icon={<DeleteIcon />}
-                                          loading={operatingExplorationId === a.id}
-                                          onClick={() => handleDeleteExploration(a.id)}>删除</Button>
-                                        {/* 清除提交：仅在停用且有人提交时显示（与课堂作业「清除答题」口径一致） */}
+                                        {/* 清除提交：仅在停用且有人提交时显示（与课堂作业「清除答题」口径一致）。
+                                            ⚠️ 按钮顺序与作业统一：清除提交在前、删除在后（2026-10-13 用户要求）。
+                                            ⛔ DO NOT REVERT：作业「清除答题」同款顺序见下方 quiz 分支。 */}
                                         {!raw.enabled && (raw._count?.ExplorationSubmission ?? 0) > 0 && (
                                           <Button theme="primary" variant="text" size="small"
                                             icon={<DeleteIcon />}
                                             loading={clearingSubmissionsExplorationId === a.id}
                                             onClick={() => handleClearExplorationSubmissions(a.id)}>清除提交</Button>
                                         )}
+                                        <Button theme="primary" variant="text" size="small"
+                                          icon={<DeleteIcon />}
+                                          loading={operatingExplorationId === a.id}
+                                          onClick={() => handleDeleteExploration(a.id)}>删除</Button>
                                       </>
                                     )}
                                     {a.type === "project" && (
