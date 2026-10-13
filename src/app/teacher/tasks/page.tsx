@@ -407,6 +407,7 @@ export default function TeacherTasksPage() {
   const [convForm, setConvForm] = useState({
     title: "",
     description: "",
+    openingMessage: "",
     systemPrompt: "",
     analysisPrompt: "",
     classAnalysisPrompt: "",
@@ -910,6 +911,7 @@ export default function TeacherTasksPage() {
     setConvForm({
       title: "",
       description: "",
+      openingMessage: "",
       systemPrompt: "",
       analysisPrompt: "",
       classAnalysisPrompt: "",
@@ -949,6 +951,7 @@ export default function TeacherTasksPage() {
     setConvForm({
       title: detail.title || "",
       description: detail.description || "",
+      openingMessage: detail.openingMessage || "",
       systemPrompt: detail.systemPrompt || "",
       analysisPrompt: detail.analysisPrompt || "",
       classAnalysisPrompt: detail.classAnalysisPrompt || "",
@@ -982,6 +985,7 @@ export default function TeacherTasksPage() {
       const body: Record<string, unknown> = {
         title: convForm.title.trim(),
         description: convForm.description.trim(),
+        openingMessage: convForm.openingMessage.trim() || null,
         systemPrompt: convForm.systemPrompt,
         analysisPrompt: convForm.analysisPrompt,
         classAnalysisPrompt: convForm.classAnalysisPrompt,
@@ -1737,6 +1741,11 @@ export default function TeacherTasksPage() {
         } else {
           setExplorations((prev) => prev.map((e) => e.id === saved.id ? saved : e));
         }
+        // ⚠️ GOTCHA（2026-10-13）：统一清单「课堂活动（按授课顺序）」读 /api/tasks 的 subProjects
+        //   （buildUnifiedActs），本地 setExplorations 只更新探究面板内部列表。
+        //   漏调 fetchTasks 会导致新建/编辑保存后清单不显示新活动（或标题不更新）。
+        // 🔗 RELATED: handleClearExplorationSubmissions / handleExplorationDelete 同款修复。
+        fetchTasks();
         // 同步 enableSubmission 状态（避免数据库值与前端不一致）
         setExplorationEnableSubmission(saved.enableSubmission ?? explorationEnableSubmission);
         setExplorationEnableAiCompanion(saved.enableAiCompanion ?? explorationEnableAiCompanion);
@@ -1832,6 +1841,8 @@ export default function TeacherTasksPage() {
           const saved = await res.json();
           setExplorationEditId(saved.id);
           setExplorations((prev) => [saved, ...prev]);
+          // 同上：统一清单来自 /api/tasks，自动创建后也要刷新，否则清单看不到这条探究
+          fetchTasks();
           // 同步预览（本地渲染注入版）
           setExplorationPreview(renderLocalPreview(saved.htmlContent ?? explorationHtml, {
             enableSubmission: saved.enableSubmission,
@@ -2021,6 +2032,9 @@ export default function TeacherTasksPage() {
       });
       if (res.ok) {
         setExplorations((prev) => prev.filter((e) => e.id !== id));
+        // ⚠️ GOTCHA（2026-10-13）：统一清单来自 /api/tasks（buildUnifiedActs），漏刷新会导致
+        //   已删除的探究仍挂在「课堂活动（按授课顺序）」清单上。与保存分支同款修复。
+        fetchTasks();
         MessagePlugin.success("已删除");
       } else {
         MessagePlugin.error("删除失败");
@@ -2768,6 +2782,10 @@ export default function TeacherTasksPage() {
       }
       MessagePlugin.success("作业已保存");
       exitQuizDesign();
+      // ⚠️ GOTCHA（2026-10-13）：统一清单「课堂活动（按授课顺序）」读 /api/tasks（buildUnifiedActs），
+      //   下方只刷新作业面板 quizzes state；漏调 fetchTasks 会导致新建/编辑作业后清单不显示/标题不更新。
+      // 🔗 RELATED: 探究保存、handleQuizDelete 同款修复。
+      fetchTasks();
       // 刷新列表
       if (quizPanelSpId) {
         const res = await fetch(`/api/quiz-activities?subProjectId=${quizPanelSpId}`, {
@@ -2940,6 +2958,9 @@ export default function TeacherTasksPage() {
       });
       if (res.ok) {
         setQuizzes((prev) => prev.filter((q) => q.id !== quizId));
+        // ⚠️ GOTCHA（2026-10-13）：统一清单来自 /api/tasks（buildUnifiedActs），漏刷新会导致
+        //   已删除的作业仍挂在「课堂活动（按授课顺序）」清单上。与探究删除同款修复。
+        fetchTasks();
         MessagePlugin.success("作业已删除");
       } else {
         MessagePlugin.error("删除失败");
@@ -3903,12 +3924,23 @@ export default function TeacherTasksPage() {
                           let enabledIdx = -1;
                           return (
                             <div className="space-y-1.5">
-                              {acts.map((a) => {
+                              {acts.map((a, i) => {
                                 if (a.enabled) enabledIdx += 1;
                                 const myEnabledIdx = a.enabled ? enabledIdx : -1;
                                 const raw = a.raw;
+                                // 启用/停用分段：第一个停用活动前插入分隔条，上下两部分视觉分离（2026-10-13 用户要求）。
+                                // 排序已保证启用在前、停用沉底（buildUnifiedActs），只需在边界行前加分隔。
+                                const showDisabledDivider = !a.enabled && (i === 0 || acts[i - 1].enabled);
                                 return (
-                                  <div key={`${a.type}-${a.id}`} className="flex items-center gap-2 bg-[var(--card-bg)] rounded px-3 py-1.5 text-sm">
+                                  <Fragment key={`${a.type}-${a.id}`}>
+                                    {showDisabledDivider && (
+                                      <div className="flex items-center gap-2 pt-2 -mb-1">
+                                        <div className="flex-1 h-px bg-[var(--card-border)]" />
+                                        <span className="text-xs text-[var(--muted-light)]">未启用 · 学生端不可见</span>
+                                        <div className="flex-1 h-px bg-[var(--card-border)]" />
+                                      </div>
+                                    )}
+                                  <div className="flex items-center gap-2 bg-[var(--card-bg)] rounded px-3 py-1.5 text-sm">
                                     <Tag size="small" theme="primary" variant="light">{UNIFIED_TYPE_LABEL[a.type]}</Tag>
                                     {/* 活动未启用提示统一主题色（2026-10-13）：原 warning 语义色 */}
                                     {!a.enabled && <Tag size="small" theme="primary" variant="light">未启用</Tag>}
@@ -3922,8 +3954,9 @@ export default function TeacherTasksPage() {
                                     {a.type === "conversation" && (
                                       <>
                                         <Button theme="primary" variant="text" size="small" icon={<EditIcon />} onClick={() => openEditConversationDialog(task, raw)}>编辑</Button>
-                                        <Button theme="primary" variant="text" size="small" icon={<DeleteIcon />} onClick={() => handleConversationDelete(raw)}>删除</Button>
                                         <Button theme="primary" variant="text" size="small" icon={<ChartBarIcon />} onClick={() => goTo(`/teacher/tasks/${task.id}/insights?pc=${a.id}`)}>分析</Button>
+                                        {/* 删除固定最右，与探究/项目/作业按钮组口径一致（2026-10-13 用户要求） */}
+                                        <Button theme="primary" variant="text" size="small" icon={<DeleteIcon />} onClick={() => handleConversationDelete(raw)}>删除</Button>
                                       </>
                                     )}
                                     {a.type === "exploration" && (
@@ -4039,6 +4072,7 @@ export default function TeacherTasksPage() {
                                       <span className="w-[64px]"></span>
                                     )}
                                   </div>
+                                  </Fragment>
                                 );
                               })}
                             </div>
@@ -4717,44 +4751,60 @@ export default function TeacherTasksPage() {
           top="48px"
         >
           <div className="space-y-4">
-            <div className="space-y-2">
-              <span className="text-sm font-medium text-[var(--muted)]">对话活动名称</span>
-              <Input
-                value={convForm.title}
-                onChange={(v) => setConvForm({ ...convForm, title: v })}
-                placeholder="例如：圆的认识探究对话"
-              />
-            </div>
+            {/* 顶部两列（2026-10-13 布局调整）：左=名称+目标，右=开场白（新增字段）；
+                下方系统提示词/学情分析提示词保持通栏，长文本不挤压 */}
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <span className="text-sm font-medium text-[var(--muted)]">对话活动名称</span>
+                  <Input
+                    value={convForm.title}
+                    onChange={(v) => setConvForm({ ...convForm, title: v })}
+                    placeholder="例如：圆的认识探究对话"
+                  />
+                </div>
 
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium text-[var(--muted)]">对话活动目标</span>
-                <div className="flex items-center gap-2">
-                  {convObjectiveBackup !== null && (
-                    <span
-                      className="text-xs text-[var(--primary)] cursor-pointer hover:underline"
-                      onClick={restoreConvObjective}
-                    >
-                      撤销
-                    </span>
-                  )}
-                  <Button
-                    variant="outline"
-                    theme="primary"
-                    size="small"
-                    loading={generatingConvObjective}
-                    onClick={handleAIOptimizeConversationObjective}
-                  >
-                    AI 帮我写
-                  </Button>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="text-sm font-medium text-[var(--muted)]">对话活动目标</span>
+                    <div className="flex items-center gap-2">
+                      {convObjectiveBackup !== null && (
+                        <span
+                          className="text-xs text-[var(--primary)] cursor-pointer hover:underline"
+                          onClick={restoreConvObjective}
+                        >
+                          撤销
+                        </span>
+                      )}
+                      <Button
+                        variant="outline"
+                        theme="primary"
+                        size="small"
+                        loading={generatingConvObjective}
+                        onClick={handleAIOptimizeConversationObjective}
+                      >
+                        AI 帮我写
+                      </Button>
+                    </div>
+                  </div>
+                  <Textarea
+                    value={convForm.description}
+                    onChange={(v) => setConvForm({ ...convForm, description: v })}
+                    placeholder="描述本次对话活动希望学生达成的目标；填写活动名称后，可点击右上角「AI 帮我写」生成或优化"
+                    rows={3}
+                  />
                 </div>
               </div>
-              <Textarea
-                value={convForm.description}
-                onChange={(v) => setConvForm({ ...convForm, description: v })}
-                placeholder="描述本次对话活动希望学生达成的目标；填写活动名称后，可点击右上角「AI 帮我写」生成或优化"
-                rows={2}
-              />
+
+              <div className="space-y-2">
+                <span className="text-sm font-medium text-[var(--muted)]">开场白（AI 的第一句话）</span>
+                <Textarea
+                  value={convForm.openingMessage}
+                  onChange={(v) => setConvForm({ ...convForm, openingMessage: v })}
+                  placeholder="学生进入对话后，AI 自动发出的开场内容；留空则不出开场白。写入的内容不消耗 AI 调用，学生回复后 AI 会接着开场白继续对话"
+                  rows={7}
+                />
+              </div>
             </div>
 
             <div className="space-y-2">

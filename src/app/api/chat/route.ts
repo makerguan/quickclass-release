@@ -128,6 +128,21 @@ export async function POST(req: NextRequest) {
         })
       );
       convId = createConvResult.id;
+
+      // 写操作 1.5：新会话预置教师开场白（assistant 首条消息，2026-10-13）。
+      // ⚠️ 仅 needCreate（新会话）写入一次，复用旧会话不重复插入；
+      // 前端首条发言的 apiMessages 已把开场白拼进上下文（见 student/chat sendMessage），两侧口径一致。
+      if (presetConv?.openingMessage) {
+        await dbWrite(() =>
+          prisma.message.create({
+            data: {
+              conversationId: convId!,
+              role: "assistant",
+              content: presetConv.openingMessage!,
+            },
+          })
+        );
+      }
     }
 
     // 写操作 2：保存用户消息（依赖 convId 已确定）

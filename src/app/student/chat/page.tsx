@@ -6,9 +6,14 @@ import {
   SendIcon,
   ImageIcon,
   AddIcon,
-  FolderIcon,
   ChatIcon,
   MicrophoneIcon,
+  BookOpenIcon,
+  BrowseIcon,
+  AssignmentIcon,
+  EditIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
 } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import SpeechControls from "@/components/speech/SpeechControls";
@@ -37,6 +42,8 @@ interface PresetConversation {
   id: string;
   title: string;
   description?: string;
+  // 教师开场白（2026-10-13）：学生进入对话后 AI 的第一句话，本地渲染 + 首条发言时随上下文发送
+  openingMessage?: string;
   systemPrompt?: string;
   // 📐 跨类型统一排序（2026-10-12）：4 表共用一个 sortOrder 数值空间（src/lib/activities/unified-order.ts），
   // 学生端侧边栏按它合并渲染授课顺序
@@ -625,7 +632,22 @@ export default function StudentChatPage() {
       images: images && images.length > 0 ? [...images] : undefined,
       audioUrl,
     };
-    const newMessages = [...messages, userMessage];
+    // 教师开场白（2026-10-13）：对话尚未开始时，把开场白拼进首条发言的上下文，
+    // AI 顺着开场白继续对话；/api/chat 新会话分支会把它落库为 assistant 首条消息，
+    // 刷新后从库中读到的历史与此处渲染一致，不会重复。
+    const presetInfo = getCurrentPresetInfo();
+    const openingMessage: Message | null =
+      presetInfo?.preset?.openingMessage && messages.length === 0
+        ? { role: "assistant", content: presetInfo.preset.openingMessage }
+        : null;
+    // 完整历史 + 可能的开场白 + 本条新消息。开场白仅在冷启动（messages 为空）时补入，
+    // 与后端"仅新会话落库一次开场白"口径一致，不会重复；历史必须展开，否则发送时
+    // 界面被重置只剩一轮，AI 上下文也随之失忆（2026-10-13 回归修复）。
+    const newMessages = [
+      ...(openingMessage ? [openingMessage] : []),
+      ...messages,
+      userMessage,
+    ];
     setMessages(newMessages);
     setInput("");
     if (images) setPendingImages([]);
@@ -775,7 +797,7 @@ export default function StudentChatPage() {
         {/* 左侧：任务树 */}
         <div className={`${sidebarCollapsed ? 'w-10' : 'w-72'} border-r border-gray-200 flex flex-col bg-[#F7F8FA] transition-all duration-200`}>
           <div className="p-3 border-b border-gray-200 flex items-center justify-between">
-            {!sidebarCollapsed && <h3 className="text-sm font-medium text-[#1A1A1A]">课堂</h3>}
+            {!sidebarCollapsed && <h3 className="text-sm font-medium text-[#1A1A1A]">宁创教学智能体</h3>}
             <button
               className="text-gray-400 hover:text-gray-600 text-xs px-1"
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -811,11 +833,16 @@ export default function StudentChatPage() {
                       }}
                     >
                       <div className="flex items-center gap-2">
-                        <span className="text-xs text-gray-400 w-4 text-center">
-                          {expandedTaskIds.has(task.id) ? "▼" : "▶"}
+                        {expandedTaskIds.has(task.id) ? (
+                          <ChevronDownIcon className="text-gray-400 shrink-0" size="14px" />
+                        ) : (
+                          <ChevronRightIcon className="text-gray-400 shrink-0" size="14px" />
+                        )}
+                        {/* 课堂图标升级（2026-10-13 美化）：Folder → BookOpen + 浅蓝底座，语义更贴近"课堂" */}
+                        <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 bg-[#0052D9]/10">
+                          <BookOpenIcon size="14px" style={{ color: "#0052D9" }} />
                         </span>
-                        <FolderIcon className="text-[#0052D9]" size="16px" />
-                        <span className="text-sm font-medium text-[#1A1A1A] truncate">
+                        <span className="text-[15px] font-medium text-[#1A1A1A] truncate">
                           {task.title}
                         </span>
                       </div>
@@ -873,12 +900,23 @@ export default function StudentChatPage() {
                                 }}
                               >
                                 <div className="flex items-center gap-2">
-                                  <ChatIcon
-                                    className={isActive ? "" : "text-gray-400"}
-                                    size="14px"
-                                    style={{ color }}
-                                  />
-                                  <span className={`text-sm truncate ${isActive ? "font-medium" : "text-[#333]"}`} style={isActive ? { color } : undefined}>
+                                  {/* 类型图标分派 + 类型色 10% 底座（2026-10-13 美化）：4 类活动不再共用 ChatIcon，
+                                      对话/探究/项目/作业一眼可辨；底色 = colorMap 色 + 1A（hex 透明度 10%） */}
+                                  <span
+                                    className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+                                    style={{ background: `${color}1A` }}
+                                  >
+                                    {act.type === "conversation" ? (
+                                      <ChatIcon size="14px" style={{ color }} />
+                                    ) : act.type === "exploration" ? (
+                                      <BrowseIcon size="14px" style={{ color }} />
+                                    ) : act.type === "project" ? (
+                                      <AssignmentIcon size="14px" style={{ color }} />
+                                    ) : (
+                                      <EditIcon size="14px" style={{ color }} />
+                                    )}
+                                  </span>
+                                  <span className={`text-[15px] truncate ${isActive ? "font-medium" : "text-[#333]"}`} style={isActive ? { color } : undefined}>
                                     {title}
                                   </span>
                                   {act.type === "conversation" && findConversations(act.pc.id).length > 0 && (
@@ -972,8 +1010,19 @@ export default function StudentChatPage() {
               {messages.length === 0 && currentInfo && (
                 <div className="text-center text-gray-400 mt-10">
                   <p className="text-lg mb-2">{currentInfo.preset.title}</p>
-
-                  <p className="text-sm mt-4">开始吧！</p>
+                  {/* 教师开场白（2026-10-13）：仅本地展示，不入库；学生首条发言后
+                      /api/chat 新会话分支会把它落库为 assistant 首条消息，出现在真实消息流中 */}
+                  {currentInfo.preset.openingMessage ? (
+                    <div className="flex justify-start mt-6 text-left">
+                      <div className="max-w-[70%] rounded-2xl px-4 py-3 bg-gray-100 text-gray-800">
+                        <div className="prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5">
+                          <Markdown>{currentInfo.preset.openingMessage}</Markdown>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm mt-4">开始吧！</p>
+                  )}
                 </div>
               )}
               {messages.map((msg, index) => (

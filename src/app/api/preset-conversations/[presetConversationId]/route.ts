@@ -63,6 +63,7 @@ export async function PUT(
     const {
       title,
       description,
+      openingMessage,
       systemPrompt,
       analysisPrompt,
       classAnalysisPrompt,
@@ -78,6 +79,7 @@ export async function PUT(
       data.title = title.trim();
     }
     if (description !== undefined) data.description = description || null;
+    if (openingMessage !== undefined) data.openingMessage = openingMessage || null;
     if (systemPrompt !== undefined) data.systemPrompt = systemPrompt || null;
     if (analysisPrompt !== undefined) data.analysisPrompt = analysisPrompt || null;
     if (classAnalysisPrompt !== undefined) data.classAnalysisPrompt = classAnalysisPrompt || null;

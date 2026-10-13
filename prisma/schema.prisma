@@ -377,6 +377,7 @@ model PresetConversation {
   subProjectId                                                                   String
   title                                                                          String
   description                                                                    String?
+  openingMessage                                                                 String?
   systemPrompt                                                                   String?
   analysisPrompt                                                                 String?
   classAnalysisPrompt                                                            String?
