@@ -1229,7 +1229,7 @@ export default function TeacherTasksPage() {
       needsAdaptation &&
       !prevNeedsAdaptationRef.current
     ) {
-      MessagePlugin.warning("⚠️ 采集桩已丢失，分数/关卡将无法上报，可点「重试接入」恢复");
+      MessagePlugin.warning("⚠️ 采集桩缺失或已丢失，分数/关卡将无法上报，可点「重试接入」恢复");
     }
     prevNeedsAdaptationRef.current = needsAdaptation;
   }, [explorationHtml, explorationEnableSubmission, confirmedInjection]);
@@ -5055,52 +5055,13 @@ export default function TeacherTasksPage() {
                   size="small"
                   onChange={async (val: boolean) => {
                     if (val) {
-                      // 开启提交：先判断采集是否已接桩。
-                      // 新架构下提交通道由读取路径 renderExplorationHtml 渲染，不需要「确认注入」；
-                      // 仅当采集桩（改纯净稿本身）缺失时才需 AI 预览接入。
-                      const detection = detectInstrumentation(explorationHtml);
-                      if (!detection.needsAdaptation) {
-                        // 已接桩 → 直接开启，本地渲染预览（含提交注入），不再弹 AI 预览
-                        setExplorationEnableSubmission(true);
-                        syncConfirmedInjection(true);
-                        setExplorationPreview(renderLocalPreview(explorationHtml, { enableSubmission: true }));
-                        return;
-                      }
-                      // 未接桩 → 弹 AI 预览接入采集（确认注入）
-                      setOriginalHtmlForInjection(explorationHtml);
-                      syncConfirmedInjection(false);
-                      // 立即调用预览 API 并弹出对话框
-                      setPreviewLoading(true);
-                      setPreviewError(null);
-                      setPreviewAnalysis(null);
-                      setAutoScoreScript(null);
-                      setPreviewStatus("正在向 AI 发送 HTML 代码...");
-                      setInjectionPreviewVisible(true);
-                      try {
-                        const token = localStorage.getItem("token") || "";
-                        const res = await fetch("/api/exploration-activities/preview-injection", {
-                          method: "POST",
-                          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-                          body: JSON.stringify({
-                            htmlContent: explorationHtml,
-                            explorationId: explorationEditId || undefined,
-                            subProjectId: explorationPanelSpId,
-                          }),
-                        });
-                        let data;
-                        try { data = await res.json(); } catch { data = null; }
-                        if (data && data.success) {
-                          setPreviewAnalysis(data.analysis);
-                          setAutoScoreScript(data.autoScoreScript || null);
-                        } else {
-                          setPreviewError((data && data.error) || "分析失败");
-                          if (data && data.fallback) setPreviewAnalysis(data.fallback);
-                        }
-                      } catch (e: any) {
-                        setPreviewError(e.message || "预览失败");
-                      } finally {
-                        setPreviewLoading(false);
-                      }
+                      // 开启提交：提交通道由读取路径 renderExplorationHtml 内存注入，无需任何确认弹窗。
+                      // 缺采集桩（window.__gameState__ / 防御式调用都没有）只降级分数/关卡上报——
+                      // 基础采集（控件扫描 + __gameState__.answers 自定义上报 + 行为数据）照常工作；
+                      // 下方状态条会显示黄条，老师可点「重试接入」补救，不再阻断开启流程。
+                      setExplorationEnableSubmission(true);
+                      syncConfirmedInjection(true);
+                      setExplorationPreview(renderLocalPreview(explorationHtml, { enableSubmission: true }));
                     } else {
                       // 关闭 → 撤销注入并预览
                       if (explorationHasSubmissions) {
@@ -5119,7 +5080,7 @@ export default function TeacherTasksPage() {
               {confirmedInjection ? (
                 detectInstrumentation(explorationHtml).needsAdaptation ? (
                   <div className="text-xs text-[var(--warning)] bg-[var(--warning-light)] rounded p-2 flex items-center justify-between gap-2">
-                    <span>⚠️ 提交已启用，但采集接入未成功——仅采集基础数据（时长/操作/滚动），分数/关卡/作答暂无法上报。</span>
+                    <span>⚠️ 页面未接入采集桩——控件答案与自定义同步数据照常采集，分数/关卡无法上报（闯关计分类页面建议点「重试接入」）。</span>
                     <Button size="small" variant="text" theme="warning" loading={adapting} onClick={handleAdaptInstrumentation}>
                       重试接入
                     </Button>

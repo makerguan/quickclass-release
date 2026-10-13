@@ -269,7 +269,7 @@ export default function ExplorationPanel({
         ) : isEnabled ? (
           // ===== 可参与：显示互动内容（包含提交按钮） =====
           <div className="p-4">
-            <div className="text-sm text-gray-500 mb-2">完成互动后，点击右下角的"提交成绩"按钮提交你的结果。</div>
+            <div className="text-sm text-gray-500 mb-2">完成互动后，点击页面左下角的红色「提交」按钮提交你的结果。</div>
             {/* ⛔ DO NOT REVERT: iframe sandbox 必须包含 allow-popups，否则内部 <a target="_blank"> / window.open 会被浏览器静默拦截。
                 原因：探究 HTML 由教师/AI 生成，常嵌入外部资源链接，学生点击需弹出新标签页。
                 关联：src/app/teacher/tasks/[taskId]/exploration/[explorationId]/page.tsx 的预览 iframe 同理，若未来也支持外部链接需同步。

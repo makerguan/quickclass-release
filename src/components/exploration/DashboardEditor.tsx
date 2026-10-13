@@ -8,6 +8,7 @@ import type {
   AiDashboardKpi,
   AiDashboardTheme,
 } from "@/lib/prompts/dashboard-config";
+import { MAX_CHARTS } from "@/lib/prompts/dashboard-config";
 
 const inputCls =
   "h-8 px-2 text-xs border border-gray-200 rounded-md focus:outline-none focus:border-blue-400 w-full";
@@ -92,6 +93,7 @@ export default function DashboardEditor({
 
   const charts = draft.charts || [];
   const kpis = draft.kpis || [];
+  const gridCols = draft.gridCols || 2;
 
   const fieldSelect = (value: string | undefined, onChange: (v: string | undefined) => void) => (
     <select
@@ -152,8 +154,14 @@ export default function DashboardEditor({
         <label className="flex flex-col gap-1 text-xs text-gray-500">
           每行列数
           <select
-            value={draft.gridCols || 2}
-            onChange={(e) => set({ gridCols: Number(e.target.value) as 2 | 3 | 4 })}
+            value={gridCols}
+            onChange={(e) => {
+              const n = Number(e.target.value) as 2 | 3 | 4;
+              set({
+                gridCols: n,
+                charts: charts.map((c) => ({ ...c, span: Math.min(n, c.span || 1) as 1 | 2 | 3 | 4 })),
+              });
+            }}
             className={inputCls}
           >
             {[2, 3, 4].map((n) => (
@@ -219,6 +227,8 @@ export default function DashboardEditor({
           <Button
             size="small"
             variant="outline"
+            disabled={charts.length >= MAX_CHARTS}
+            title={charts.length >= MAX_CHARTS ? `最多 ${MAX_CHARTS} 张图表卡片` : undefined}
             onClick={() => set({ charts: [...charts, emptyChart(fields)] })}
           >
             + 添加图表
@@ -254,13 +264,13 @@ export default function DashboardEditor({
                     ))}
                   </select>
                   <select
-                    value={c.span || 1}
+                    value={Math.min(c.span || 1, gridCols)}
                     onChange={(e) => setChart(i, { span: Number(e.target.value) as 1 | 2 | 3 | 4 })}
                     className={`${inputCls} w-20 shrink-0`}
                   >
-                    {[1, 2, 3, 4].map((n) => (
+                    {Array.from({ length: gridCols }, (_, i) => i + 1).map((n) => (
                       <option key={n} value={n}>
-                        {n} 列
+                        {n === gridCols ? `${n} 列（通栏）` : `${n} 列`}
                       </option>
                     ))}
                   </select>

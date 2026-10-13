@@ -110,6 +110,8 @@ const ALLOWED_GRID_COLS: AiDashboardGridCols[] = [2, 3, 4];
 const MAX_FIELDS = 20;
 /** 每个字段最多带的 Top 取值数（控上下文） */
 const MAX_TOP = 8;
+/** 图表卡片数量上限（AI 生成截断 & 编辑器添加按钮共用） */
+export const MAX_CHARTS = 12;
 
 function isNumericValue(v: unknown): boolean {
   if (typeof v === "number") return Number.isFinite(v);
@@ -247,7 +249,7 @@ export function buildFallbackCharts(summaries: FieldSummary[]): AiDashboardChart
       charts.push({ title: s.name, field: s.name, type: "wordcloud", limit: 12 });
     }
   }
-  return charts.slice(0, 6);
+  return charts.slice(0, MAX_CHARTS);
 }
 
 /** 系统提示词（预置，老师的额外要求作为 user 消息追加） */
@@ -314,7 +316,7 @@ agg 六种语义：
 
 【硬性规则】
 1. field 必须是字段摘要中出现过的字段名，禁止编造；field 为 null 表示统计全部提交。
-2. kpis 给 3~4 个；charts 给 2~6 个。
+2. kpis 给 3~4 个；charts 给 2~10 个。
 3. 数据很少（仅 1~2 条）时减少图表数量，但**至少保留 1 个简单图表**（如「名单」或「数值柱状」）；KPI 照给，禁止返回空 charts。
 4. 若老师给了额外要求，在不违反以上规则的前提下优先满足。
 5. 绝不输出 HTML、脚本或样式，只输出 JSON。`;
@@ -456,7 +458,7 @@ export function sanitizeDashboardConfig(raw: unknown, validFields: string[]): Ai
             span,
             note: clampStr(it.note, 30),
           });
-          if (charts.length >= 6) break;
+          if (charts.length >= MAX_CHARTS) break;
           continue;
         }
         const labelField = resolveField(it.labelField) ?? undefined;
@@ -470,7 +472,7 @@ export function sanitizeDashboardConfig(raw: unknown, validFields: string[]): Ai
           yField,
           labelField,
         });
-        if (charts.length >= 6) break;
+        if (charts.length >= MAX_CHARTS) break;
         continue;
       }
 
@@ -497,7 +499,7 @@ export function sanitizeDashboardConfig(raw: unknown, validFields: string[]): Ai
         labelField: type === "ranking" ? labelField : undefined,
         order: type === "ranking" ? order : undefined,
       });
-      if (charts.length >= 6) break;
+      if (charts.length >= MAX_CHARTS) break;
     }
   }
 
@@ -511,4 +513,190 @@ export function sanitizeDashboardConfig(raw: unknown, validFields: string[]): Ai
     kpis,
     charts,
   };
+}
+
+/* ------------------------------ 修订模式（在当前配置上小幅修改，方案 A） ------------------------------ */
+
+/**
+ * 修订模式附录：拼在 DASHBOARD_SYSTEM_PROMPT 后，约束 AI 只改老师指令提到的部分，
+ * 未提及的卡片原样保留 —— 这是「自然语言编辑」区别于「整屏重排」的关键。
+ */
+const DASHBOARD_REVISE_APPENDIX = `
+
+【修订模式规则】用户消息里带了【当前大屏配置】，本次是在现有配置上做**小幅修订**：
+1. 未被老师修改指令提到的卡片，必须原样保留（标题/字段/图型/limit/span/note/顺序都不变），禁止整屏重新设计。
+2. 只执行指令明确提到的修改：换主题色、移动某卡片位置、删除某卡片、修改标题或图型、按指令新增卡片。
+3. 老师说"重新排布 / 重新设计 / 推倒重来"时才允许整体调整布局。
+4. 其余规则（字段白名单、图型约束、输出格式）照常生效，只输出修订后的完整 JSON 配置。`;
+
+/** 生成系统提示词；revise 模式在原版后追加修订规则 */
+export function buildDashboardSystemPrompt(mode: "create" | "revise" = "create"): string {
+  return mode === "revise"
+    ? DASHBOARD_SYSTEM_PROMPT + DASHBOARD_REVISE_APPENDIX
+    : DASHBOARD_SYSTEM_PROMPT;
+}
+
+/* ------------------------------ 本地快速指令（不耗 AI 的简单编辑，方案 C） ------------------------------ */
+
+/** 主色别名 → theme（口语词，如「青色」「琥珀」） */
+const QUICK_THEME_COLORS: { theme: AiDashboardTheme; label: string; words: string[] }[] = [
+  { theme: "blue", label: "品牌蓝", words: ["蓝"] },
+  { theme: "teal", label: "青色", words: ["青"] },
+  { theme: "green", label: "绿色", words: ["绿"] },
+  { theme: "amber", label: "琥珀", words: ["琥珀", "橙", "黄"] },
+];
+
+/** 图型中文名 → type：关键词匹配不到标题时用图型名兜底（如「删掉词云」） */
+const QUICK_TYPE_WORDS: { type: AiChartType; label: string }[] = [
+  { type: "ranking", label: "排行榜" },
+  { type: "wordcloud", label: "词云" },
+  { type: "bar", label: "柱状图" },
+  { type: "line", label: "折线图" },
+  { type: "hbar", label: "条形图" },
+  { type: "pie", label: "饼图" },
+  { type: "roster", label: "名单" },
+  { type: "scatter", label: "散点图" },
+  { type: "list", label: "标签列表" },
+];
+
+/** 与 normalizeFieldName 同口径的模糊包含（双向）：「分数排行榜」↔「分数排行」可互认 */
+function quickIncludes(a: string, b: string): boolean {
+  const na = normalizeFieldName(a);
+  const nb = normalizeFieldName(b);
+  return na.length > 0 && nb.length > 0 && (na.includes(nb) || nb.includes(na));
+}
+
+/** 找 charts 里命中的卡片下标：先标题/字段名双向包含，再用图型中文名兜底 */
+function findQuickChartTargets(charts: AiDashboardChart[], keyword: string): number[] {
+  const byText = charts
+    .map((_, i) => i)
+    .filter((i) => quickIncludes(charts[i].title, keyword) || quickIncludes(charts[i].field, keyword));
+  if (byText.length) return byText;
+  for (const { type, label } of QUICK_TYPE_WORDS) {
+    if (quickIncludes(label, keyword)) {
+      const byType = charts.map((c, i) => (c.type === type ? i : -1)).filter((i) => i >= 0);
+      if (byType.length) return byType;
+    }
+  }
+  return [];
+}
+
+/** 找 kpis 里命中的下标（按 label 模糊匹配） */
+function findQuickKpiTargets(kpis: AiDashboardKpi[], keyword: string): number[] {
+  return kpis.map((_, i) => i).filter((i) => quickIncludes(kpis[i].label, keyword));
+}
+
+/** 清理指令里的指代词，留下卡片关键词：「把这个词云」→「词云」 */
+function stripQuickKeyword(raw: string): string {
+  return raw
+    .replace(/^(?:把|将|这|那)(?:个|张|块|项)?/, "")
+    .replace(/(?:这|那)(?:个|张|块|项)$/, "")
+    .trim();
+}
+
+/** 解析出的主题色核心词（如「换成青色」→「青」）；整段不像换色短语时返回 null */
+function matchQuickTheme(seg: string): { theme: AiDashboardTheme; label: string } | null {
+  const core = seg
+    .replace(/^(?:把|将)?(?:主题|主色|配色|色调|风格)?(?:换成?|改为?|调成为?|调成|设为?|设置成?|用|要)/, "")
+    .replace(/(?:色系|色调|主题|风格)$/, "")
+    .replace(/色$/, "");
+  if (core === seg || !core) return null; // 没剥掉任何动词/后缀 = 不是换色短语
+  const hit = QUICK_THEME_COLORS.find((t) => t.words.some((w) => core === w));
+  return hit ? { theme: hit.theme, label: hit.label } : null;
+}
+
+/** 对单个指令片段执行本地修改；返回人话描述（如「主色换为青色」），不认识返回 null */
+function applyOneQuickEdit(config: AiDashboardConfig, seg: string): string | null {
+  const s = seg.trim();
+  if (!s || s.length > 24) return null;
+
+  // 1) 换主题色（整段必须是换色短语，避免把「绿色的分布」这类普通句子误当换色）
+  const themeHit = matchQuickTheme(s);
+  if (themeHit) {
+    config.theme = themeHit.theme;
+    return `主色换为${themeHit.label}`;
+  }
+
+  // 2) 移位：「X 放最前 / X 放最后」（先 charts，后 kpis）
+  const moveFront = s.match(
+    /^(.+?)(?:卡片|图|图表)?放(?:在|到|至)?(?:第?一(?:位|名)?|最前(?:面)?|首位|开头|前面)$/
+  );
+  const moveEnd = s.match(/^(.+?)(?:卡片|图|图表)?放(?:在|到|至)?(?:最后|末尾|末位|最后面)$/);
+  if (moveFront || moveEnd) {
+    const keyword = stripQuickKeyword((moveFront ? moveFront[1] : moveEnd![1]) || "");
+    if (!keyword) return null;
+    const toFront = Boolean(moveFront);
+    const chartTargets = findQuickChartTargets(config.charts || [], keyword);
+    if (chartTargets.length > 0) {
+      const charts = [...(config.charts || [])];
+      const moved = chartTargets.map((i) => charts[i]);
+      const rest = charts.filter((_, i) => !chartTargets.includes(i));
+      config.charts = toFront ? [...moved, ...rest] : [...rest, ...moved];
+      return `「${moved.map((c) => c.title).join("」「")}」已移到${toFront ? "最前" : "最后"}`;
+    }
+    const kpiTargets = findQuickKpiTargets(config.kpis || [], keyword);
+    if (kpiTargets.length > 0) {
+      const kpis = [...(config.kpis || [])];
+      const moved = kpiTargets.map((i) => kpis[i]);
+      const rest = kpis.filter((_, i) => !kpiTargets.includes(i));
+      config.kpis = toFront ? [...moved, ...rest] : [...rest, ...moved];
+      return `「${moved.map((k) => k.label).join("」「")}」已移到${toFront ? "最前" : "最后"}`;
+    }
+    return null; // 找不到卡片 → 交给 AI 修订
+  }
+
+  // 3) 删除：「删掉X / X删掉 / X不要了」（charts 不能删光，否则大屏空态）
+  const delMatch =
+    s.match(/^删(?:掉|除|去)(?:这(?:个|张|块))?(.+)$/) ||
+    s.match(/^去(?:掉|除)(?:这(?:个|张|块))?(.+)$/) ||
+    s.match(/^(.+?)(?:这(?:个|张|块))?(?:给)?删(?:掉|除|去)$/) ||
+    s.match(/^(.+?)(?:这(?:个|张|块))?不要(?:了|这个|这张)$/);
+  if (delMatch) {
+    const keyword = stripQuickKeyword(delMatch[1] || "");
+    if (!keyword) return null;
+    const chartTargets = findQuickChartTargets(config.charts || [], keyword);
+    if (chartTargets.length > 0) {
+      if ((config.charts?.length || 0) - chartTargets.length === 0) return null;
+      const removed = chartTargets.map((i) => config.charts![i]);
+      config.charts = (config.charts || []).filter((_, i) => !chartTargets.includes(i));
+      return `已删除「${removed.map((c) => c.title).join("」「")}」`;
+    }
+    const kpiTargets = findQuickKpiTargets(config.kpis || [], keyword);
+    if (kpiTargets.length > 0) {
+      if ((config.kpis?.length || 0) - kpiTargets.length === 0 && (config.charts?.length || 0) === 0)
+        return null;
+      const removed = kpiTargets.map((i) => config.kpis![i]);
+      config.kpis = (config.kpis || []).filter((_, i) => !kpiTargets.includes(i));
+      return `已删除「${removed.map((k) => k.label).join("」「")}」`;
+    }
+    return null;
+  }
+
+  return null; // 其他片段 → 交给 AI 修订
+}
+
+/**
+ * 方案 C：本地快速指令 —— 换色 / 移位 / 删除这类确定性修改直接在本地改配置，不耗 AI。
+ * 指令按标点拆成片段，**全部片段**都认识才执行（返回新配置 + 应用描述）；
+ * 只要有一个片段不认识，返回 null → 整条交给 AI 修订模式（避免半本地半 AI 的不一致）。
+ */
+export function applyQuickEdits(
+  config: AiDashboardConfig,
+  instruction: string
+): { config: AiDashboardConfig; applied: string[] } | null {
+  const text = (instruction || "").trim();
+  if (!text || text.length > 60) return null;
+  const segments = text
+    .split(/[，,。;；、！!？?\n]+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (segments.length === 0) return null;
+  const next: AiDashboardConfig = JSON.parse(JSON.stringify(config));
+  const applied: string[] = [];
+  for (const seg of segments) {
+    const done = applyOneQuickEdit(next, seg);
+    if (!done) return null;
+    applied.push(done);
+  }
+  return { config: next, applied };
 }

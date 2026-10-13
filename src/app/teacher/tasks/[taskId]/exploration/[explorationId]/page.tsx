@@ -11,7 +11,7 @@ import QuickFormDashboard, { type QfRecordItem, analyzeFields } from "@/componen
 import QuickFormRecordList from "@/components/exploration/QuickFormRecordList";
 import QuickFormAiDashboard from "@/components/exploration/QuickFormAiDashboard";
 import DashboardEditor from "@/components/exploration/DashboardEditor";
-import { SUBMITTED_AT_FIELD, type AiDashboardConfig, type AiDashboardChart, type AiDashboardKpi } from "@/lib/prompts/dashboard-config";
+import { SUBMITTED_AT_FIELD, applyQuickEdits, type AiDashboardConfig, type AiDashboardChart, type AiDashboardKpi } from "@/lib/prompts/dashboard-config";
 import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 
 interface StudentRecord {
@@ -460,20 +460,49 @@ export default function ExplorationAnalysisPage() {
   /**
    * 「AI 重排大屏」：把字段摘要交给 AI，产出**图表配置 JSON** 并落库缓存；
    * 前端只按配置渲染图表（AI 不产出 HTML，避免 XSS）。老师手动触发、低频。
+   * 自然语言编辑三档分发（2026-10-13）：
+   *   1. 换色 / 移位 / 删除等简单指令 → applyQuickEdits 本地直接改配置（PUT 落库，不耗 AI）；
+   *   2. 已有大屏 + 复杂指令 → POST 带 baseConfig 走「AI 修订」（只改提到的部分）；
+   *   3. 无当前大屏 → 从零重排（原行为）。
    */
   const handleGenerateAiDashboard = async () => {
     if (aiDashLoading) return;
+    const instruction = aiDashInstruction.trim();
     setAiDashLoading(true);
     setAiDashError("");
+    const token = localStorage.getItem("token");
+    const apiUrl = `/api/exploration-activities/${explorationId}/dashboard-config`;
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`/api/exploration-activities/${explorationId}/dashboard-config`, {
+      // 快速指令：本地确定性修改，不耗 AI；解析器不认识任何片段时返回 null 交给 AI
+      if (instruction && aiDashConfig) {
+        const quick = applyQuickEdits(aiDashConfig, instruction);
+        if (quick) {
+          const res = await fetch(apiUrl, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ config: quick.config }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.config) {
+            setAiDashError(data?.message || "保存失败，请重试。");
+            return;
+          }
+          setAiDashConfig(data.config as AiDashboardConfig);
+          MessagePlugin.success(`已直接应用：${quick.applied.join("、")}`);
+          return;
+        }
+      }
+      const revise = Boolean(instruction && aiDashConfig);
+      const res = await fetch(apiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ instruction: aiDashInstruction }),
+        body: JSON.stringify({ instruction, baseConfig: revise ? aiDashConfig : undefined }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.config) {
@@ -481,7 +510,7 @@ export default function ExplorationAnalysisPage() {
         return;
       }
       setAiDashConfig(data.config as AiDashboardConfig);
-      MessagePlugin.success("已按 AI 配置重排大屏");
+      MessagePlugin.success(revise ? "已按 AI 修订大屏" : "已按 AI 配置重排大屏");
     } catch {
       setAiDashError("网络异常，生成失败。");
     } finally {
@@ -667,7 +696,7 @@ export default function ExplorationAnalysisPage() {
           <input
             value={aiDashInstruction}
             onChange={(e) => setAiDashInstruction(e.target.value)}
-            placeholder="可选：描述风格或重点（如「深色科技风，突出年龄分布」「清新绿色」）"
+            placeholder="可选：自然语言修改，如「排行榜放最前」「换成青色」「删掉词云」「突出年龄分布」"
             className="flex-1 min-w-[220px] h-8 px-3 text-xs border border-[var(--card-border)] rounded-md focus:outline-none focus:border-[var(--primary)]"
           />
           {!editing && (
