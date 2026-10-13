@@ -141,7 +141,7 @@ export default function TeacherLayout({
           {!sidebarCollapsed && (
             <>
               <h2 className="text-lg font-bold text-[var(--primary)] tracking-tight">QuickClass Agent</h2>
-              <p className="text-xs font-medium text-[var(--muted)]">宁创教学智能体</p>
+              <p className="text-sm font-medium text-[var(--muted)]">宁创教学智能体</p>
             </>
           )}
           <button
