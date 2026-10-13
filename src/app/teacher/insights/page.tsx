@@ -25,7 +25,7 @@ function InsightContent({ content, className = "" }: { content: string; classNam
     return (
       <div className="relative group">
         <button
-          className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-white/80 hover:bg-white text-gray-600 rounded border border-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-white/80 hover:bg-white text-[var(--muted)] rounded border border-[var(--card-border)] opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={() => {
             const w = window.open('', '_blank');
             if (w) {
@@ -213,8 +213,8 @@ export default function TeacherInsightsPage() {
         {/* 页面头部 */}
         <div className="flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-semibold text-[#1A1A1A]">学情洞察</h2>
-            <p className="text-[#63666F] text-sm mt-1">
+            <h2 className="text-xl font-semibold text-[var(--title)]">学情洞察</h2>
+            <p className="text-[var(--muted)] text-sm mt-1">
               查看班级和学生的学情分析结果，支持多维度洞察
             </p>
           </div>
@@ -231,8 +231,8 @@ export default function TeacherInsightsPage() {
         <Card>
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-medium text-[#1A1A1A]">学情洞察数据来源</h3>
-              <p className="text-sm text-[#63666F] mt-1">
+              <h3 className="font-medium text-[var(--foreground)]">学情洞察数据来源</h3>
+              <p className="text-sm text-[var(--muted)] mt-1">
                 由系统设置统一配置
               </p>
             </div>
@@ -240,15 +240,15 @@ export default function TeacherInsightsPage() {
               {insightSource === "CONVERSATIONS" ? "原始对话数据" : "存在报告"}
             </Tag>
           </div>
-          <div className="mt-3 p-3 bg-[#EDF1F7] rounded-lg text-sm">
+          <div className="mt-3 p-3 bg-[var(--hover-bg)] rounded-lg text-sm">
             {insightSource === "CONVERSATIONS" ? (
               <p>
-                <span className="text-[#0052D9] font-medium">原始对话数据：</span>
+                <span className="text-[var(--primary)] font-medium">原始对话数据：</span>
                 使用学生的原始对话记录进行学情分析，可获得更全面的学生表现洞察。
               </p>
             ) : (
               <p>
-                <span className="text-[#00A870] font-medium">存在报告：</span>
+                <span className="text-[var(--success)] font-medium">存在报告：</span>
                 使用已生成的学情分析结果，不采集学生原始对话，保护隐私。
               </p>
             )}
@@ -260,13 +260,13 @@ export default function TeacherInsightsPage() {
           <Card
             title={
               <div className="flex items-center gap-2">
-                <ChartBarIcon className="text-[#0052D9]" />
+                <ChartBarIcon className="text-[var(--primary)]" />
                 <span>班级学情洞察</span>
               </div>
             }
           >
             {loading ? (
-              <div className="text-center py-8 text-gray-400">加载中...</div>
+              <div className="text-center py-8 text-[var(--muted-light)]">加载中...</div>
             ) : classSummary ? (
               <div>
                 <div className="flex items-center justify-between mb-3">
@@ -296,7 +296,7 @@ export default function TeacherInsightsPage() {
               </div>
             ) : (
               <div className="text-center py-8">
-                <p className="text-gray-400 mb-4">暂无学情洞察数据</p>
+                <p className="text-[var(--muted-light)] mb-4">暂无学情洞察数据</p>
                 <Button
                   theme="primary"
                   icon={<ChartBarIcon />}
@@ -321,35 +321,35 @@ export default function TeacherInsightsPage() {
           <Card
             title={
               <div className="flex items-center gap-2">
-                <ChartBarIcon className="text-[#00A870]" />
+                <ChartBarIcon className="text-[var(--success)]" />
                 <span>课堂级学情分析</span>
                 <Tag theme="primary" size="small">{taskInsights.length}</Tag>
               </div>
             }
           >
             {loading ? (
-              <div className="text-center py-8 text-gray-400">加载中...</div>
+              <div className="text-center py-8 text-[var(--muted-light)]">加载中...</div>
             ) : taskInsights.length > 0 ? (
               <div className="space-y-4">
                 {taskInsights.map((insight) => (
                   <div
                     key={insight.id}
-                    className="border border-gray-200 rounded-lg p-4 hover:border-[#0052D9]/30 transition-colors"
+                    className="border border-[var(--card-border)] rounded-lg p-4 hover:border-[var(--primary-light)] transition-colors"
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-medium text-[#1A1A1A]">{insight.taskTitle}</h4>
+                      <h4 className="font-medium text-[var(--foreground)]">{insight.taskTitle}</h4>
                       <Tag theme="success" variant="outline" size="small">
                         V{insight.version} · {formatInsightTime(insight.createdAt)}
                       </Tag>
                     </div>
-                    <div className="prose prose-sm max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all text-gray-600">
+                    <div className="prose prose-sm max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all text-[var(--muted)]">
                       <InsightContent content={`${insight.content.slice(0, 300)}${insight.content.length > 300 ? "..." : ""}`} />
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8 text-gray-400">
+              <div className="text-center py-8 text-[var(--muted-light)]">
                 暂无课堂级学情分析结果
               </div>
             )}
@@ -361,38 +361,38 @@ export default function TeacherInsightsPage() {
           <Card
             title={
               <div className="flex items-center gap-2">
-                <UserIcon className="text-[#63666F]" />
+                <UserIcon className="text-[var(--muted)]" />
                 <span>学生学情洞察</span>
                 <Tag theme="primary" size="small">{studentInsights.length}</Tag>
               </div>
             }
           >
             {loading ? (
-              <div className="text-center py-8 text-gray-400">加载中...</div>
+              <div className="text-center py-8 text-[var(--muted-light)]">加载中...</div>
             ) : studentInsights.length > 0 ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {studentInsights.map((insight) => (
                   <div
                     key={insight.id}
-                    className="border border-gray-200 rounded-lg p-4 hover:border-[#0052D9]/30 transition-colors"
+                    className="border border-[var(--card-border)] rounded-lg p-4 hover:border-[var(--primary-light)] transition-colors"
                   >
                     <div className="flex items-center justify-between mb-2">
-                      <h4 className="font-medium text-[#1A1A1A]">{insight.studentName}</h4>
+                      <h4 className="font-medium text-[var(--foreground)]">{insight.studentName}</h4>
                       <Tag theme="default" variant="outline" size="small">
                         V{insight.version}
                       </Tag>
                     </div>
-                    <div className="text-xs text-[#63666F] mb-2">
+                    <div className="text-xs text-[var(--muted)] mb-2">
                       {formatInsightTime(insight.createdAt)}
                     </div>
-                    <div className="prose prose-sm max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all text-gray-600">
+                    <div className="prose prose-sm max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all text-[var(--muted)]">
                       <InsightContent content={`${insight.content.slice(0, 200)}${insight.content.length > 200 ? "..." : ""}`} />
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="text-center py-8 text-gray-400">
+              <div className="text-center py-8 text-[var(--muted-light)]">
                 暂无学生学情洞察数据
               </div>
             )}
@@ -403,9 +403,9 @@ export default function TeacherInsightsPage() {
         {classes.length === 0 && (
           <Card>
             <div className="text-center py-12">
-              <ChartBarIcon className="w-12 h-12 mx-auto text-gray-300 mb-4" />
-              <p className="text-gray-500">暂无班级</p>
-              <p className="text-sm text-gray-400 mt-2">
+              <ChartBarIcon className="w-12 h-12 mx-auto text-[var(--muted-light)] mb-4" />
+              <p className="text-[var(--muted)]">暂无班级</p>
+              <p className="text-sm text-[var(--muted-light)] mt-2">
                 请先在「班级管理」中创建班级
               </p>
             </div>
@@ -425,16 +425,16 @@ export default function TeacherInsightsPage() {
         }}
         renderContent={(content) => (
           <div className="space-y-4">
-            <div className="flex items-start gap-2 p-3 bg-[#F0F5FF] rounded-lg">
-              <InfoCircleIcon className="text-[#0052D9] mt-0.5 shrink-0" />
-              <p className="text-sm text-[#1A1A1A]">
+            <div className="flex items-start gap-2 p-3 bg-[var(--primary-light)] rounded-lg">
+              <InfoCircleIcon className="text-[var(--primary)] mt-0.5 shrink-0" />
+              <p className="text-sm text-[var(--foreground)]">
                 以下是将一次性发送给 AI 模型的完整消息。确认无误后点击「同意并发送」。
               </p>
             </div>
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <span className="px-2 py-0.5 bg-[#E8F0FE] text-[#0052D9] text-xs font-medium rounded">user</span>
-                <span className="text-xs text-[#63666F]">
+                <span className="px-2 py-0.5 bg-[var(--primary-light)] text-[var(--primary)] text-xs font-medium rounded">user</span>
+                <span className="text-xs text-[var(--muted)]">
                   包含分析指令 + 嵌入的对话数据或下级分析结果
                 </span>
               </div>

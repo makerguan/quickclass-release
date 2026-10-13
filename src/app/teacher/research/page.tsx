@@ -89,8 +89,8 @@ export default function ResearchListPage() {
       <div className="p-6 w-full">
         <div className="flex items-center justify-between mb-6">
           <div>
-            <h1 className="text-2xl font-bold text-[#1A1A1A]">教学研究</h1>
-            <p className="text-sm text-gray-500 mt-1">
+            <h1 className="text-2xl font-bold text-[var(--title)]">教学研究</h1>
+            <p className="text-sm text-[var(--muted)] mt-1">
               基于真实教学数据，AI 辅助生成课题方案和论文初稿
             </p>
           </div>
@@ -106,12 +106,12 @@ export default function ResearchListPage() {
             <Loading />
           </div>
         ) : projects.length === 0 ? (
-          <div className="bg-white rounded-lg border border-gray-200 p-12 text-center">
+          <div className="bg-white rounded-lg border border-[var(--card-border)] p-12 text-center">
             <div className="text-5xl mb-4">📝</div>
-            <h3 className="text-lg font-medium text-gray-700 mb-2">
+            <h3 className="text-lg font-medium text-[var(--foreground)] mb-2">
               还没有研究项目
             </h3>
-            <p className="text-sm text-gray-500 mb-4">
+            <p className="text-sm text-[var(--muted)] mb-4">
               点击右上角按钮，创建第一个基于真实教学数据的研究项目
             </p>
             <Link href="/teacher/research/new">
@@ -124,7 +124,7 @@ export default function ResearchListPage() {
               {pagedProjects.map((p) => (
                 <div
                   key={p.id}
-                  className="bg-white rounded-lg border border-gray-200 p-5 hover:border-[#0052D9] transition-colors"
+                  className="bg-white rounded-lg border border-[var(--card-border)] p-5 hover:border-[var(--primary)] transition-colors"
                 >
                   <div className="flex items-start justify-between">
                     <div className="flex-1 min-w-0">
@@ -132,7 +132,7 @@ export default function ResearchListPage() {
                         <span className="text-2xl">
                           {p.projectType === "PAPER" ? "📄" : "📋"}
                         </span>
-                        <h3 className="font-semibold text-lg text-[#1A1A1A]">
+                        <h3 className="font-semibold text-lg text-[var(--foreground)]">
                           {p.projectName}
                         </h3>
                         <Tag theme={typeTagTheme(p.projectType)} variant="light" size="small">
@@ -143,12 +143,12 @@ export default function ResearchListPage() {
                         </Tag>
                       </div>
                       {p.selectedTitle ? (
-                        <p className="text-sm text-gray-600 mb-1">
-                          <span className="text-gray-400">研究题目：</span>
+                        <p className="text-sm text-[var(--muted)] mb-1">
+                          <span className="text-[var(--muted-light)]">研究题目：</span>
                           {p.selectedTitle}
                         </p>
                       ) : null}
-                      <p className="text-xs text-gray-400">
+                      <p className="text-xs text-[var(--muted-light)]">
                         更新于 {new Date(p.updatedAt).toLocaleString()}
                       </p>
                     </div>
@@ -210,7 +210,7 @@ export default function ResearchListPage() {
 
             {projects.length > 0 && (
               <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2 text-sm text-[#63666F]">
+                <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
                   <span>每页</span>
                   <InputNumber
                     value={pageSize}

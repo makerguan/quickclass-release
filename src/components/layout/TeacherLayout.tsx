@@ -4,6 +4,14 @@ import { useEffect, useState } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Menu, Button } from "tdesign-react";
 import * as Icon from "tdesign-icons-react";
+import {
+  TeacherThemeKey,
+  TEACHER_THEMES,
+  getSavedTeacherTheme,
+  getTeacherTheme,
+  getTeacherThemeVars,
+  saveTeacherTheme,
+} from "@/lib/teacher-theme";
 
 export default function TeacherLayout({
   children,
@@ -16,6 +24,30 @@ export default function TeacherLayout({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showExternal, setShowExternal] = useState(false);
   const [externalUrl, setExternalUrl] = useState("");
+  const [themeKey, setThemeKey] = useState<TeacherThemeKey>("default");
+
+  useEffect(() => {
+    setThemeKey(getSavedTeacherTheme());
+  }, []);
+
+  const theme = getTeacherTheme(themeKey);
+  const cssVars = getTeacherThemeVars(themeKey) as React.CSSProperties;
+
+  // 把主题变量同步到 <html>，并打上 data-teacher-theme 标记（2026-10-13）
+  // ⚠️ GOTCHA：TDesign 弹窗/浮层 portal 到 body，不在 layout 树内，只靠根节点内联变量
+  //    覆盖不到 → 弹窗里的按钮会退回 TDesign 默认蓝。
+  // 离开教师端（组件卸载）时清理变量与标记，避免污染学生端/登录页。
+  // 🔗 RELATED: globals.css 中以 html[data-teacher-theme] 为前缀的组件着色规则
+  useEffect(() => {
+    const root = document.documentElement;
+    const vars = getTeacherThemeVars(themeKey);
+    root.setAttribute("data-teacher-theme", themeKey);
+    Object.entries(vars).forEach(([k, v]) => root.style.setProperty(k, v));
+    return () => {
+      root.removeAttribute("data-teacher-theme");
+      Object.keys(vars).forEach((k) => root.style.removeProperty(k));
+    };
+  }, [themeKey]);
 
   useEffect(() => {
     const stored = localStorage.getItem("user");
@@ -100,17 +132,20 @@ export default function TeacherLayout({
   };
 
   return (
-    <div className="h-screen overflow-hidden flex flex-row">
-      <div className={`bg-white border-r border-gray-200 relative overflow-hidden transition-all duration-200 flex flex-col ${sidebarCollapsed ? 'w-10 min-w-10' : 'w-52 min-w-52'}`}>
-        <div className="p-4 border-b border-gray-200 flex flex-col gap-1">
+    <div className="h-screen overflow-hidden flex flex-row" style={cssVars}>
+      <div className={`bg-[var(--sidebar-bg)] border-r border-[var(--sidebar-border)] relative overflow-hidden transition-all duration-200 flex flex-col shadow-[2px_0_8px_rgba(0,0,0,0.02)] ${sidebarCollapsed ? 'w-10 min-w-10' : 'w-52 min-w-52'}`}>
+        <div
+          className="p-4 border-b border-[var(--sidebar-border)] flex flex-col gap-1"
+          style={{ background: theme.colors.sidebarHeaderBg }}
+        >
           {!sidebarCollapsed && (
             <>
-              <h2 className="text-lg font-bold text-[#0052D9]">QuickClass Agent</h2>
-              <p className="text-sm font-medium text-gray-700">宁创教学智能体</p>
+              <h2 className="text-lg font-bold text-[var(--primary)] tracking-tight">QuickClass Agent</h2>
+              <p className="text-xs font-medium text-[var(--muted)]">宁创教学智能体</p>
             </>
           )}
           <button
-            className="text-gray-400 hover:text-gray-600 text-xs px-1 ml-auto"
+            className="text-[var(--muted-light)] hover:text-[var(--foreground)] text-xs px-1 ml-auto transition-colors"
             onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             title={sidebarCollapsed ? "展开侧边栏" : "收起侧边栏"}
           >
@@ -132,26 +167,29 @@ export default function TeacherLayout({
           ))}
         </Menu>
         )}
-        <div className="mt-auto p-4 border-t border-gray-200">
+        {/* 底栏（2026-10-13 苹果式）：去色底，仅发丝分隔线；⛔ DO NOT ADD 图标底色 */}
+        <div className="mt-auto p-4 border-t border-[var(--sidebar-border)]">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Icon.UsergroupIcon />
-              {!sidebarCollapsed && <span className="text-sm">{user?.name}</span>}
+              <Icon.UsergroupIcon className="text-[var(--primary)]" size="20px" />
+              {!sidebarCollapsed && <span className="text-sm font-medium text-[var(--foreground)]">{user?.name}</span>}
             </div>
             <Button
               theme="default"
               variant="text"
               size="small"
-              icon={<Icon.LogoutIcon />}
+              icon={<Icon.LogoutIcon className="text-[var(--muted)]" />}
               onClick={handleLogout}
+              className="hover:text-[var(--danger)] hover:bg-[var(--danger-light)]"
             >
-              {!sidebarCollapsed && "退出"}
+              {!sidebarCollapsed && <span className="text-[var(--muted)]">退出</span>}
             </Button>
           </div>
         </div>
       </div>
       <div className="flex-1 flex flex-col">
-        <div className="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-3">
+        {/* 顶栏（2026-10-13 苹果式）：纯色 + 发丝边框，不用渐变和投影 */}
+        <div className="bg-[var(--sidebar-bg)] border-b border-[var(--sidebar-border)] px-6 py-3.5 flex items-center gap-3">
           {showExternal && (
             <Button
               theme="default"
@@ -161,17 +199,38 @@ export default function TeacherLayout({
               ← 返回
             </Button>
           )}
-          <h1 className="text-xl font-semibold text-[#1A1A1A] whitespace-nowrap">{showExternal ? '资源广场' : user?.name + '的工作台'}</h1>
+          {/* 页级大标题跟随主题色系（2026-10-13 用户反馈）：用 --title 而非近乎恒定的 --foreground */}
+          <h1 className="text-xl font-semibold text-[var(--title)] whitespace-nowrap">{showExternal ? '资源广场' : user?.name + '的工作台'}</h1>
           {!showExternal && user && (user as any).motto && (
             <div className="flex-1 min-w-0 overflow-hidden [mask-image:linear-gradient(90deg,transparent_12px,black_32px,black_calc(100%-32px),transparent_calc(100%-12px))]">
-              <div className="inline-block whitespace-nowrap animate-marquee text-sm text-[#63666F]">
+              <div className="inline-block whitespace-nowrap animate-marquee text-sm text-[var(--muted)]">
                 <span>{(user as any).motto}</span>
                 <span className="ml-16">{(user as any).motto}</span>
               </div>
             </div>
           )}
+          {/* 主题切换（2026-10-13）：6 套预设配色的「色点」快速切换，保存在 localStorage。
+              🔗 RELATED: src/lib/teacher-theme.ts（新增主题只需改那里，此处自动列出） */}
+          {!sidebarCollapsed && !showExternal && (
+            <div className="ml-auto flex items-center gap-1.5 pl-3 border-l border-[var(--sidebar-border)]">
+              <span className="text-xs text-[var(--muted-light)] hidden xl:inline mr-0.5">主题</span>
+              {TEACHER_THEMES.map((t) => (
+                <button
+                  key={t.key}
+                  title={t.label}
+                  aria-label={t.label}
+                  onClick={() => {
+                    setThemeKey(t.key);
+                    saveTeacherTheme(t.key);
+                  }}
+                  className={`w-2.5 h-2.5 rounded-full transition-all hover:scale-125 ${themeKey === t.key ? 'ring-2 ring-offset-1 ring-[var(--primary)]' : 'ring-1 ring-[rgba(0,0,0,0.12)] hover:ring-[var(--muted-light)]'}`}
+                  style={{ backgroundColor: t.colors.primary }}
+                />
+              ))}
+            </div>
+          )}
         </div>
-        <div className="p-6 bg-[#F3F6F9] flex-1 min-h-0 overflow-y-auto">
+        <div className="teacher-scope p-6 bg-[var(--background)] flex-1 min-h-0 overflow-y-auto">
           {showExternal ? (
             <iframe
               src={externalUrl}

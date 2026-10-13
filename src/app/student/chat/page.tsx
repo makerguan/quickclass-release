@@ -38,6 +38,9 @@ interface PresetConversation {
   title: string;
   description?: string;
   systemPrompt?: string;
+  // 📐 跨类型统一排序（2026-10-12）：4 表共用一个 sortOrder 数值空间（src/lib/activities/unified-order.ts），
+  // 学生端侧边栏按它合并渲染授课顺序
+  sortOrder?: number;
 }
 
 interface SubProject {
@@ -61,6 +64,7 @@ interface ExplorationInfo {
   enableSubmission?: boolean;
   enableAiCompanion?: boolean;
   questionsJson?: string;
+  sortOrder?: number;
 }
 
 interface QuestionData {
@@ -81,6 +85,7 @@ interface QuizInfo {
   status?: string;
   questions?: QuestionData[];
   _count?: { questions: number; attempts: number };
+  sortOrder?: number;
 }
 
 interface ProjectSubmissionInfo {
@@ -91,6 +96,7 @@ interface ProjectSubmissionInfo {
   visibleToClass: boolean;
   allowLike: boolean;
   fileSizeLimit: number;
+  sortOrder?: number;
 }
 
 interface LearningTask {
@@ -263,6 +269,10 @@ export default function StudentChatPage() {
   // 侧边栏折叠状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // 📐 课堂活动折叠状态（2026-10-12）：多课堂时默认只展开最新课堂（后端 orderBy createdAt desc，tasks[0] 最新），
+  // 其他课堂折叠；当前选中活动所在课堂强制展开，避免高亮项看不见。
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
+
   // 朗读的开关 / 音色 / 语速统一由 lib/speech-settings 管理（见 SpeechControls 组件）；
   // 这里只记录最新一条 AI 回答的下标，供自动朗读时高亮对应的朗读按钮。
   const assistantIndexRef = useRef(-1);
@@ -328,6 +338,37 @@ export default function StudentChatPage() {
   useEffect(() => {
     isSwitchingRef.current = false;
   }, [activePresetId, activeType]);
+
+  // 根据当前选中的活动 ID，反查它属于哪个课堂（用于自动展开该课堂）。
+  const getActiveTaskId = () => {
+    if (!activeType) return null;
+    for (const task of tasks) {
+      for (const sp of task.subProjects) {
+        if (activeType === "chat" && sp.presetConversations.some((pc) => pc.id === activePresetId)) return task.id;
+        if (activeType === "quiz" && (sp.quizActivities || []).some((q) => q.id === activeQuizId)) return task.id;
+        if (activeType === "exploration" && (sp.explorations || []).some((e) => e.id === activeExplorationId)) return task.id;
+        if (activeType === "project" && (sp.projectSubmissions || []).some((p) => p.id === activeProjectId)) return task.id;
+      }
+    }
+    return null;
+  };
+
+  // 多课堂折叠策略：首次加载默认展开最新课堂；切换活动后自动展开所在课堂。
+  useEffect(() => {
+    let changed = false;
+    const next = new Set(expandedTaskIds);
+    if (next.size === 0 && tasks.length > 0) {
+      next.add(tasks[0].id);
+      changed = true;
+    }
+    const activeTaskId = getActiveTaskId();
+    if (activeTaskId && !next.has(activeTaskId)) {
+      next.add(activeTaskId);
+      changed = true;
+    }
+    if (changed) setExpandedTaskIds(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, activeType, activePresetId, activeQuizId, activeExplorationId, activeProjectId]);
 
   const fetchData = async () => {
     const token = localStorage.getItem("token");
@@ -757,9 +798,22 @@ export default function StudentChatPage() {
                 const allQuizzes = task.subProjects.flatMap((sp) => (sp.quizActivities || []).filter(q => q.status === "ACTIVE"));
                 return (
                   <div key={task.id}>
-                    {/* 任务标题 */}
-                    <div className="px-3 py-2.5 border-b border-gray-100 bg-gray-50">
+                    {/* 任务标题（可点击折叠/展开课堂活动） */}
+                    <div
+                      className="px-3 py-2.5 border-b border-gray-100 bg-gray-50 cursor-pointer hover:bg-gray-100"
+                      onClick={() => {
+                        setExpandedTaskIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(task.id)) next.delete(task.id);
+                          else next.add(task.id);
+                          return next;
+                        });
+                      }}
+                    >
                       <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-400 w-4 text-center">
+                          {expandedTaskIds.has(task.id) ? "▼" : "▶"}
+                        </span>
                         <FolderIcon className="text-[#0052D9]" size="16px" />
                         <span className="text-sm font-medium text-[#1A1A1A] truncate">
                           {task.title}
@@ -767,175 +821,88 @@ export default function StudentChatPage() {
                       </div>
                     </div>
 
-                    {/* 学习活动 + 对话活动 */}
-                    {task.subProjects.map((sp) => (
-                      <div key={sp.id}>
-                        <div className="px-3 py-2 pl-8 border-b border-gray-50 bg-gray-50/50">
-                          <div className="flex items-center gap-2">
-                            <FolderIcon className="text-[#ED7B2F]" size="14px" />
-                            <span className="text-sm text-[#333] truncate">{sp.title === "默认活动" ? "对话思考" : sp.title}</span>
-                          </div>
-                        </div>
-
-                        {/* 对话活动 */}
-                        {sp.presetConversations.map((pc) => {
-                          const convs = findConversations(pc.id);
-                          const isActive = activeType === "chat" && activePresetId === pc.id;
-                          // 取该预设下最新的一个对话加载到聊天区
-                          const latestConv = convs.length > 0 ? convs[0] : undefined;
-                          return (
-                            <div
-                              key={pc.id}
-                              className={`px-3 py-2 pl-14 cursor-pointer hover:bg-gray-100 border-b border-gray-50 ${
-                                isActive ? "bg-white border-l-2 border-l-[#0052D9]" : ""
-                              }`}
-                              onClick={() => {
-                                switchToChat(pc.id, latestConv?.id);
-                              }}
-                            >
-                              <div className="flex items-center gap-2">
-                                <ChatIcon
-                                  className={convs.length > 0 ? "text-[#00A870]" : "text-gray-400"}
-                                  size="14px"
-                                />
-                                <span className={`text-sm truncate ${isActive ? "text-[#0052D9] font-medium" : "text-[#333]"}`}>
-                                  {pc.title}
-                                </span>
-                                {convs.length > 0 && (
-                                  <Tag theme="success" variant="light" size="small">
-                                    已学
-                                  </Tag>
-                                )}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ))}
-
-                    {/* 互动探究入口 */}
-                    {task.subProjects.flatMap(sp => sp.explorations || []).length > 0 && (
-                      <div>
-                        <div className="px-3 py-2 pl-8 border-b border-gray-50 bg-gray-50/50">
-                          <div className="flex items-center gap-2">
-                            <FolderIcon className="text-[#00A870]" size="14px" />
-                            <span className="text-sm font-medium text-[#63666F]">互动探究</span>
-                          </div>
-                        </div>
-                        {task.subProjects.flatMap(sp =>
-                          (sp.explorations || []).map((exp: ExplorationInfo) => {
-                            const isActive = activeType === "exploration" && activeExplorationId === exp.id;
+                    {expandedTaskIds.has(task.id) && (
+                      <>
+                        {/* 📐 统一活动列表（2026-10-12）：4 类活动按老师设计的跨类型顺序合并渲染。
+                            排序口径 = 后端各表 sortOrder（4 表共用一个数值空间，见 src/lib/activities/unified-order.ts，
+                            存量数据经 scripts/migrate-unified-activity-order.mjs 重排）。
+                            ⛔ DO NOT REVERT: 不要改回按类型分组的 4 个区块——老师跨类型调的授课顺序会被拆散。
+                            停用/未发布活动学生端不显示（/api/student/tasks 已按 enabled/status 过滤，
+                            此处作业再按 ACTIVE 过滤一次兜底）。 */}
+                        {(() => {
+                          const acts = task.subProjects.flatMap((sp) => [
+                            ...(sp.presetConversations || []).map((pc) => ({ type: "conversation" as const, id: pc.id, sortOrder: pc.sortOrder ?? 0, pc })),
+                            ...(sp.explorations || []).map((exp) => ({ type: "exploration" as const, id: exp.id, sortOrder: exp.sortOrder ?? 0, exp })),
+                            ...(sp.projectSubmissions || []).map((ps) => ({ type: "project" as const, id: ps.id, sortOrder: ps.sortOrder ?? 0, ps })),
+                            ...(sp.quizActivities || []).filter((q) => q.status === "ACTIVE").map((quiz) => ({ type: "quiz" as const, id: quiz.id, sortOrder: quiz.sortOrder ?? 0, quiz })),
+                          ]).sort((a, b) => a.sortOrder - b.sortOrder);
+                          if (acts.length === 0) {
                             return (
-                              <div
-                                key={exp.id}
-                                className={`px-3 py-2 pl-14 cursor-pointer hover:bg-gray-100 border-b border-gray-50 ${
-                                  isActive ? "bg-white border-l-2 border-l-[#00A870]" : ""
-                                }`}
-onClick={() => {
-                                switchToExploration(exp.id);
-                              }}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <ChatIcon
-                                    className={isActive ? "text-[#00A870]" : "text-gray-400"}
-                                    size="14px"
-                                  />
-                                  <span className={`text-sm truncate ${isActive ? "text-[#00A870] font-medium" : "text-[#333]"}`}>
-                                    {exp.title}
-                                  </span>
-                                  {exp.enableSubmission && (
-                                    <Tag theme="success" variant="light" size="small">
-                                      可答题
-                                    </Tag>
-                                  )}
-                                </div>
+                              <div className="px-3 py-3 text-center text-gray-400 text-sm border-b border-gray-50">
+                                本课堂暂无活动
                               </div>
                             );
-                          })
-                        )}
-                      </div>
-                    )}
-
-                    {/* 项目提交入口 */}
-                    {task.subProjects.flatMap(sp => sp.projectSubmissions || []).length > 0 && (
-                      <div>
-                        <div className="px-3 py-2 pl-8 border-b border-gray-50 bg-gray-50/50">
-                          <div className="flex items-center gap-2">
-                            <FolderIcon className="text-[#FF7D00]" size="14px" />
-                            <span className="text-sm font-medium text-[#63666F]">项目提交</span>
-                          </div>
-                        </div>
-                        {task.subProjects.flatMap(sp =>
-                          (sp.projectSubmissions || []).map((ps: ProjectSubmissionInfo) => {
-                            const isActive = activeType === "project" && activeProjectId === ps.id;
+                          }
+                          const colorMap = { conversation: "#0052D9", exploration: "#00A870", project: "#FF7D00", quiz: "#6366F1" } as const;
+                          return acts.map((act) => {
+                            const color = colorMap[act.type];
+                            const isActive =
+                              (act.type === "conversation" && activeType === "chat" && activePresetId === act.id) ||
+                              (act.type === "exploration" && activeType === "exploration" && activeExplorationId === act.id) ||
+                              (act.type === "project" && activeType === "project" && activeProjectId === act.id) ||
+                              (act.type === "quiz" && activeType === "quiz" && activeQuizId === act.id);
+                            const title = act.type === "conversation" ? act.pc.title : act.type === "exploration" ? act.exp.title : act.type === "project" ? act.ps.title : act.quiz.title;
                             return (
                               <div
-                                key={ps.id}
-                                className={`px-3 py-2 pl-14 cursor-pointer hover:bg-gray-100 border-b border-gray-50 ${
-                                  isActive ? "bg-white border-l-2 border-l-[#FF7D00]" : ""
-                                }`}
+                                key={`${act.type}-${act.id}`}
+                                className={`px-3 py-2 pl-8 cursor-pointer hover:bg-gray-100 border-b border-gray-50 ${isActive ? "bg-white border-l-2" : ""}`}
+                                style={isActive ? { borderLeftColor: color } : undefined}
                                 onClick={() => {
-                                  switchToProject(ps.id);
+                                  if (act.type === "conversation") {
+                                    const convs = findConversations(act.pc.id);
+                                    // 取该预设下最新的一个对话加载到聊天区
+                                    const latestConv = convs.length > 0 ? convs[0] : undefined;
+                                    switchToChat(act.pc.id, latestConv?.id);
+                                  } else if (act.type === "exploration") {
+                                    switchToExploration(act.exp.id);
+                                  } else if (act.type === "project") {
+                                    switchToProject(act.ps.id);
+                                  } else {
+                                    switchToQuiz(act.quiz.id);
+                                  }
                                 }}
                               >
                                 <div className="flex items-center gap-2">
                                   <ChatIcon
-                                    className={isActive ? "text-[#FF7D00]" : "text-gray-400"}
+                                    className={isActive ? "" : "text-gray-400"}
                                     size="14px"
+                                    style={{ color }}
                                   />
-                                  <span className={`text-sm truncate ${isActive ? "text-[#FF7D00] font-medium" : "text-[#333]"}`}>
-                                    {ps.title}
+                                  <span className={`text-sm truncate ${isActive ? "font-medium" : "text-[#333]"}`} style={isActive ? { color } : undefined}>
+                                    {title}
                                   </span>
-                                  <Tag theme="warning" variant="light" size="small">
-                                    {ps.category === "TEXT" ? "文本" : ps.category === "IMAGE" ? "图片" : "视频"}
-                                  </Tag>
+                                  {act.type === "conversation" && findConversations(act.pc.id).length > 0 && (
+                                    <Tag theme="success" variant="light" size="small">
+                                      已学
+                                    </Tag>
+                                  )}
+                                  {act.type === "exploration" && act.exp.enableSubmission && (
+                                    <Tag theme="success" variant="light" size="small">
+                                      可答题
+                                    </Tag>
+                                  )}
+                                  {act.type === "project" && (
+                                    <Tag theme="warning" variant="light" size="small">
+                                      {act.ps.category === "TEXT" ? "文本" : act.ps.category === "IMAGE" ? "图片" : "视频"}
+                                    </Tag>
+                                  )}
+                                  {/* 2026-10-13 需求：作业名片不显示题目数量（原 {act.quiz._count.questions}题 Tag 已移除） */}
                                 </div>
                               </div>
                             );
-                          })
-                        )}
-                      </div>
-                    )}
-
-                    {/* 作业入口 */}
-                    {allQuizzes.length > 0 && (
-                      <div>
-                        <div className="px-3 py-2 pl-8 border-b border-gray-50 bg-gray-50/50">
-                          <div className="flex items-center gap-2">
-                            <FolderIcon className="text-[#6366F1]" size="14px" />
-                            <span className="text-sm font-medium text-[#63666F]">课堂作业</span>
-                          </div>
-                        </div>
-                        {allQuizzes.map((quiz) => {
-                          const isActive = activeType === "quiz" && activeQuizId === quiz.id;
-                          return (
-                            <div
-                              key={quiz.id}
-                              className={`px-3 py-2 pl-14 cursor-pointer hover:bg-gray-100 border-b border-gray-50 ${
-                                isActive ? "bg-white border-l-2 border-l-[#6366F1]" : ""
-                              }`}
-                              onClick={() => {
-                                switchToQuiz(quiz.id);
-                              }}
-                            >
-                              <div className="flex items-center gap-2">
-                                <ChatIcon
-                                  className={isActive ? "text-[#6366F1]" : "text-gray-400"}
-                                  size="14px"
-                                />
-                                <span className={`text-sm truncate ${isActive ? "text-[#6366F1] font-medium" : "text-[#333]"}`}>
-                                  {quiz.title}
-                                </span>
-                                {quiz._count?.questions ? (
-                                  <Tag theme="primary" variant="light" size="small">
-                                    {quiz._count.questions}题
-                                  </Tag>
-                                ) : null}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                          });
+                        })()}
+                      </>
                     )}
                   </div>
                 );

@@ -79,48 +79,45 @@ const parseNamePrefix = (
 const withNamePrefix = (name: string, prefix: string): string =>
   prefix + (name.replace(/^\[[^\]]*\]\s*/, "").trim() || "未命名模板");
 
+// 主题化（2026-10-13）：六类模板图标色全部走教师端主题的 CSS 变量（见 lib/teacher-theme.ts）。
+// 分类区分靠「不同语义令牌」而非固定色值：纯黑白/灰度主题下仍保持层级差异但依旧是单色。
+// ⛔ DO NOT REVERT：CSS 变量可直接用于内联 style；改回固定 hex 会让这两套单色主题出现彩色残留。
 const TYPE_CONFIG = {
   conversation: {
     title: "学生对话设计模板",
     description: "用于设计学生对话活动的提示词",
     icon: ChatIcon,
-    color: "#ED7B2F",
-    bgColor: "#FFF3E0",
+    color: "var(--warning)",
   },
   student: {
     title: "学生个人学情模板",
     description: "用于分析单个学生的对话表现",
     icon: UserIcon,
-    color: "#0052D9",
-    bgColor: "#E8F0FE",
+    color: "var(--primary)",
   },
   class: {
     title: "学生全班学情模板",
     description: "用于汇总分析全班学生的对话情况",
     icon: UsergroupIcon,
-    color: "#00A870",
-    bgColor: "#E8F8F0",
+    color: "var(--success)",
   },
   QUIZ_DESIGN: {
     title: "课堂作业设计模板",
     description: "用于AI生成课堂作业题目",
     icon: FileIcon,
-    color: "#9C27B0",
-    bgColor: "#F3E5F5",
+    color: "var(--accent)",
   },
   QUIZ_ANALYSIS: {
     title: "课堂作业分析模板",
     description: "用于AI分析班级作业结果",
     icon: FileIcon,
-    color: "#00BCD4",
-    bgColor: "#E0F7FA",
+    color: "var(--secondary)",
   },
   EXPLORATION_ANALYSIS: {
     title: "互动探究分析模板",
     description: "用于AI分析互动探究提交结果",
     icon: FileIcon,
-    color: "#FF6B35",
-    bgColor: "#FFF3E8",
+    color: "var(--danger)",
   },
 } as const;
 
@@ -936,20 +933,16 @@ export default function TemplateSettingsPage() {
           >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div
-                className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0"
-                style={{ backgroundColor: config.bgColor }}
-              >
-                <Icon
-                  className="text-lg"
-                  style={{ color: config.color }}
-                />
-              </div>
+              {/* 苹果式纯色图标（2026-10-13）：⛔ DO NOT ADD 图标底色 */}
+              <Icon
+                className="text-xl flex-shrink-0"
+                style={{ color: config.color }}
+              />
               <div>
-                <h3 className="text-base font-semibold text-[#1A1A1A] leading-snug">
+                <h3 className="text-base font-semibold text-[var(--foreground)] leading-snug">
                   {config.title}
                 </h3>
-                <p className="text-xs text-[#63666F] leading-snug">{config.description}</p>
+                <p className="text-xs text-[var(--muted)] leading-snug">{config.description}</p>
               </div>
             </div>
 
@@ -961,7 +954,7 @@ export default function TemplateSettingsPage() {
                 {count}
               </span>
               <svg
-                className={`w-5 h-5 text-[#63666F] transition-transform duration-200 ${
+                className={`w-5 h-5 text-[var(--muted)] transition-transform duration-200 ${
                   isExpanded ? "rotate-180" : ""
                 }`}
                 fill="none"
@@ -984,7 +977,7 @@ export default function TemplateSettingsPage() {
         {isExpanded && (
           <Card className="template-compact-card rounded-t-none border-t-0 !shadow-md">
             {templates.length === 0 ? (
-              <div className="text-center py-6 text-[#BBBBBB]">
+              <div className="text-center py-6 text-[var(--muted-light)]">
                 <p className="text-sm mb-2">暂无{config.title}</p>
                 <div className="flex items-center justify-center gap-2">
                   <Button
@@ -1018,7 +1011,7 @@ export default function TemplateSettingsPage() {
             ) : (
               <div className="space-y-2">
                 <div className="flex items-center justify-between mb-3">
-                  <span className="text-sm text-[#63666F]">
+                  <span className="text-sm text-[var(--muted)]">
                     {count} 个模板
                     {defaultName && (
                       <span className="ml-2">
@@ -1058,7 +1051,7 @@ export default function TemplateSettingsPage() {
                 {templates.map((tpl) => (
                   <div
                     key={tpl.id}
-                    className="flex items-center justify-between gap-4 px-3 py-1 rounded-lg hover:bg-gray-50 transition-colors border border-gray-100"
+                    className="flex items-center justify-between gap-4 px-3 py-1 rounded-lg hover:bg-[var(--hover-bg)] transition-colors border border-[var(--card-border)]"
                   >
                     <div className="flex-1 min-w-0 flex items-center gap-2">
                       {tpl.isDefault && (
@@ -1066,8 +1059,8 @@ export default function TemplateSettingsPage() {
                           默认
                         </Tag>
                       )}
-                      <h4 className="font-medium text-[#1A1A1A] text-sm truncate">{tpl.name}</h4>
-                      <span className="text-xs text-[#BBBBBB] flex-shrink-0">
+                      <h4 className="font-medium text-[var(--foreground)] text-sm truncate">{tpl.name}</h4>
+                      <span className="text-xs text-[var(--muted-light)] flex-shrink-0">
                         {new Date(tpl.updatedAt).toLocaleDateString("zh-CN")} 更新
                       </span>
                     </div>
@@ -1085,7 +1078,7 @@ export default function TemplateSettingsPage() {
                           e.stopPropagation();
                           handleExport(tpl);
                         }}
-                        className="p-1 text-gray-400 hover:text-[#00A870] hover:bg-[#00A870]/10 rounded transition-colors"
+                        className="p-1 text-[var(--muted-light)] hover:text-[var(--success)] hover:bg-[var(--success-light)] rounded transition-colors"
                         title="导出"
                       >
                         <DownloadIcon className="text-base" />
@@ -1095,7 +1088,7 @@ export default function TemplateSettingsPage() {
                           e.stopPropagation();
                           openEditDialog(tpl);
                         }}
-                        className="p-1 text-gray-400 hover:text-[#0052D9] hover:bg-[#0052D9]/10 rounded transition-colors"
+                        className="p-1 text-[var(--muted-light)] hover:text-[var(--primary)] hover:bg-[var(--primary-light)] rounded transition-colors"
                         title="编辑"
                       >
                         <EditIcon className="text-base" />
@@ -1106,7 +1099,7 @@ export default function TemplateSettingsPage() {
                           setDeletingTemplate(tpl);
                           setDeleteDialogVisible(true);
                         }}
-                        className="p-1 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                        className="p-1 text-[var(--muted-light)] hover:text-[var(--danger)] hover:bg-[var(--danger-light)] rounded transition-colors"
                         title="删除"
                       >
                         <DeleteIcon className="text-base" />
@@ -1126,14 +1119,14 @@ export default function TemplateSettingsPage() {
     <TeacherLayout>
       <div className="space-y-6 pb-8">
           <div>
-            <h1 className="text-2xl font-bold text-[#1A1A1A]">模板设置</h1>
-            <p className="text-sm text-[#63666F] mt-1">
+            <h1 className="text-2xl font-bold text-[var(--title)]">模板设置</h1>
+            <p className="text-sm text-[var(--muted)] mt-1">
               点击类别展开模板列表，可设置默认模板自动应用于分析。
             </p>
           </div>
 
         {loading ? (
-          <div className="text-center text-gray-400 py-20">加载中...</div>
+          <div className="text-center text-[var(--muted-light)] py-20">加载中...</div>
         ) : (
           <div className="space-y-4">
             {(["student", "class", "conversation", "QUIZ_DESIGN", "QUIZ_ANALYSIS", "EXPLORATION_ANALYSIS"] as const).map(renderCategory)}
@@ -1154,10 +1147,10 @@ export default function TemplateSettingsPage() {
             <div className="p-4 space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <h3 className="text-base font-semibold text-[#1A1A1A]">
+                  <h3 className="text-base font-semibold text-[var(--foreground)]">
                     {editingTemplate ? "编辑模板" : "新建模板"}
                   </h3>
-                  <p className="text-xs text-[#63666F] mt-0.5">
+                  <p className="text-xs text-[var(--muted)] mt-0.5">
                     {editType === "conversation" ? "学生对话设计模板"
                       : editType === "student" ? "学生个人学情模板"
                       : editType === "class" ? "学生全班学情模板"
@@ -1168,7 +1161,7 @@ export default function TemplateSettingsPage() {
                 </div>
                 <button
                   onClick={() => setEditDialogVisible(false)}
-                  className="text-gray-400 hover:text-gray-600 text-xl leading-none"
+                  className="text-[var(--muted-light)] hover:text-[var(--muted)] text-xl leading-none"
                 >
                   ×
                 </button>
@@ -1176,13 +1169,13 @@ export default function TemplateSettingsPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-[#1A1A1A] mb-1">
-                    模板类别 <span className="text-red-500">*</span>
+                  <label className="block text-xs font-medium text-[var(--foreground)] mb-1">
+                    模板类别 <span className="text-[var(--danger)]">*</span>
                   </label>
                   <select
                     value={editType}
                     onChange={(e) => setEditType(e.target.value as "student" | "class" | "conversation" | "QUIZ_DESIGN" | "QUIZ_ANALYSIS" | "EXPLORATION_ANALYSIS")}
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9] focus:border-transparent"
+                    className="w-full px-2 py-1.5 border border-[var(--card-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent"
                   >
                     <option value="conversation">学生对话设计模板</option>
                     <option value="student">学生个人学情模板</option>
@@ -1193,29 +1186,29 @@ export default function TemplateSettingsPage() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#1A1A1A] mb-1">
-                    模板名称 <span className="text-red-500">*</span>
+                  <label className="block text-xs font-medium text-[var(--foreground)] mb-1">
+                    模板名称 <span className="text-[var(--danger)]">*</span>
                   </label>
                   <input
                     type="text"
                     value={editName}
                     onChange={(e) => setEditName(e.target.value)}
                     placeholder="例如：标准分析模板"
-                    className="w-full px-2 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9] focus:border-transparent"
+                    className="w-full px-2 py-1.5 border border-[var(--card-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent"
                   />
                 </div>
               </div>
 
               {editingTemplate && editingTemplate.type !== editType && (
-                <p className="text-xs text-[#ED7B2F]">注意：修改类别后，使用该模板的任务需要重新选择模板</p>
+                <p className="text-xs text-[var(--warning)]">注意：修改类别后，使用该模板的任务需要重新选择模板</p>
               )}
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <label className="text-xs font-medium text-[#1A1A1A]">
-                    模板内容 <span className="text-red-500">*</span>
+                  <label className="text-xs font-medium text-[var(--foreground)]">
+                    模板内容 <span className="text-[var(--danger)]">*</span>
                   </label>
-                  <span className="text-xs text-gray-400">{editContent.length} 字符</span>
+                  <span className="text-xs text-[var(--muted-light)]">{editContent.length} 字符</span>
                 </div>
 
                 {/* AI 帮我写（全部六类模板均支持，知识库见 src/lib/template-writing-guide.ts） */}
@@ -1225,9 +1218,9 @@ export default function TemplateSettingsPage() {
                 editType === "EXPLORATION_ANALYSIS" ||
                 editType === "student" ||
                 editType === "class" ? (
-                  <div className="mb-2 p-2 bg-[#F0F7FF] rounded-lg border border-[#C9DBFF]">
+                  <div className="mb-2 p-2 bg-[var(--primary-light)] rounded-lg border border-[var(--primary-light)]">
                     {editType === "QUIZ_DESIGN" && (
-                      <p className="text-xs text-[#63666F] mb-1.5">
+                      <p className="text-xs text-[var(--muted)] mb-1.5">
                         模板只需描述「出什么题」（题型、难度、情境等）；题目的 JSON 输出格式由系统在出题时自动附加，不会显示在模板正文里，也无需编写。
                       </p>
                     )}
@@ -1235,7 +1228,7 @@ export default function TemplateSettingsPage() {
                     {supportsAiDimensions && (
                       <div className="mb-2 space-y-1.5">
                         {/* 报告样式 + 模板类型同行；标签精简防折行，说明放 title 悬停提示 */}
-                        <div className="flex items-center gap-x-4 text-xs text-[#63666F]">
+                        <div className="flex items-center gap-x-4 text-xs text-[var(--muted)]">
                           <span className="flex items-center gap-x-2">
                             <span className="font-medium">报告样式：</span>
                             <label className="flex items-center gap-1 cursor-pointer" title="纯文本 Markdown 报告，生成快">
@@ -1284,7 +1277,7 @@ export default function TemplateSettingsPage() {
                           </span>
                         </div>
                         {isInsightType && aiMode === "generic" && (
-                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#63666F]">
+                          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[var(--muted)]">
                             <span className="font-medium">适用范围：</span>
                             <label className="flex items-center gap-1 cursor-pointer">
                               <input
@@ -1317,7 +1310,7 @@ export default function TemplateSettingsPage() {
                         onChange={(e) => setAiIntent(e.target.value)}
                         disabled={aiGenerating}
                         placeholder={aiIntentPlaceholder}
-                        className="flex-1 min-w-0 px-2 py-1.5 border border-gray-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-[#0052D9] focus:border-transparent disabled:opacity-50"
+                        className="flex-1 min-w-0 px-2 py-1.5 border border-[var(--card-border)] rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent disabled:opacity-50"
                       />
                       <Button
                         theme="primary"
@@ -1329,31 +1322,31 @@ export default function TemplateSettingsPage() {
                       </Button>
                     </div>
                     {aiGenerating && (
-                      <p className="text-xs text-[#0052D9] mt-1.5">
+                      <p className="text-xs text-[var(--primary)] mt-1.5">
                         AI 正在思考并撰写模板，通常需要 10~40 秒（已等待 {aiElapsed} 秒），请勿关闭弹窗
                       </p>
                     )}
                     {aiWarning && (
-                      <p className="text-xs text-[#ED7B2F] mt-1.5">注意：{aiWarning}</p>
+                      <p className="text-xs text-[var(--warning)] mt-1.5">注意：{aiWarning}</p>
                     )}
                     {aiPrevContent !== null && !aiGenerating && (
                       <button
                         onClick={handleUndoAI}
-                        className="text-xs text-[#0052D9] hover:underline mt-1.5"
+                        className="text-xs text-[var(--primary)] hover:underline mt-1.5"
                       >
                         撤销本次生成，恢复之前的内容
                       </button>
                     )}
                   </div>
                 ) : (
-                  <div className="mb-2 px-2 py-1.5 bg-gray-50 rounded-lg text-xs text-gray-400">
+                  <div className="mb-2 px-2 py-1.5 bg-[var(--hover-bg)] rounded-lg text-xs text-[var(--muted-light)]">
                     「AI 帮我写」暂未支持当前模板类型（已支持：对话设计、课堂作业设计、学情分析、作业分析、探究分析）
                   </div>
                 )}
 
                 {/* 变量插入区域 */}
-                <div className="mb-2 p-2 bg-[#FFF9E6] rounded-lg">
-                  <p className="text-xs text-[#8B5C00] mb-1.5 font-medium">
+                <div className="mb-2 p-2 bg-[var(--warning-light)] rounded-lg">
+                  <p className="text-xs text-[var(--warning)] mb-1.5 font-medium">
                     点击变量插入到光标位置
                   </p>
                   <div className="flex flex-wrap gap-1">
@@ -1361,7 +1354,7 @@ export default function TemplateSettingsPage() {
                       <button
                         key={v.name}
                         onClick={() => insertVariable(v.name)}
-                        className="px-1.5 py-0.5 bg-white border border-[#E8A000] rounded text-xs text-[#8B5C00] hover:bg-[#FFF3CC] transition-colors"
+                        className="px-1.5 py-0.5 bg-white border border-[var(--warning)] rounded text-xs text-[var(--warning)] hover:bg-[var(--warning-light)] transition-colors"
                         title={v.desc}
                       >
                         {`${v.desc}{${v.name}}`}
@@ -1377,7 +1370,7 @@ export default function TemplateSettingsPage() {
                   onChange={(e) => setEditContent(e.target.value)}
                   placeholder="在此编辑模板内容，点击上方变量按钮插入变量..."
                   rows={8}
-                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[#0052D9] focus:border-transparent resize-y"
+                  className="w-full px-3 py-2 border border-[var(--card-border)] rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent resize-y"
                 />
               </div>
 
@@ -1387,9 +1380,9 @@ export default function TemplateSettingsPage() {
                     type="checkbox"
                     checked={editIsDefault}
                     onChange={(e) => setEditIsDefault(e.target.checked)}
-                    className="w-3.5 h-3.5 text-[#0052D9] border-gray-300 rounded focus:ring-[#0052D9]"
+                    className="w-3.5 h-3.5 text-[var(--primary)] border-[var(--card-border)] rounded focus:ring-[var(--primary)]"
                   />
-                  <span className="text-sm text-[#1A1A1A]">设为默认模板</span>
+                  <span className="text-sm text-[var(--foreground)]">设为默认模板</span>
                 </label>
                 <div className="flex gap-2">
                   <Button
@@ -1420,13 +1413,13 @@ export default function TemplateSettingsPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <div className="p-6 space-y-4">
-              <h3 className="text-lg font-semibold text-[#1A1A1A]">
+              <h3 className="text-lg font-semibold text-[var(--foreground)]">
                 确认删除模板
               </h3>
               <p>
                 确定要删除模板 <strong>{deletingTemplate?.name}</strong> 吗？
               </p>
-              <p className="text-red-500 text-sm">此操作不可撤销。</p>
+              <p className="text-[var(--danger)] text-sm">此操作不可撤销。</p>
               <div className="flex gap-2 justify-end pt-4 border-t">
                 <Button
                   variant="outline"
@@ -1438,7 +1431,7 @@ export default function TemplateSettingsPage() {
                 <button
                   onClick={handleDelete}
                   disabled={deleting}
-                  className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50"
+                  className="px-4 py-2 bg-[var(--danger-light)]0 text-white rounded-lg hover:bg-[var(--danger)] disabled:opacity-50"
                 >
                   {deleting ? "删除中..." : "确认删除"}
                 </button>

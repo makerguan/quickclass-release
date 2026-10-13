@@ -81,7 +81,7 @@ function InsightContent({ content, className = "" }: { content: string; classNam
     return (
       <div className="relative group">
         <button
-          className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-white/80 hover:bg-white text-gray-600 rounded border border-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-[var(--card-bg)]/80 hover:bg-[var(--card-bg)] text-[var(--muted)] rounded border border-[var(--card-border)] opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={() => {
             const w = window.open('', '_blank');
             if (w) {
@@ -600,8 +600,8 @@ export default function ExplorationAnalysisPage() {
   const TabButton = ({ tabKey, label }: { tabKey: TabKey; label: string }) => (
     <button
       className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === tabKey
-        ? "border-blue-500 text-blue-600"
-        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+        ? "border-[var(--primary)] text-[var(--primary)]"
+        : "border-transparent text-[var(--muted)] hover:text-[var(--foreground)] hover:border-[var(--card-border)]"
         }`}
       onClick={() => { setActiveTab(tabKey); refreshLiveData(); }}
     >
@@ -615,11 +615,11 @@ export default function ExplorationAnalysisPage() {
       if (qfLoading) {
         return (
           <div className="space-y-4 animate-pulse" aria-label="数据大屏加载中">
-            <div className="h-20 rounded-2xl bg-blue-100/60" />
-            <div className="h-32 rounded-2xl bg-gray-100" />
+            <div className="h-20 rounded-2xl bg-[var(--primary-light)]" />
+            <div className="h-32 rounded-2xl bg-[var(--primary-lighter)]" />
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              <div className="h-48 rounded-2xl bg-gray-100" />
-              <div className="h-48 rounded-2xl bg-gray-100" />
+              <div className="h-48 rounded-2xl bg-[var(--primary-lighter)]" />
+              <div className="h-48 rounded-2xl bg-[var(--primary-lighter)]" />
             </div>
           </div>
         );
@@ -650,7 +650,7 @@ export default function ExplorationAnalysisPage() {
             value={aiDashInstruction}
             onChange={(e) => setAiDashInstruction(e.target.value)}
             placeholder="可选：描述风格或重点（如「深色科技风，突出年龄分布」「清新绿色」）"
-            className="flex-1 min-w-[220px] h-8 px-3 text-xs border border-gray-200 rounded-md focus:outline-none focus:border-blue-400"
+            className="flex-1 min-w-[220px] h-8 px-3 text-xs border border-[var(--card-border)] rounded-md focus:outline-none focus:border-[var(--primary)]"
           />
           {!editing && (
             <Button
@@ -675,7 +675,7 @@ export default function ExplorationAnalysisPage() {
           {/* 提交统计自动刷新（2026-10-11 从顶部导航移入本 tab）：
               轮询只刷新提交统计数据（refreshLiveData），放顶部会让人以为它也作用于 AI 报告等其他 tab。 */}
           <div className="flex items-center gap-2 ml-auto">
-            <span className="text-xs text-gray-500">自动刷新</span>
+            <span className="text-xs text-[var(--muted)]">自动刷新</span>
             <Switch size="small" value={autoRefresh} onChange={(v) => setAutoRefresh(!!v)} />
             {/* ⚠️ GOTCHA：默认 theme 是左右加减号（row），width 64 时两个按钮各占约 30px，
                 数字「15」被挤到只剩几像素、根本看不清；改用上下加减号（column）+ 加宽到 72 才能正常显示秒数。 */}
@@ -690,7 +690,7 @@ export default function ExplorationAnalysisPage() {
               onChange={(v) => setRefreshSeconds(Number(v) || 15)}
               style={{ width: 72 }}
             />
-            <span className="text-xs text-gray-400">秒</span>
+            <span className="text-xs text-[var(--muted-light)]">秒</span>
           </div>
         </div>
       );
@@ -699,7 +699,7 @@ export default function ExplorationAnalysisPage() {
         <div>
           {toolbar}
           {aiDashError && (
-            <div className="mb-3 text-xs text-red-500 bg-red-50 border border-red-100 rounded-md px-3 py-2">
+            <div className="mb-3 text-xs text-[var(--danger)] bg-[var(--danger-light)] border border-[var(--danger-light)] rounded-md px-3 py-2">
               {aiDashError}
             </div>
           )}
@@ -719,7 +719,7 @@ export default function ExplorationAnalysisPage() {
       );
     }
 
-    if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交数据</div>;
+    if (submissions.length === 0) return <div className="text-center py-8 text-sm text-[var(--muted-light)]">暂无提交数据</div>;
 
     const allAnswers: Record<string, any>[] = submissions.map((sub) => {
       try { return JSON.parse(sub.answers || "{}"); } catch { return {}; }
@@ -760,15 +760,15 @@ export default function ExplorationAnalysisPage() {
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-2 gap-4">
-          <div className="bg-blue-50 rounded-lg p-4 text-center">
-            <div className="text-3xl font-bold text-blue-700">{submissions.length}</div>
-            <div className="text-xs text-blue-500 mt-1">已提交</div>
+          <div className="bg-[var(--primary-light)] rounded-lg p-4 text-center">
+            <div className="text-3xl font-bold text-[var(--primary)]">{submissions.length}</div>
+            <div className="text-xs text-[var(--primary)] mt-1">已提交</div>
           </div>
-          <div className="bg-green-50 rounded-lg p-4 text-center">
-            <div className="text-3xl font-bold text-green-700">
+          <div className="bg-[var(--success-light)] rounded-lg p-4 text-center">
+            <div className="text-3xl font-bold text-[var(--success)]">
               {submissions.filter((s) => s.score !== null && s.score !== undefined).length}
             </div>
-            <div className="text-xs text-green-500 mt-1">已评分</div>
+            <div className="text-xs text-[var(--success)] mt-1">已评分</div>
           </div>
         </div>
 
@@ -790,19 +790,19 @@ export default function ExplorationAnalysisPage() {
 
             return (
               <div key={field}>
-                <h3 className="text-sm font-medium text-gray-600 mb-3">{fieldLabels[field] || field}</h3>
+                <h3 className="text-sm font-medium text-[var(--muted)] mb-3">{fieldLabels[field] || field}</h3>
                 <div className="grid grid-cols-3 gap-3">
-                  <div className="bg-purple-50 rounded-lg p-3 text-center">
-                    <div className="text-xl font-bold text-purple-700">{avg}</div>
-                    <div className="text-xs text-purple-500">平均值</div>
+                  <div className="bg-[var(--primary-lighter)] rounded-lg p-3 text-center">
+                    <div className="text-xl font-bold text-[var(--accent)]">{avg}</div>
+                    <div className="text-xs text-[var(--accent)]">平均值</div>
                   </div>
-                  <div className="bg-blue-50 rounded-lg p-3 text-center">
-                    <div className="text-xl font-bold text-blue-700">{min}</div>
-                    <div className="text-xs text-blue-500">最小值</div>
+                  <div className="bg-[var(--primary-light)] rounded-lg p-3 text-center">
+                    <div className="text-xl font-bold text-[var(--primary)]">{min}</div>
+                    <div className="text-xs text-[var(--primary)]">最小值</div>
                   </div>
-                  <div className="bg-green-50 rounded-lg p-3 text-center">
-                    <div className="text-xl font-bold text-green-700">{max}</div>
-                    <div className="text-xs text-green-500">最大值</div>
+                  <div className="bg-[var(--success-light)] rounded-lg p-3 text-center">
+                    <div className="text-xl font-bold text-[var(--success)]">{max}</div>
+                    <div className="text-xs text-[var(--success)]">最大值</div>
                   </div>
                 </div>
               </div>
@@ -820,12 +820,12 @@ export default function ExplorationAnalysisPage() {
 
             return (
               <div key={field}>
-                <h3 className="text-sm font-medium text-gray-600 mb-3">{fieldLabels[field] || field}</h3>
+                <h3 className="text-sm font-medium text-[var(--muted)] mb-3">{fieldLabels[field] || field}</h3>
                 <div className="flex flex-wrap gap-2">
                   {entries.map(([item, count]) => (
-                    <div key={item} className="bg-gray-50 rounded-full px-3 py-1 text-xs">
-                      <span className="text-gray-500">{item}</span>
-                      <span className="ml-1 font-medium text-gray-700">{count}人</span>
+                    <div key={item} className="bg-[var(--hover-bg)] rounded-full px-3 py-1 text-xs">
+                      <span className="text-[var(--muted)]">{item}</span>
+                      <span className="ml-1 font-medium text-[var(--foreground)]">{count}人</span>
                     </div>
                   ))}
                 </div>
@@ -843,28 +843,28 @@ export default function ExplorationAnalysisPage() {
 
           return (
             <div key={field}>
-              <h3 className="text-sm font-medium text-gray-600 mb-3">{fieldLabels[field] || field}</h3>
+              <h3 className="text-sm font-medium text-[var(--muted)] mb-3">{fieldLabels[field] || field}</h3>
               {uniqueValues.length <= 3 ? (
                 <div className="space-y-2">
                   {sorted.map(([val, count]) => (
                     <div key={val} className="flex items-center gap-3 text-xs">
-                      <span className="w-20 text-gray-500 truncate">{val}</span>
-                      <div className="flex-1 bg-gray-100 rounded-full h-3">
+                      <span className="w-20 text-[var(--muted)] truncate">{val}</span>
+                      <div className="flex-1 bg-[var(--primary-lighter)] rounded-full h-3">
                         <div
-                          className="bg-blue-400 rounded-full h-3 transition-all"
+                          className="bg-[var(--primary)] rounded-full h-3 transition-all"
                           style={{ width: `${(count / values.length) * 100}%` }}
                         />
                       </div>
-                      <span className="text-gray-600 w-6">{count}人</span>
+                      <span className="text-[var(--muted)] w-6">{count}人</span>
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {sorted.map(([val, count]) => (
-                    <div key={val} className="bg-gray-50 rounded-full px-3 py-1 text-xs">
-                      <span className="text-gray-700">{val}</span>
-                      <span className="ml-1 text-gray-400">({count}人)</span>
+                    <div key={val} className="bg-[var(--hover-bg)] rounded-full px-3 py-1 text-xs">
+                      <span className="text-[var(--foreground)]">{val}</span>
+                      <span className="ml-1 text-[var(--muted-light)]">({count}人)</span>
                     </div>
                   ))}
                 </div>
@@ -882,7 +882,7 @@ export default function ExplorationAnalysisPage() {
   //   这里抽成独立函数，供下方「收集数据 / 行为数据」切换复用，避免行为轨丢失。
   // ⛔ DO NOT REVERT：不要把行为数据视图从双轨探究里摘掉——那会退回「作品快照无入口」。
   const renderBehaviorSubmissions = () => {
-    if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交记录</div>;
+    if (submissions.length === 0) return <div className="text-center py-8 text-sm text-[var(--muted-light)]">暂无提交记录</div>;
 
     const toggleExpand = (id: string, studentId: string, canvasCount: number) => {
       const willExpand = !expandedIds.has(id);
@@ -929,13 +929,13 @@ export default function ExplorationAnalysisPage() {
       return (
         <div className="space-y-3">
           {items.length === 0 && canvasShots.length === 0 ? (
-            <div className="text-xs text-gray-400">无数据</div>
+            <div className="text-xs text-[var(--muted-light)]">无数据</div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {items.map(([key, val]) => (
-                <div key={key} className="bg-gray-50 rounded px-3 py-2">
-                  <div className="text-xs text-gray-400">{fieldLabels[key] || key}</div>
-                  <div className="text-sm font-medium text-gray-700 mt-0.5">
+                <div key={key} className="bg-[var(--hover-bg)] rounded px-3 py-2">
+                  <div className="text-xs text-[var(--muted-light)]">{fieldLabels[key] || key}</div>
+                  <div className="text-sm font-medium text-[var(--foreground)] mt-0.5">
                     {key === "completedSections"
                       ? (Array.isArray(val) && val.length > 0 ? val.join("、") : "无")
                       : Array.isArray(val) ? val.join("、") : String(val)}
@@ -943,9 +943,9 @@ export default function ExplorationAnalysisPage() {
                 </div>
               ))}
               {scoreInferred === true && (
-                <div className="bg-amber-50 rounded px-3 py-2">
-                  <div className="text-xs text-gray-400">分数来源</div>
-                  <div className="text-sm font-medium text-amber-700 mt-0.5">页面文本推测（页面未主动上报）</div>
+                <div className="bg-[var(--warning-light)] rounded px-3 py-2">
+                  <div className="text-xs text-[var(--muted-light)]">分数来源</div>
+                  <div className="text-sm font-medium text-[var(--warning)] mt-0.5">页面文本推测（页面未主动上报）</div>
                 </div>
               )}
             </div>
@@ -954,8 +954,8 @@ export default function ExplorationAnalysisPage() {
           {/* AI 上报的页面状态（契约轨明细） */}
           {gameState && typeof gameState === "object" && Object.keys(gameState).length > 0 && (
             <div>
-              <div className="text-xs text-gray-400 mb-1">🤖 页面状态（AI 上报）</div>
-              <div className="bg-blue-50/50 rounded p-2 text-xs font-mono break-all">
+              <div className="text-xs text-[var(--muted-light)] mb-1">🤖 页面状态（AI 上报）</div>
+              <div className="bg-[var(--primary-light)] rounded p-2 text-xs font-mono break-all">
                 {JSON.stringify(gameState)}
               </div>
             </div>
@@ -964,14 +964,14 @@ export default function ExplorationAnalysisPage() {
           {/* canvas 作品快照（详情拉取后展示） */}
           {canvasShots.length > 0 && (
             <div>
-              <div className="text-xs text-gray-400 mb-1">🖼️ 作品快照</div>
+              <div className="text-xs text-[var(--muted-light)] mb-1">🖼️ 作品快照</div>
               <div className="flex flex-wrap gap-2">
                 {canvasShots.map((src, i) => (
                   <img
                     key={i}
                     src={src}
                     alt={`作品快照 ${i + 1}`}
-                    className="max-w-[220px] rounded border border-gray-200"
+                    className="max-w-[220px] rounded border border-[var(--card-border)]"
                   />
                 ))}
               </div>
@@ -981,16 +981,16 @@ export default function ExplorationAnalysisPage() {
           {/* 页面文本快照（折叠） */}
           {typeof textSnapshot === "string" && textSnapshot.trim() && (
             <details>
-              <summary className="text-xs text-gray-400 cursor-pointer">📄 页面文本快照</summary>
-              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-gray-50 rounded p-2 whitespace-pre-wrap">{textSnapshot}</pre>
+              <summary className="text-xs text-[var(--muted-light)] cursor-pointer">📄 页面文本快照</summary>
+              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-[var(--hover-bg)] rounded p-2 whitespace-pre-wrap">{textSnapshot}</pre>
             </details>
           )}
 
           {/* 页面存档数据（折叠） */}
           {storageSnapshot && typeof storageSnapshot === "object" && Object.keys(storageSnapshot).length > 0 && (
             <details>
-              <summary className="text-xs text-gray-400 cursor-pointer">💾 页面存档数据</summary>
-              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-gray-50 rounded p-2 whitespace-pre-wrap">{JSON.stringify(storageSnapshot, null, 2)}</pre>
+              <summary className="text-xs text-[var(--muted-light)] cursor-pointer">💾 页面存档数据</summary>
+              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-[var(--hover-bg)] rounded p-2 whitespace-pre-wrap">{JSON.stringify(storageSnapshot, null, 2)}</pre>
             </details>
           )}
         </div>
@@ -999,7 +999,7 @@ export default function ExplorationAnalysisPage() {
 
     return (
       <div className="space-y-3">
-        <div className="text-sm text-gray-500 mb-2">
+        <div className="text-sm text-[var(--muted)] mb-2">
           共 {submissions.length} 人提交
         </div>
 
@@ -1014,44 +1014,44 @@ export default function ExplorationAnalysisPage() {
             : [];
 
           return (
-            <div key={sub.id} className="border border-gray-200 rounded-lg overflow-hidden">
+            <div key={sub.id} className="border border-[var(--card-border)] rounded-lg overflow-hidden">
               <div
-                className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
+                className="flex items-center justify-between px-4 py-3 bg-[var(--hover-bg)] cursor-pointer hover:bg-[var(--primary-lighter)] transition-colors"
                 onClick={() => toggleExpand(sub.id, sub.studentId, displayAnswers.canvasCount || 0)}
               >
                 <div className="flex items-center gap-3">
-                  <span className="font-medium text-gray-800">{sub.studentName}</span>
-                  <span className="text-xs text-gray-400">
+                  <span className="font-medium text-[var(--foreground)]">{sub.studentName}</span>
+                  <span className="text-xs text-[var(--muted-light)]">
                     {new Date(sub.submittedAt).toLocaleString()}
                   </span>
                 </div>
-                <div className="text-gray-400 transition-transform" style={{ transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>
+                <div className="text-[var(--muted-light)] transition-transform" style={{ transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>
                   ▼
                 </div>
               </div>
 
               {isExpanded && (
-                <div className="px-4 py-3 space-y-4 border-t border-gray-100">
+                <div className="px-4 py-3 space-y-4 border-t border-[var(--card-border)]">
                   <div>
-                    <h5 className="text-xs font-medium text-gray-500 mb-2">📊 提交数据</h5>
+                    <h5 className="text-xs font-medium text-[var(--muted)] mb-2">📊 提交数据</h5>
                     {renderAnswersDetail(displayAnswers, canvasShots)}
                   </div>
                   <div>
-                    <h5 className="text-xs font-medium text-gray-500 mb-2">📋 操作记录</h5>
+                    <h5 className="text-xs font-medium text-[var(--muted)] mb-2">📋 操作记录</h5>
                     {sub.actionLogs && sub.actionLogs.length > 0 ? (
-                      <div className="max-h-48 overflow-y-auto space-y-1 bg-gray-50 rounded p-3">
+                      <div className="max-h-48 overflow-y-auto space-y-1 bg-[var(--hover-bg)] rounded p-3">
                         {sub.actionLogs.map((log, idx) => (
                           <div key={idx} className="flex items-center gap-2 text-xs">
-                            <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
-                            <span className="text-blue-600 font-medium">{log.type}</span>
-                            <span className="text-gray-400">
+                            <span className="w-2 h-2 rounded-full bg-[var(--primary)] shrink-0" />
+                            <span className="text-[var(--primary)] font-medium">{log.type}</span>
+                            <span className="text-[var(--muted-light)]">
                               {new Date(log.timestamp).toLocaleTimeString()}
                             </span>
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <div className="text-xs text-gray-400">无操作记录</div>
+                      <div className="text-xs text-[var(--muted-light)]">无操作记录</div>
                     )}
                   </div>
                 </div>
@@ -1064,24 +1064,24 @@ export default function ExplorationAnalysisPage() {
   };
 
   const renderSubmissions = () => {
-    if (loading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+    if (loading) return <div className="text-center py-8 text-sm text-[var(--muted-light)]">加载中...</div>;
 
     // 双轨：探究绑定了 QuickForm 收集任务 → 「收集数据 / 行为数据」两个视图切换；
     // 否则只有行为数据（ExplorationSubmission），不影响既有探究。
     if (qfTaskId) {
-      if (qfLoading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+      if (qfLoading) return <div className="text-center py-8 text-sm text-[var(--muted-light)]">加载中...</div>;
       return (
         <div className="space-y-3">
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => setSubmissionView("qf")}
-              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "qf" ? "bg-blue-50 text-blue-600 border-blue-200" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "qf" ? "bg-[var(--primary-light)] text-[var(--primary)] border-[var(--primary-light)]" : "bg-[var(--card-bg)] text-[var(--muted)] border-[var(--card-border)] hover:bg-[var(--hover-bg)]"}`}
             >
               收集数据（{qfTotal || qfRecords.length}）
             </button>
             <button
               onClick={() => setSubmissionView("behavior")}
-              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "behavior" ? "bg-blue-50 text-blue-600 border-blue-200" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "behavior" ? "bg-[var(--primary-light)] text-[var(--primary)] border-[var(--primary-light)]" : "bg-[var(--card-bg)] text-[var(--muted)] border-[var(--card-border)] hover:bg-[var(--hover-bg)]"}`}
             >
               行为数据（{submissions.length}）
             </button>
@@ -1099,19 +1099,19 @@ export default function ExplorationAnalysisPage() {
   };
 
   const renderAiReport = () => (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+    <div className="bg-[var(--card-bg)] rounded-xl shadow-sm border border-[var(--card-border)]">
       {/* 头部：标题 + 版本切换 + 操作按钮 */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--card-border)]">
         <div className="flex items-center gap-2">
           <ChartBarIcon className="text-[#FF6B35]" />
-          <span className="font-medium text-gray-700 text-sm">AI 分析报告</span>
+          <span className="font-medium text-[var(--foreground)] text-sm">AI 分析报告</span>
           {aiReportVersions.length > 1 && (
             <div className="flex items-center ml-3 gap-2">
-              <span className="text-xs text-gray-400">版本：</span>
+              <span className="text-xs text-[var(--muted-light)]">版本：</span>
               {aiReportVersions.map((v, i) => (
                 <div key={i} className="flex items-center gap-3">
                   <button
-                    className={`px-2 py-0.5 text-xs rounded ${i === aiVersionIndex ? 'bg-[#0052D9] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    className={`px-2 py-0.5 text-xs rounded ${i === aiVersionIndex ? 'bg-[var(--primary)] text-white' : 'bg-[var(--primary-lighter)] text-[var(--muted)] hover:bg-[var(--hover-bg)]'}`}
                     onClick={() => {
                       setAiVersionIndex(i);
                       setAiReport(v);
@@ -1121,7 +1121,7 @@ export default function ExplorationAnalysisPage() {
                   </button>
                   {v.id && (
                     <button
-                      className="text-xs text-red-400 hover:text-red-600 px-0.5"
+                      className="text-xs text-[var(--danger)] hover:text-[var(--danger)] px-0.5"
                       onClick={() => {
                         setDeleteVersion({ id: v.id!, version: v.version });
                         setDeleteVisible(true);
@@ -1141,7 +1141,7 @@ export default function ExplorationAnalysisPage() {
             <select
               value={selectedTemplateId}
               onChange={(e) => setSelectedTemplateId(e.target.value)}
-              className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0052D9]"
+              className="px-2 py-1 border border-[var(--card-border)] rounded text-xs focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
             >
               <option value="">默认模板</option>
               {templates.map((t) => (
@@ -1180,9 +1180,9 @@ export default function ExplorationAnalysisPage() {
         {aiReport ? (
           <InsightContent content={aiReport.content} />
         ) : generatingReport ? (
-          <div className="text-center py-12 text-gray-400">AI 正在生成报告...</div>
+          <div className="text-center py-12 text-[var(--muted-light)]">AI 正在生成报告...</div>
         ) : (
-          <div className="text-center py-12 text-gray-400">
+          <div className="text-center py-12 text-[var(--muted-light)]">
             点击「生成报告」按钮，AI 将基于所有提交数据生成分析报告
           </div>
         )}
@@ -1194,7 +1194,7 @@ export default function ExplorationAnalysisPage() {
     return (
       <TeacherLayout>
         <div className="flex items-center justify-center h-64">
-          <div className="text-sm text-gray-400">加载中...</div>
+          <div className="text-sm text-[var(--muted-light)]">加载中...</div>
         </div>
       </TeacherLayout>
     );
@@ -1205,11 +1205,11 @@ export default function ExplorationAnalysisPage() {
       <TeacherLayout>
         <div className="p-6">
           <div className="flex items-center gap-3 mb-6">
-            <Button theme="default" variant="text" size="small" icon={<ArrowLeftIcon />} onClick={() => router.back()} />
+            <Button theme="primary" variant="text" size="small" icon={<ArrowLeftIcon />} onClick={() => router.back()} />
             <h2 className="text-xl font-semibold">探究分析</h2>
           </div>
           <div className="text-center py-12">
-            <div className="text-red-500 text-sm mb-4">{error}</div>
+            <div className="text-[var(--danger)] text-sm mb-4">{error}</div>
             <Button onClick={fetchData}>重试</Button>
           </div>
         </div>
@@ -1222,14 +1222,14 @@ export default function ExplorationAnalysisPage() {
       <div className="p-6">
         {/* 顶部导航 */}
         <div className="flex items-center gap-3 mb-6">
-          <Button theme="default" variant="text" size="small" icon={<ArrowLeftIcon />} onClick={() => router.back()} />
+          <Button theme="primary" variant="text" size="small" icon={<ArrowLeftIcon />} onClick={() => router.back()} />
           <div>
             <h2 className="text-xl font-semibold">探究分析报告</h2>
-            <p className="text-sm text-gray-500 mt-0.5">{analysisData?.explorationTitle}</p>
+            <p className="text-sm text-[var(--muted)] mt-0.5">{analysisData?.explorationTitle}</p>
           </div>
           <div className="flex items-center gap-3 ml-auto">
             {lastUpdated && (
-              <span className="text-xs text-gray-400">最后更新 {lastUpdated}</span>
+              <span className="text-xs text-[var(--muted-light)]">最后更新 {lastUpdated}</span>
             )}
             {/* 2026-10-11：「自动刷新」开关+秒数已移入「统计信息」tab 的 QF 大屏工具栏 ——
                 轮询只刷提交统计数据，与 AI 报告等其他 tab 无关，控件应与被刷新内容同处一 tab。 */}
@@ -1245,7 +1245,7 @@ export default function ExplorationAnalysisPage() {
             </Button>
             {analysisData?.classIds && analysisData.classIds.length > 0 && (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-500">班级：</span>
+                <span className="text-sm text-[var(--muted)]">班级：</span>
                 <select
                   value={selectedClassId}
                   onChange={(e) => {
@@ -1258,7 +1258,7 @@ export default function ExplorationAnalysisPage() {
                     // 提交列表 / QF 数据大屏 / 提交详情也按班级重新拉取（显式传新班级，避免闭包旧值）
                     refreshLiveData(cid);
                   }}
-                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
+                  className="px-3 py-1.5 border border-[var(--card-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                 >
                   {analysisData.classIds.map((cid: string) => {
                     const cls = allClasses.find((c) => c.id === cid);
@@ -1275,7 +1275,7 @@ export default function ExplorationAnalysisPage() {
         </div>
 
         {/* Tab 切换 */}
-        <div className="border-b border-gray-200 mb-6">
+        <div className="border-b border-[var(--card-border)] mb-6">
           <TabButton tabKey="statistics" label="统计信息" />
           <TabButton tabKey="submissions" label="提交详情" />
           <TabButton tabKey="ai" label="AI 分析报告" />
@@ -1295,10 +1295,10 @@ export default function ExplorationAnalysisPage() {
         footer={null}
       >
         <div className="space-y-4">
-          <p className="text-gray-700">
+          <p className="text-[var(--foreground)]">
             确定要删除 <strong>v{deleteVersion?.version}</strong> 版分析吗？
           </p>
-          <p className="text-sm text-red-600">此操作不可撤销！</p>
+          <p className="text-sm text-[var(--danger)]">此操作不可撤销！</p>
           <div className="flex gap-2 justify-end">
             <Button onClick={() => { setDeleteVisible(false); setDeleteVersion(null); }}>取消</Button>
             <Button theme="danger" loading={deleting} onClick={async () => {

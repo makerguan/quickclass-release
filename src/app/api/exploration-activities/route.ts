@@ -9,6 +9,7 @@ import {
   stringifyCollectProfile,
 } from "@/lib/exploration/collect-profile";
 import { purifyExplorationHtml, renderExplorationHtml } from "@/lib/exploration/render";
+import { getNextUnifiedSortOrder } from "@/lib/activities/unified-order";
 
 export async function GET(req: NextRequest) {
   try {
@@ -79,10 +80,10 @@ export async function POST(req: NextRequest) {
       return new Response("无权限", { status: 403 });
     }
 
-    const maxOrder = await prisma.explorationActivity.aggregate({
-      where: { subProjectId },
-      _max: { sortOrder: true },
-    });
+    // 📐 CONTRACT: sortOrder 取跨 4 表（对话/探究/项目/作业）统一数值空间的 max+1，
+    // 支撑跨类型统一排序（详见 src/lib/activities/unified-order.ts）。
+    // ⛔ DO NOT REVERT: 不要改回只查本表 aggregate max——4 表共用排序空间，本表 max 会插入其他类型中间。
+    const nextOrder = await getNextUnifiedSortOrder(prisma, subProjectId);
 
     const item = await prisma.explorationActivity.create({
       data: {
@@ -91,7 +92,7 @@ export async function POST(req: NextRequest) {
         description: description || "",
         // htmlContent 恒存纯净稿（⛔ 不落库注入，提交功能由读取路径渲染）
         htmlContent: purifyExplorationHtml(htmlContent || ""),
-        sortOrder: (maxOrder._max.sortOrder ?? -1) + 1,
+        sortOrder: nextOrder,
         enabled: true,
         enableSubmission: enableSubmission || false,
         enableAiCompanion: enableAiCompanion ?? false,

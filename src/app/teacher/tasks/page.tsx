@@ -16,6 +16,7 @@ import {
   Tooltip,
   Pagination,
   InputNumber,
+  Popup,
 } from "tdesign-react";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy, useSortable, arrayMove } from "@dnd-kit/sortable";
@@ -38,6 +39,7 @@ import {
   DownloadIcon,
   BookIcon,
   BrowseIcon,
+  InfoCircleIcon,
 } from "tdesign-icons-react";
 import Link from "next/link";
 import TeacherLayout from "@/components/layout/TeacherLayout";
@@ -130,10 +132,12 @@ interface ImageGroupItem {
   imageCount: number; // 组内图片数
 }
 
+// 课堂状态标签统一主题色（2026-10-13）：原 default/success/warning 语义色区分状态，
+// 用户要求与课题名称、管理按钮同色系，统一 primary；不再保留语义色。
 const STATUS_CONFIG = {
-  DISABLED: { label: "未启用", theme: "default" as const, color: "gray" },
-  ENABLED: { label: "启用", theme: "success" as const, color: "green" },
-  ENDED: { label: "已结束", theme: "warning" as const, color: "orange" },
+  DISABLED: { label: "未启用", theme: "primary" as const },
+  ENABLED: { label: "启用", theme: "primary" as const },
+  ENDED: { label: "已结束", theme: "primary" as const },
 };
 
 const NEXT_STATUS = {
@@ -221,8 +225,14 @@ function pickElementDesc(el: unknown): string {
   return "";
 }
 
-/** 课堂管理页的视图状态：记住上次停在哪门课、展开了哪些子活动、滚动位置 */
-type TasksViewState = { taskId: string | null; spIds: string[]; scrollY: number };
+/** 课堂管理页的视图状态：记住上次停在哪门课、展开了哪些子活动、滚动位置、是否独占聚焦 */
+type TasksViewState = {
+  taskId: string | null;
+  spIds: string[];
+  scrollY: number;
+  /** 独占聚焦的课堂 id：仅在「独占聚焦下打开新网页」时写入，返回列表页恢复独占（2026-10-13） */
+  exclusiveTaskId?: string | null;
+};
 
 const TASKS_VIEW_STATE_KEY = "quickclass.tasks.viewState";
 
@@ -236,6 +246,7 @@ function readTasksViewState(): TasksViewState | null {
       taskId: typeof v.taskId === "string" ? v.taskId : null,
       spIds: Array.isArray(v.spIds) ? v.spIds.filter((id): id is string => typeof id === "string") : [],
       scrollY: typeof v.scrollY === "number" && v.scrollY >= 0 ? v.scrollY : 0,
+      exclusiveTaskId: typeof v.exclusiveTaskId === "string" ? v.exclusiveTaskId : null,
     };
   } catch {
     return null;
@@ -266,6 +277,20 @@ export default function TeacherTasksPage() {
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [loading, setLoading] = useState(true);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  // 独占聚焦：非空时只显示该课堂，其余课堂卡片透明淡出；退出时恢复全列表且不展开
+  const [exclusiveTaskId, setExclusiveTaskId] = useState<string | null>(null);
+  // 退出独占时恢复进入前的分页页号
+  const [prevTaskPage, setPrevTaskPage] = useState<number>(1);
+
+  // 信息预览气泡：点击课题名前的图标弹出课堂信息，3 秒后自动消失（2026-10-13）
+  const [previewTaskId, setPreviewTaskId] = useState<string | null>(null);
+  const previewTimer = useRef<number | null>(null);
+  const clearPreviewTimer = () => {
+    if (previewTimer.current !== null) {
+      window.clearTimeout(previewTimer.current);
+      previewTimer.current = null;
+    }
+  };
 
   // 编辑/创建课堂表单
   const [formVisible, setFormVisible] = useState(false);
@@ -288,14 +313,12 @@ export default function TeacherTasksPage() {
   const [convObjectiveBackup, setConvObjectiveBackup] = useState<string | null>(null);
 
   // 学习活动 inline 编辑
-  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
-  const [editingSubProjects, setEditingSubProjects] = useState<SubProject[]>([]);
-  const [savingSubProjects, setSavingSubProjects] = useState(false);
+
   const [expandedSpIds, setExpandedSpIds] = useState<Set<string>>(new Set());
 
   // 视图状态记忆：离开列表（进分析页等）前记录，返回时恢复，避免又跳回第一门课
   const viewReadyRef = useRef(false);
-  const viewStateRef = useRef<TasksViewState>({ taskId: null, spIds: [], scrollY: 0 });
+  const viewStateRef = useRef<TasksViewState>({ taskId: null, spIds: [], scrollY: 0, exclusiveTaskId: null });
 
   // 把最新的展开状态同步到 ref：滚动监听 / 跳转前记录都从这里取，避免 React 闭包读到旧值
   useEffect(() => {
@@ -304,6 +327,8 @@ export default function TeacherTasksPage() {
       taskId: expandedTaskId,
       spIds: Array.from(expandedSpIds),
       scrollY: viewStateRef.current.scrollY,
+      // 独占标记由 goTo（跳转保留）与 exitExclusive（主动退出清除）管理，这里原样保留
+      exclusiveTaskId: viewStateRef.current.exclusiveTaskId,
     };
   }, [expandedTaskId, expandedSpIds]);
 
@@ -343,15 +368,35 @@ export default function TeacherTasksPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // 退出独占聚焦：恢复全列表、不展开、还原进入前的分页（2026-10-13）
+  const exitExclusive = () => {
+    setExclusiveTaskId(null);
+    setExpandedTaskId(null);
+    setExpandedSpIds(new Set());
+    setCurrentPage(prevTaskPage);
+    // 主动退出独占时同步清除视图记忆中的独占标记，避免刷新/返回后被带回独占（2026-10-13）
+    viewStateRef.current = { taskId: null, spIds: [], scrollY: window.scrollY, exclusiveTaskId: null };
+    persistTasksView();
+  };
+
   // 跳转到其他页面前先记录一次（带走最新滚动位置）
   const goTo = (url: string) => {
+    if (exclusiveTaskId) {
+      // 独占聚焦下打开新网页（分析/报告/题目管理等）：保留独占状态，记入视图记忆，
+      // 返回列表页时恢复独占聚焦（2026-10-13）。⛔ DO NOT REVERT：曾误写成"退出独占"，用户明确要求返回仍回独占
+      viewStateRef.current = {
+        taskId: exclusiveTaskId,
+        spIds: Array.from(expandedSpIds),
+        scrollY: window.scrollY,
+        exclusiveTaskId,
+      };
+    }
     persistTasksView();
     router.push(url);
   };
 
   // 对话活动名片式独立 CRUD 弹窗状态
-  // 测试成功后，将下方开关改为 true 即可隐藏老「对话管理」按钮
-  const HIDE_LEGACY_CONVERSATION_MANAGE = true;
+  // （旧「对话管理」按钮与 HIDE_LEGACY_CONVERSATION_MANAGE 开关已随按类型分组旧区块删除，勿再加回）
   const [convDialogVisible, setConvDialogVisible] = useState(false);
   const [convDialogMode, setConvDialogMode] = useState<"new" | "edit">("new");
   const [convDialogTaskId, setConvDialogTaskId] = useState<string | null>(null);
@@ -505,38 +550,154 @@ export default function TeacherTasksPage() {
     goTo(`/teacher/tasks/project/${id}`);
   };
 
+  // ===== 📐 跨类型统一活动排序（2026-10-12）=====
+  // 一个课堂下 4 类活动（对话/探究/项目/作业）4 张表共用一个 sortOrder 数值空间，
+  // 老师按「授课顺序」跨类型排序（如：先对话、再探究、再对话）。
+  // 数据源 = 列表接口 /api/tasks 的 task.subProjects（presetConversations / explorationActivities /
+  // projectSubmissions / quizActivities 四个数组齐全，字段映射见 /api/tasks/route.ts mapSubProject）。
+  // 🔗 RELATED: src/lib/activities/unified-order.ts（后端口径）、
+  //   /api/sub-projects/[subProjectId]/activities/reorder（统一排序 API）、
+  //   src/app/student/chat/page.tsx（学生端按同一顺序合并渲染）
+  // ⛔ DO NOT REVERT: 下方 4 个 handle*Reorder 不要改回旧 /api/{类型}/reorder 的类内交换——
+  //   统一数值空间下类内交换会把其他类型活动"挤"到错误位置（例：[对话0,探究1,对话2,作业3]
+  //   交换两个对话后变成 [对话2,探究1,对话0,作业3]，探究被夹进对话中间）。
+  type UnifiedActType = "conversation" | "exploration" | "project" | "quiz";
+  const UNIFIED_TYPE_LABEL: Record<UnifiedActType, string> = {
+    conversation: "对话",
+    exploration: "探究",
+    project: "项目",
+    quiz: "作业",
+  };
+  // ⚠️ GOTCHA: raw 存列表接口返回的原始对象（字段口径见 /api/tasks route.ts 的 select：
+  // 探究含 enableSubmission/enableAiCompanion/_count.ExplorationSubmission，作业含 status/_count.attempts，
+  // 项目全量）——统一清单的行内管理按钮直接消费 raw，不要回退到 explorations/quizzes 等旧面板
+  // 单例 state（那些只服务已删除的按类型分组旧区块，且只对单个展开任务有效）。
+  const buildUnifiedActs = (t: any) => {
+    const list: Array<{ type: UnifiedActType; id: string; title: string; enabled: boolean; sortOrder: number; meta: string; subProjectId: string; raw: any }> = [];
+    (t?.subProjects || []).forEach((sp: any) => {
+      (sp.presetConversations || []).forEach((x: any) =>
+        list.push({ type: "conversation", id: x.id, title: x.title, enabled: !!x.enabled, sortOrder: x.sortOrder ?? 0, meta: "", subProjectId: sp.id, raw: x }));
+      (sp.explorationActivities || []).forEach((x: any) =>
+        list.push({ type: "exploration", id: x.id, title: x.title, enabled: !!x.enabled, sortOrder: x.sortOrder ?? 0, meta: (x._count?.ExplorationSubmission ?? 0) > 0 ? `${x._count.ExplorationSubmission}份提交` : "", subProjectId: sp.id, raw: x }));
+      (sp.projectSubmissions || []).forEach((x: any) =>
+        list.push({ type: "project", id: x.id, title: x.title, enabled: !!x.enabled, sortOrder: x.sortOrder ?? 0, meta: "", subProjectId: sp.id, raw: x }));
+      (sp.quizActivities || []).forEach((x: any) =>
+        list.push({ type: "quiz", id: x.id, title: x.title, enabled: x.status === "ACTIVE", sortOrder: x.sortOrder ?? 0, meta: `${x.questions?.length ?? 0}题${(x._count?.attempts ?? 0) > 0 ? ` · ${x._count.attempts}人已答` : ""}`, subProjectId: sp.id, raw: x }));
+    });
+    // 启用在前按 sortOrder，停用（未发布）沉底保持原相对顺序——学生端不显示停用活动，
+    // 教师端在这里沉底展示，与「未启动活动列表中显示但沉底」的产品决策一致
+    list.sort((a, b) => (a.enabled === b.enabled ? a.sortOrder - b.sortOrder : a.enabled ? -1 : 1));
+    return list;
+  };
+
+  // 核心排序：与「课堂全局启用序列」中相邻活动交换（相邻项可能是其他类型），走统一排序 API
+  const reorderAcrossTypes = async (type: UnifiedActType, id: string, direction: "up" | "down", hintSpId?: string): Promise<boolean> => {
+    const task = tasks.find((t: any) => (t.subProjects || []).some((sp: any) => sp.id === hintSpId)) ||
+      tasks.find((t: any) => (t.subProjects || []).some((sp: any) =>
+        (sp.presetConversations || []).some((x: any) => x.id === id) ||
+        (sp.explorationActivities || []).some((x: any) => x.id === id) ||
+        (sp.projectSubmissions || []).some((x: any) => x.id === id) ||
+        (sp.quizActivities || []).some((x: any) => x.id === id)
+      ));
+    if (!task) {
+      MessagePlugin.error("未找到所属课堂，请刷新后重试");
+      return false;
+    }
+    const unified = buildUnifiedActs(task);
+    const enabledList = unified.filter((a) => a.enabled);
+    const gi = enabledList.findIndex((a) => a.type === type && a.id === id);
+    if (gi === -1) {
+      MessagePlugin.error("未找到该活动，请刷新后重试");
+      return false;
+    }
+    const to = direction === "up" ? gi - 1 : gi + 1;
+    if (to < 0 || to >= enabledList.length) {
+      MessagePlugin.warning("已经移到头啦");
+      return false;
+    }
+    const reordered = [...enabledList];
+    [reordered[gi], reordered[to]] = [reordered[to], reordered[gi]];
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/sub-projects/${hintSpId || reordered[0].subProjectId}/activities/reorder`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        // 传课堂全局启用序列；后端按 task 维度收集全部学习活动的活动并按下标重写 sortOrder，
+        // 未列出的（停用）活动按类型优先级稳定沉底
+        body: JSON.stringify({ activities: reordered.map((a) => ({ type: a.type, id: a.id })) }),
+      });
+      if (!res.ok) {
+        MessagePlugin.error("排序失败: " + (await res.text()));
+        return false;
+      }
+      await fetchTasks();
+      // 探究/作业管理区列表来自独立 state（fetchTasks 不会更新），面板开着时重拉保持一致
+      if (explorationPanelVisible && explorationPanelSpId) {
+        const r = await fetch(`/api/exploration-activities?subProjectId=${explorationPanelSpId}`, { headers: { Authorization: `Bearer ${token}` } });
+        const data = await r.json();
+        setExplorations(Array.isArray(data) ? data : []);
+      }
+      if (quizPanelVisible && quizPanelSpId) {
+        const r = await fetch(`/api/quiz-activities?subProjectId=${quizPanelSpId}`, { headers: { Authorization: `Bearer ${token}` } });
+        const data = await r.json();
+        setQuizzes(Array.isArray(data) ? data : []);
+      }
+      MessagePlugin.success("排序已更新");
+      return true;
+    } catch {
+      MessagePlugin.error("网络错误");
+      return false;
+    }
+  };
+
+  // 「新建活动」类型选择弹窗：选完类型分发到各类型现有创建流程
+  //（对话/探究/项目为弹窗，课堂作业为设计面板——保持原交互不变）
+  const [newActivityDialogVisible, setNewActivityDialogVisible] = useState(false);
+  const [newActivityTask, setNewActivityTask] = useState<LearningTask | null>(null);
+  const handleCreateActivity = (type: UnifiedActType) => {
+    const task = newActivityTask;
+    setNewActivityDialogVisible(false);
+    if (!task) return;
+    const sp0 = task.subProjects?.[0];
+    if (type === "conversation") {
+      openNewConversationDialog(task);
+      return;
+    }
+    if (!sp0) {
+      MessagePlugin.warning("请先创建学习活动");
+      return;
+    }
+    if (type === "exploration") {
+      openExplorationThenModal(sp0.id!, task);
+    } else if (type === "project") {
+      setProjDialogMode("new");
+      setProjDialogId(null);
+      setProjDialogSpId(sp0.id!);
+      setProjDialogTaskId(task.id);
+      setProjForm({ title: "", description: "", category: "TEXT", visibleToClass: true, allowLike: false, fileSizeLimit: 10 });
+      setProjDialogVisible(true);
+    } else if (type === "quiz") {
+      setQuizDesignId(null);
+      setQuizDesignTitle("");
+      setQuizDesignDesc("");
+      setQuizDesignTemplateContent("");
+      setQuizDesignQuestions([]);
+      setSelectedQuizTemplateId("");
+      setQuizDesignMode(true);
+      setQuizPanelSpId(sp0.id!);
+      openQuizPanel(sp0.id!, task);
+    }
+  };
+
   const [operatingProjectId, setOperatingProjectId] = useState<string | null>(null);
 
   // 项目提交排序
+  // 📐 已切到跨类型统一排序（与对话/探究/作业同一套逻辑），详见上方「跨类型统一活动排序」注释块
   const [reorderingProjectId, setReorderingProjectId] = useState<string | null>(null);
   const handleProjectReorder = async (submissionId: string, direction: "up" | "down", subProjectId: string) => {
     setReorderingProjectId(submissionId);
     try {
-      const token = localStorage.getItem("token") || "";
-      const res = await fetch("/api/project-submissions/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ submissionId, direction, subProjectId }),
-      });
-      if (res.ok) {
-        // 重新获取项目列表
-        const updatedRes = await fetch(`/api/project-submissions?subProjectId=${subProjectId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (updatedRes.ok) {
-          const updatedList = await updatedRes.json();
-          setTasks((prev) =>
-            prev.map((t) => ({
-              ...t,
-              subProjects: t.subProjects.map((sp: any) =>
-                sp.id === subProjectId ? { ...sp, projectSubmissions: updatedList } : sp
-              ),
-            }))
-          );
-        }
-      }
-    } catch {
-      // 静默失败
+      await reorderAcrossTypes("project", submissionId, direction, subProjectId);
     } finally {
       setReorderingProjectId(null);
     }
@@ -597,32 +758,32 @@ export default function TeacherTasksPage() {
     const style = { transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.8 : 1 };
     const options = typeof q.options === "string" ? JSON.parse(q.options || "{}") : (q.options || {});
     return (
-      <div ref={setNodeRef} style={style} className={`bg-[#F7F8FA] rounded-lg p-3 text-sm ${isDragging ? "shadow-lg" : ""}`}>
+      <div ref={setNodeRef} style={style} className={`bg-[var(--primary-lighter)] rounded-lg p-3 text-sm ${isDragging ? "shadow-lg" : ""}`}>
         <div className="flex items-start gap-2">
           <div className="flex flex-col gap-0.5 p-1 rounded">
-            <span className="text-xs text-gray-400 font-bold">↑</span>
-            <button type="button" onClick={onMoveUp} disabled={idx === 0} className="w-5 h-4 flex items-center justify-center text-blue-600 hover:text-blue-800 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-bold">▲</button>
-            <button type="button" onClick={onMoveDown} disabled={idx === total - 1} className="w-5 h-4 flex items-center justify-center text-blue-600 hover:text-blue-800 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-bold">▼</button>
-            <span className="text-xs text-gray-400 font-bold">↓</span>
+            <span className="text-xs text-[var(--muted-light)] font-bold">↑</span>
+            <button type="button" onClick={onMoveUp} disabled={idx === 0} className="w-5 h-4 flex items-center justify-center text-[var(--primary)] hover:text-[var(--primary)] disabled:opacity-30 disabled:cursor-not-allowed text-xs font-bold">▲</button>
+            <button type="button" onClick={onMoveDown} disabled={idx === total - 1} className="w-5 h-4 flex items-center justify-center text-[var(--primary)] hover:text-[var(--primary)] disabled:opacity-30 disabled:cursor-not-allowed text-xs font-bold">▼</button>
+            <span className="text-xs text-[var(--muted-light)] font-bold">↓</span>
           </div>
-          <span {...attributes} {...listeners} className="cursor-grab text-gray-300 hover:text-gray-500 select-none mt-1" title="拖拽排序">⋮⋮</span>
-          <span className="font-medium text-gray-500">{idx + 1}.</span>
+          <span {...attributes} {...listeners} className="cursor-grab text-[var(--muted-light)] hover:text-[var(--muted)] select-none mt-1" title="拖拽排序">⋮⋮</span>
+          <span className="font-medium text-[var(--muted)]">{idx + 1}.</span>
           <div className="flex-1 space-y-2">
             <Input value={q.content} onChange={(v) => onUpdate("content", v)} size="small" />
             <div className="grid grid-cols-2 gap-1">
               {["A","B","C","D"].map((opt) => (
                 <div key={opt} className="flex items-center gap-1">
-                  <span className="text-xs text-gray-400">{opt}.</span>
+                  <span className="text-xs text-[var(--muted-light)]">{opt}.</span>
                   <Input value={options[opt] || ""} onChange={(v) => onUpdate("options", { ...options, [opt]: v })} size="small" />
                 </div>
               ))}
             </div>
             <div className="flex gap-2 items-center text-xs">
-              <span className="text-gray-400">题型：</span>
+              <span className="text-[var(--muted-light)]">题型：</span>
               <select value={q.type || "SINGLE_CHOICE"} onChange={(e) => onUpdate("type", e.target.value)} className="border rounded px-1 py-0.5">
                 <option value="SINGLE_CHOICE">单选</option><option value="MULTIPLE_CHOICE">多选</option><option value="TRUE_FALSE">判断</option>
               </select>
-              <span className="text-gray-400 ml-2">答案：</span>
+              <span className="text-[var(--muted-light)] ml-2">答案：</span>
               {q.type === "TRUE_FALSE" ? (
                 <select value={q.answer || "T"} onChange={(e) => onUpdate("answer", e.target.value)} className="border rounded px-1 py-0.5"><option value="T">正确</option><option value="F">错误</option></select>
               ) : q.type !== "MULTIPLE_CHOICE" ? (
@@ -635,12 +796,12 @@ export default function TeacherTasksPage() {
                   })}
                 </div>
               )}
-              <span className="text-gray-400 ml-2">难度：</span>
+              <span className="text-[var(--muted-light)] ml-2">难度：</span>
               <select value={q.difficulty || "BASIC"} onChange={(e) => onUpdate("difficulty", e.target.value)} className="border rounded px-1 py-0.5">
                 <option value="BASIC">基础</option><option value="INTERMEDIATE">提升</option><option value="ADVANCED">拓展</option>
               </select>
             </div>
-            <div><span className="text-xs text-gray-400">答案解析</span><Input value={q.explanation || ""} onChange={(v) => onUpdate("explanation", v)} size="small" placeholder="答案解析（可为空）" /></div>
+            <div><span className="text-xs text-[var(--muted-light)]">答案解析</span><Input value={q.explanation || ""} onChange={(v) => onUpdate("explanation", v)} size="small" placeholder="答案解析（可为空）" /></div>
           </div>
         </div>
       </div>
@@ -1923,28 +2084,10 @@ export default function TeacherTasksPage() {
   };
 
   // 探究排序
+  // 📐 已切到跨类型统一排序（与对话/项目/作业同一套逻辑），详见上方「跨类型统一活动排序」注释块
   const handleExplorationReorder = async (expId: string, direction: "up" | "down") => {
     if (!explorationPanelSpId) return;
-    try {
-      const token = localStorage.getItem("token") || "";
-      const res = await fetch("/api/exploration-activities/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ explorationId: expId, direction, subProjectId: explorationPanelSpId }),
-      });
-      if (res.ok) {
-        // 重新拉取列表
-        const refreshRes = await fetch(`/api/exploration-activities?subProjectId=${explorationPanelSpId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const data = await refreshRes.json();
-        setExplorations(Array.isArray(data) ? data : []);
-      } else {
-        MessagePlugin.error("排序失败");
-      }
-    } catch {
-      MessagePlugin.error("排序失败");
-    }
+    await reorderAcrossTypes("exploration", expId, direction, explorationPanelSpId);
   };
 
   // 编辑已有探究
@@ -2081,54 +2224,17 @@ export default function TeacherTasksPage() {
   };
 
   // 对话活动上下排序
+  // 📐 已切到跨类型统一排序（与探究/项目/作业同一套逻辑），详见上方「跨类型统一活动排序」注释块
   const handleConversationReorder = async (pcId: string, direction: "up" | "down", subProjectId: string | undefined): Promise<void> => {
-    const _resolvedSpId = subProjectId ?? "";
-    void _resolvedSpId; // suppress unused warning
-    try {
-      const token = localStorage.getItem("token") || "";
-      const res = await fetch("/api/preset-conversations/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ presetConversationId: pcId, direction, subProjectId: _resolvedSpId }),
-      });
-      if (res.ok) {
-        // 重新拉取课堂数据
-        fetchTasks();
-      } else {
-        MessagePlugin.error("排序失败");
-      }
-    } catch {
-      MessagePlugin.error("网络错误");
-    }
+    await reorderAcrossTypes("conversation", pcId, direction, subProjectId);
   };
 
   // 课堂作业上下排序
+  // 📐 已切到跨类型统一排序（与对话/探究/项目同一套逻辑），详见上方「跨类型统一活动排序」注释块。
+  // 原本地乐观交换已删：跨类型交换后作业在类内的顺序可能不变（变的是与其他类型的相对位置），
+  // 乐观交换会给出错误反馈；统一在 reorderAcrossTypes 内重拉 quizzes。
   const handleQuizReorder = async (quizId: string, direction: "up" | "down", subProjectId: string) => {
-    try {
-      const token = localStorage.getItem("token") || "";
-      const res = await fetch("/api/quiz-activities/reorder", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({ quizId, direction, subProjectId }),
-      });
-      if (res.ok) {
-        // 乐观更新：本地交换列表顺序（因为 GET 排序规则不依赖 sortOrder 一个字段）
-        setQuizzes((prev) => {
-          const idx = prev.findIndex((q: any) => q.id === quizId);
-          if (idx === -1) return prev;
-          const targetIdx = direction === "up" ? idx - 1 : idx + 1;
-          if (targetIdx < 0 || targetIdx >= prev.length) return prev;
-          const updated = [...prev];
-          [updated[idx], updated[targetIdx]] = [updated[targetIdx], updated[idx]];
-          return updated;
-        });
-      } else {
-        const errText = await res.text();
-        MessagePlugin.error("排序失败: " + errText);
-      }
-    } catch (e) {
-      MessagePlugin.error("网络错误");
-    }
+    await reorderAcrossTypes("quiz", quizId, direction, subProjectId);
   };
 
   // 单个作业操作中状态（避免按钮重复点击）
@@ -2251,7 +2357,36 @@ export default function TeacherTasksPage() {
           const savedTask = saved?.taskId ? sortedData.find((t: LearningTask) => t.id === saved.taskId) : undefined;
           const enabledTask = sortedData.find((t: LearningTask) => t.status === "ENABLED");
 
-          if (savedTask) {
+          if (saved?.exclusiveTaskId) {
+            // 独占聚焦下打开新网页（分析/报告等）后返回：恢复独占聚焦，仍停在那门课上（2026-10-13）
+            const exTask = sortedData.find((t: LearningTask) => t.id === saved.exclusiveTaskId);
+            const validSpIds = enabledSpIdsOf(sortedData);
+            if (exTask) {
+              // 与卡片头进入独占的 onClick 行为保持一致：置顶 + 回第一页 + 展开子活动
+              setPrevTaskPage(safePage);
+              setExclusiveTaskId(exTask.id);
+              setExpandedTaskId(exTask.id);
+              setCurrentPage(1);
+              const restoredSpIds = (saved?.spIds || []).filter((id) => validSpIds.has(id));
+              const restoredSpIdSet = restoredSpIds.length > 0 ? new Set(restoredSpIds) : validSpIds;
+              setExpandedSpIds(restoredSpIdSet);
+              openFirstSp(exTask);
+              setTimeout(() => {
+                window.scrollTo({ top: 0 });
+                viewStateRef.current = {
+                  taskId: exTask.id,
+                  spIds: Array.from(restoredSpIdSet),
+                  scrollY: 0,
+                  exclusiveTaskId: exTask.id,
+                };
+                viewReadyRef.current = true;
+              }, 250);
+            } else {
+              // 独占的课堂已不存在（可能被删除）：按全收起处理，不恢复独占
+              viewStateRef.current = { taskId: null, spIds: [], scrollY: 0, exclusiveTaskId: null };
+              viewReadyRef.current = true;
+            }
+          } else if (savedTask) {
             // 恢复上次停留的课堂与展开的子活动
             const validSpIds = enabledSpIdsOf(sortedData);
             setExpandedTaskId(savedTask.id);
@@ -2275,6 +2410,11 @@ export default function TeacherTasksPage() {
               viewStateRef.current = { taskId: restoredTaskId, spIds: restoredSpIdsArray, scrollY: savedScrollY };
               viewReadyRef.current = true;
             }, 250);
+          } else if (saved && saved.taskId === null) {
+            // 上次退出时明确是"全收起"状态（手动收起全部课堂 / 主动退出独占）：
+            // 保持全收起，不默认展开，不打开任何子活动（2026-10-13）
+            viewStateRef.current = { taskId: null, spIds: [], scrollY: 0, exclusiveTaskId: null };
+            viewReadyRef.current = true;
           } else if (enabledTask) {
             // 没有历史记录（首次进入，或标签页已关闭）：保持原有默认行为——展开第一门课
             const allSpIds = enabledSpIdsOf(sortedData);
@@ -3020,33 +3160,10 @@ export default function TeacherTasksPage() {
         resetForm();
         const data = await res.json();
         if (!editingTask) {
-          // 新建课堂后自动展开并进入编辑对话活动模式
+          // 新建课堂后自动展开新卡片。
+          // ⛔ DO NOT REVERT: 旧的「自动进入对话编辑态」（setEditingTaskId/setEditingSubProjects）已随
+          // 按类型分组旧区块删除——editingSubProjects 的全部 UI 消费点没了，写进去也无人读。
           setExpandedTaskId(data.id);
-          setEditingTaskId(data.id);
-          // 使用返回的第一个 SubProject（自动创建的默认活动）
-          const defaultSp = data.subProjects?.[0];
-          setEditingSubProjects([
-            {
-              id: defaultSp?.id || "",
-              title: "默认活动",
-              description: "",
-              objectives: "",
-              requirements: "",
-              knowledgeBase: "",
-              analysisPrompt: "",
-              analysisTemplateId: "",
-              presetConversations: [
-                {
-                  title: "",
-                  description: "",
-                  systemPrompt: "",
-                  analysisPrompt: "",
-                  analysisTemplateId: "",
-                  conversationPromptTemplateId: "",
-                },
-              ],
-            },
-          ]);
           const allSpIds = new Set<string>();
           data.subProjects?.forEach((sp: { id?: string }) => {
             if (sp.id) allSpIds.add(sp.id);
@@ -3169,174 +3286,12 @@ export default function TeacherTasksPage() {
     );
   };
 
-  // startEditingSubProjects：analysisPrompt 直接赋值，不再做模板映射
-  // ⚠️ 列表接口已剥离提示词正文，进入编辑态前先拉详情补齐（契约见 fetchTaskDetailLite 上方）；
-  // 拉取失败或子活动为空则**不进编辑态**，避免整屏空白框被保存回库。
-  const startEditingSubProjects = async (task: LearningTask) => {
-    const detail = await fetchTaskDetailLite(task.id);
-    if (!detail || !Array.isArray(detail.subProjects) || detail.subProjects.length === 0) {
-      MessagePlugin.error("读取课堂详情失败，请重试");
-      return;
-    }
-    setEditingTaskId(task.id);
-
-    setEditingSubProjects(
-      detail.subProjects.map((sp: any) => ({
-        id: sp.id,
-        title: sp.title,
-        description: sp.description || "",
-        objectives: sp.objectives || "",
-        requirements: sp.requirements || "",
-        knowledgeBase: sp.knowledgeBase || "",
-        analysisPrompt: sp.analysisPrompt || "",
-        presetConversations: (sp.presetConversations || []).map((pc: any) => ({
-          id: pc.id,
-          title: pc.title,
-          description: pc.description || "",
-          systemPrompt: pc.systemPrompt || "",
-          analysisPrompt: pc.analysisPrompt || "",
-          classAnalysisPrompt: pc.classAnalysisPrompt || "",
-          conversationPromptTemplateId: findConversationPromptTemplateId(pc.systemPrompt),
-          enabled: pc.enabled !== false,
-        })),
-      }))
-    );
-  };
-
-  const cancelEditingSubProjects = () => {
-    setEditingTaskId(null);
-    setEditingSubProjects([]);
-  };
-
-  const addPresetConversation = (spIndex: number) => {
-    const updated = [...editingSubProjects];
-    updated[spIndex].presetConversations.push({
-      title: "",
-      description: "",
-      systemPrompt: "",
-      enabled: true,
-      analysisPrompt: "",
-      classAnalysisPrompt: "",
-    });
-    setEditingSubProjects(updated);
-  };
-
-  const removePresetConversation = (spIndex: number, pcIndex: number) => {
-    const updated = [...editingSubProjects];
-    updated[spIndex].presetConversations = updated[spIndex].presetConversations.filter(
-      (_, i) => i !== pcIndex
-    );
-    setEditingSubProjects(updated);
-  };
-
-  const moveConversation = (spIndex: number, pcIndex: number, direction: "up" | "down") => {
-    const updated = [...editingSubProjects];
-    const list = [...updated[spIndex].presetConversations];
-    const targetIndex = direction === "up" ? pcIndex - 1 : pcIndex + 1;
-    if (targetIndex < 0 || targetIndex >= list.length) return;
-    [list[pcIndex], list[targetIndex]] = [list[targetIndex], list[pcIndex]];
-    updated[spIndex].presetConversations = list;
-    setEditingSubProjects(updated);
-  };
-
-  const updatePresetConversation = (spIndex: number, pcIndex: number, field: string, value: string) => {
-    const updated = [...editingSubProjects];
-    updated[spIndex].presetConversations[pcIndex] = {
-      ...updated[spIndex].presetConversations[pcIndex],
-      [field]: value,
-    };
-    // 如果用户手动编辑了 systemPrompt，清除模板关联，避免下次选择模板时覆盖
-    if (field === "systemPrompt") {
-      const currentTemplateId = updated[spIndex].presetConversations[pcIndex].conversationPromptTemplateId;
-      if (currentTemplateId) {
-        const templateContent = getConversationTemplateContent(currentTemplateId);
-        if (value !== templateContent) {
-          updated[spIndex].presetConversations[pcIndex].conversationPromptTemplateId = undefined;
-        }
-      }
-    }
-    setEditingSubProjects(updated);
-  };
-
-  const saveSubProjects = async (taskId: string) => {
-    // 校验对话活动
-    for (const sp of editingSubProjects) {
-      for (const pc of sp.presetConversations) {
-        if (!pc.title?.trim()) {
-          MessagePlugin.error("对话活动名称不能为空");
-          return;
-        }
-        if (!pc.description?.trim()) {
-          MessagePlugin.error("对话活动目标不能为空");
-          return;
-        }
-        if (!pc.analysisPrompt?.trim()) {
-          MessagePlugin.error("个人学情分析提示词不能为空");
-          return;
-        }
-        if (!pc.classAnalysisPrompt?.trim()) {
-          MessagePlugin.error("全班学情分析提示词不能为空");
-          return;
-        }
-        if (!pc.systemPrompt?.trim()) {
-          MessagePlugin.error("对话提示词不能为空");
-          return;
-        }
-      }
-    }
-
-    setSavingSubProjects(true);
-    try {
-      const token = localStorage.getItem("token");
-      const task = tasks.find((t) => t.id === taskId);
-
-      // 保存对话活动，传递模板ID
-      const subProjectsToSave = editingSubProjects.map((sp) => ({
-        ...sp,
-        title: "默认活动",
-        objectives: "",
-        requirements: "",
-        knowledgeBase: "",
-        analysisPrompt: "",
-        presetConversations: sp.presetConversations.map((pc) => ({
-          ...pc,
-          // analysisPrompt 和 classAnalysisPrompt 已直接编辑
-        })),
-      }));
-
-      const res = await fetch(`/api/tasks/${taskId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: JSON.stringify({
-          // 保存对话活动时，只更新 subProjects 和 classIds，不修改课堂基本信息
-          subProjects: subProjectsToSave,
-          classIds: task?.assignments.map((a) => a.classId),
-        }),
-      });
-
-      if (res.ok) {
-        MessagePlugin.success("对话活动已保存");
-        setEditingTaskId(null);
-        setEditingSubProjects([]);
-        closeExplorationPanel();
-        const updatedTasks = await fetchTasks();
-        // 重新打开互动探究面板（使用返回的最新数据中的第一个 subProject 的 ID）
-        const currentTask = updatedTasks.find((t: LearningTask) => t.id === taskId);
-        const firstSpId = currentTask?.subProjects?.[0]?.id;
-        if (firstSpId) {
-          openExplorationPanel(firstSpId, currentTask);
-        }
-      } else {
-        const data = await res.json();
-        console.error("[saveSubProjects] 保存失败:", data);
-        MessagePlugin.error(data.error === "服务器错误" && data.detail ? `服务器错误: ${data.detail}` : (data.error || "保存失败"));
-      }
-    } catch {
-      MessagePlugin.error("网络错误");
-    } finally {
-      setSavingSubProjects(false);
-    }
-  };
+  // ⛔ DO NOT REVERT: 旧「编辑学习活动」内联链路（startEditingSubProjects / cancelEditingSubProjects /
+  // addPresetConversation / removePresetConversation / moveConversation / updatePresetConversation /
+  // saveSubProjects）已整体删除——它们只服务已删除的按类型分组旧区块；且 saveSubProjects 的 PUT
+  // body 只带对话数据，走它保存会依赖后端「快照恢复」兜底探究/项目/作业（PUT route.ts），
+  // 统一清单时代编辑入口已收敛到各活动弹窗 + 课堂编辑弹窗，不要把这条旧链路加回来。
+  // 🔗 RELATED: 课堂编辑弹窗（fetchTaskDetailLite 契约）、src/app/api/tasks/[taskId]/route.ts PUT。
 
   // const getTemplateNameById = (templateId?: string) => {
   //   if (!templateId) return "";
@@ -3366,12 +3321,6 @@ export default function TeacherTasksPage() {
     return conversationTemplates.map((t) => ({ label: t.name, value: t.id }));
   };
 
-  const getConversationTemplateContent = (templateId?: string) => {
-    if (!templateId) return "";
-    const t = conversationTemplates.find((tpl) => tpl.id === templateId);
-    return t ? t.content : "";
-  };
-
   const findConversationPromptTemplateId = (systemPrompt?: string) => {
     if (!systemPrompt) return "";
     const t = conversationTemplates.find((tpl) => systemPrompt.startsWith(tpl.content));
@@ -3381,29 +3330,33 @@ export default function TeacherTasksPage() {
   // 当前页要渲染的课堂（已按状态排序后的全量 tasks 切片）
   const totalPages = Math.max(1, Math.ceil(tasks.length / pageSize));
   const safePage = Math.min(currentPage, totalPages);
-  const pagedTasks = tasks.slice((safePage - 1) * pageSize, safePage * pageSize);
+  // 独占聚焦时目标课堂置顶到列表首（保证其在第一页可见），其余保持原序
+  const displayTasks = exclusiveTaskId
+    ? [...tasks.filter((t) => t.id === exclusiveTaskId), ...tasks.filter((t) => t.id !== exclusiveTaskId)]
+    : tasks;
+  const pagedTasks = displayTasks.slice((safePage - 1) * pageSize, safePage * pageSize);
 
   return (
     <TeacherLayout>
       {/* 生成进度浮层：单一实例，滚动圈 + 真实递增秒数（替代会堆叠的 MessagePlugin.loading） */}
       {genOverlay.visible && (
         <div className="fixed inset-0 z-[3000] flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-xl px-10 py-7 flex flex-col items-center gap-3 shadow-2xl">
-            <span className="inline-block w-9 h-9 border-[3px] border-blue-100 border-t-[#0052D9] rounded-full animate-spin" />
-            <div className="text-sm text-gray-700 whitespace-nowrap">{genOverlay.text}</div>
-            <div className="text-xs text-gray-400 tabular-nums">{genOverlay.seconds}s</div>
+          <div className="bg-[var(--card-bg)] rounded-xl px-10 py-7 flex flex-col items-center gap-3 shadow-2xl">
+            <span className="inline-block w-9 h-9 border-[3px] border-[var(--primary-light)] border-t-[var(--primary)] rounded-full animate-spin" />
+            <div className="text-sm text-[var(--foreground)] whitespace-nowrap">{genOverlay.text}</div>
+            <div className="text-xs text-[var(--muted-light)] tabular-nums">{genOverlay.seconds}s</div>
           </div>
         </div>
       )}
       <div className="space-y-6 pb-8">
         <div className="flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-semibold text-[#1A1A1A]">课堂管理</h2>
-            <p className="text-[#63666F] text-sm mt-1">创建课堂，分配给班级，管理对话活动、互动探究、课堂作业</p>
+            <h2 className="text-xl font-semibold text-[var(--title)]">课堂管理</h2>
+            <p className="text-[var(--muted)] text-sm mt-1">创建课堂，分配给班级，管理对话活动、互动探究、课堂作业</p>
           </div>
           <div className="flex gap-2">
             <Button
-              theme="default"
+              theme="primary"
               variant="outline"
               icon={<FileIcon />}
               onClick={() => {
@@ -3478,10 +3431,10 @@ export default function TeacherTasksPage() {
             onBack={() => setActiveView(null)}
           />
         ) : loading ? (
-          <div className="text-center text-gray-400 py-12">加载中...</div>
+          <div className="text-center text-[var(--muted-light)] py-12">加载中...</div>
         ) : tasks.length === 0 ? (
-          <Card className="template-compact-card">
-            <div className="text-center py-12 text-gray-400">
+          <Card className="template-compact-card" style={{ boxShadow: 'var(--card-shadow)' }}>
+            <div className="text-center py-12 text-[var(--muted-light)]">
               <p className="text-lg mb-2">📋</p>
               <p>暂无课堂</p>
               <p className="text-sm mt-2">点击「创建课堂」开始</p>
@@ -3491,17 +3444,42 @@ export default function TeacherTasksPage() {
           <div className="space-y-3">
             {pagedTasks.map((task) => {
               const isExpanded = expandedTaskId === task.id;
-              const isEditingSP = editingTaskId === task.id;
+              // 独占聚焦时：目标课堂显示并展开，其余课堂透明淡出（保留 DOM 做平滑过渡）
+              const isExclusiveHidden = exclusiveTaskId !== null && exclusiveTaskId !== task.id;
+              // 四类活动数量统计：头部不再直接展示，收拢到"信息预览"悬停提示（2026-10-13）
+              const counts = task.subProjects?.reduce(
+                (acc, sp) => {
+                  acc.conversations += ((sp as any).presetConversations?.length ?? 0);
+                  acc.quizzes += ((sp as any).quizActivities?.length ?? 0);
+                  acc.projects += ((sp as any).projectSubmissions?.length ?? 0);
+                  acc.explorations += ((sp as any).explorationActivities?.length ?? 0);
+                  return acc;
+                },
+                { conversations: 0, quizzes: 0, projects: 0, explorations: 0 }
+              ) ?? { conversations: 0, quizzes: 0, projects: 0, explorations: 0 };
               return (
-                <Card key={task.id} className="template-compact-card">
+                <Card
+                  key={task.id}
+                  className={`template-compact-card transition-all duration-300 ${
+                    isExclusiveHidden
+                      ? "opacity-0 scale-[0.98] pointer-events-none"
+                      : "opacity-100 scale-100"
+                  } ${exclusiveTaskId === task.id ? "ring-2 ring-[var(--primary)]" : ""}`}
+                >
                   <div
                     id={`task-card-${task.id}`}
                     className="cursor-pointer"
                     onClick={() => {
-                      if (isExpanded) {
-                        setExpandedTaskId(null);
+                      if (exclusiveTaskId === task.id) {
+                        // 独占中再点 → 收缩退出独占：不展开，恢复原分页与全部课堂
+                        exitExclusive();
                       } else {
+                        // 记录原分页页号，进入独占聚焦（置顶 + 回第一页）
+                        setPrevTaskPage(safePage);
+                        setExclusiveTaskId(task.id);
                         setExpandedTaskId(task.id);
+                        setCurrentPage(1);
+                        window.scrollTo({ top: 0, behavior: "smooth" });
                         // 展开课堂时自动加载探究和作业面板
                         const firstSp = task.subProjects?.[0];
                         if (firstSp?.id) {
@@ -3514,59 +3492,62 @@ export default function TeacherTasksPage() {
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         {isExpanded ? (
-                          <ChevronDownIcon className="text-gray-400" />
+                          <ChevronDownIcon className="text-[var(--muted-light)]" />
                         ) : (
-                          <ChevronRightIcon className="text-gray-400" />
+                          <ChevronRightIcon className="text-[var(--muted-light)]" />
                         )}
                         <div>
                           <div className="flex items-center gap-2">
-                            <h3 className="font-medium text-[#1A1A1A]">{task.title}</h3>
+                            <Popup
+                              trigger="hover"
+                              placement="top-left"
+                              visible={previewTaskId === task.id}
+                              onVisibleChange={(v) => {
+                                if (v) {
+                                  clearPreviewTimer();
+                                  setPreviewTaskId(task.id);
+                                  previewTimer.current = window.setTimeout(() => {
+                                    setPreviewTaskId(null);
+                                    previewTimer.current = null;
+                                  }, 3000);
+                                } else {
+                                  clearPreviewTimer();
+                                  setPreviewTaskId(null);
+                                }
+                              }}
+                              content={
+                                <div className="preview-popup-anim space-y-1 text-xs leading-5 min-w-[180px]">
+                                  <div>
+                                    班级：
+                                    {task.assignments.length > 0
+                                      ? task.assignments.map((a) => a.class.name).join("、")
+                                      : "未分配"}
+                                  </div>
+                                  {task.grade && <div>年级：{task.grade}</div>}
+                                  {task.subject && <div>学科：{task.subject}</div>}
+                                  <div>
+                                    活动：对话 {counts.conversations} ｜ 作业 {counts.quizzes} ｜ 项目{" "}
+                                    {counts.projects} ｜ 探究 {counts.explorations}
+                                  </div>
+                                </div>
+                              }
+                            >
+                              <span className="inline-flex cursor-pointer text-[var(--muted)] hover:text-[var(--primary)]">
+                                <InfoCircleIcon />
+                              </span>
+                            </Popup>
+                            <h3 className="font-medium text-[var(--title)]">{task.title}</h3>
                             {getStatusTag(task.status)}
-                            {task.grade && <Tag theme="default" variant="light" size="small">{task.grade}</Tag>}
-                            {task.subject && <Tag theme="primary" variant="light" size="small">{task.subject}</Tag>}
-                            {!isExpanded && (() => {
-                              const counts = task.subProjects?.reduce(
-                                (acc, sp) => {
-                                  acc.conversations += ((sp as any).presetConversations?.length ?? 0);
-                                  acc.quizzes += ((sp as any).quizActivities?.length ?? 0);
-                                  acc.projects += ((sp as any).projectSubmissions?.length ?? 0);
-                                  acc.explorations += ((sp as any).explorationActivities?.length ?? 0);
-                                  return acc;
-                                },
-                                { conversations: 0, quizzes: 0, projects: 0, explorations: 0 }
-                              ) ?? { conversations: 0, quizzes: 0, projects: 0, explorations: 0 };
-                              const badges = [
-                                { label: "对话", count: counts.conversations, theme: "default" as const },
-                                { label: "作业", count: counts.quizzes, theme: "primary" as const },
-                                { label: "项目", count: counts.projects, theme: "success" as const },
-                                { label: "探究", count: counts.explorations, theme: "warning" as const },
-                              ].filter((b) => b.count > 0);
-                              if (badges.length === 0) return null;
-                              return (
-                                <>
-                                  {badges.map((b) => (
-                                    <Tag key={b.label} theme={b.theme} variant="light" size="small">
-                                      {b.label} {b.count}
-                                    </Tag>
-                                  ))}
-                                </>
-                              );
-                            })()}
                           </div>
                         </div>
                       </div>
                       <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
-                        <div className="flex gap-1 mr-2">
-                          {task.assignments.length > 0 && (
-                            <Tooltip content={task.assignments.map((a) => a.class.name).join("、")}>
-                              <Tag theme="primary" variant="light" size="small">
-                                班级 {task.assignments.length}
-                              </Tag>
-                            </Tooltip>
-                          )}
-                        </div>
+                        {/* 课堂卡片管理按钮组：全部统一 theme="primary" 跟随主题主色。
+                            ⛔ DO NOT REVERT: 状态切换/分析/重置/导出/删除等卡片管理按钮不再混用
+                            success/warning/danger/default 语义色（用户 2026-10-13 要求，与下方
+                            活动统一管理行同一口径）。删除确认弹窗按钮仍保留 danger/warning 危险语义。 */}
                         <Button
-                          theme={task.status === "ENDED" ? "warning" : "default"}
+                          theme="primary"
                           variant="outline"
                           size="small"
                           icon={
@@ -3580,7 +3561,7 @@ export default function TeacherTasksPage() {
                         </Button>
                         <Tooltip content="分析课堂学情">
                           <Button
-                            theme="success"
+                            theme="primary"
                             variant="text"
                             size="small"
                             icon={<ChartBarIcon />}
@@ -3589,7 +3570,7 @@ export default function TeacherTasksPage() {
                         </Tooltip>
                         <Tooltip content="重置清理学生记录">
                           <Button
-                            theme="warning"
+                            theme="primary"
                             variant="text"
                             size="small"
                             icon={<RefreshIcon />}
@@ -3607,7 +3588,7 @@ export default function TeacherTasksPage() {
                         </Tooltip>
                         <Tooltip content="导出课堂">
                           <Button
-                            theme="default"
+                            theme="primary"
                             variant="text"
                             size="small"
                             icon={<FileIcon />}
@@ -3636,7 +3617,7 @@ export default function TeacherTasksPage() {
                         </Tooltip>
                         <Tooltip content="导出手册">
                           <Button
-                            theme="default"
+                            theme="primary"
                             variant="text"
                             size="small"
                             icon={<DownloadIcon />}
@@ -3672,7 +3653,7 @@ export default function TeacherTasksPage() {
                         </Tooltip>
                         <Tooltip content="导出学习手册">
                           <Button
-                            theme="default"
+                            theme="primary"
                             variant="text"
                             size="small"
                             icon={<BookIcon />}
@@ -3711,7 +3692,7 @@ export default function TeacherTasksPage() {
                         </Tooltip>
                         <Tooltip content="删除课堂">
                           <Button
-                            theme="danger"
+                            theme="primary"
                             variant="text"
                             size="small"
                             icon={<DeleteIcon />}
@@ -3725,8 +3706,14 @@ export default function TeacherTasksPage() {
                     </div>
                   </div>
 
-                  {isExpanded && (
-                    <div className="mt-2 pt-2 border-t border-gray-100 pl-8 space-y-3">
+                  {/* 展开/收起 Grid 折叠动画（2026-10-13）：0fr↔1fr 平滑过渡，替代瞬间条件渲染 */}
+                  <div
+                    className={`grid transition-[grid-template-rows] duration-300 ease-in-out ${
+                      isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                    }`}
+                  >
+                    <div className="overflow-hidden min-h-0">
+                      <div className="mt-2 pt-2 border-t border-[var(--card-border)] pl-8 space-y-3">
                       {/* 关联知识库 */}
                       {task.knowledgeBaseIds && (() => {
                         try {
@@ -3735,14 +3722,14 @@ export default function TeacherTasksPage() {
                           if (linkedKbs.length > 0) {
                             const totalLen = linkedKbs.reduce((s, kb) => s + kb.contentLength, 0);
                             return (
-                              <div className="text-sm text-[#63666F]">
-                                <span className="text-gray-500">知识库：</span>
+                              <div className="text-sm text-[var(--muted)]">
+                                <span className="text-[var(--muted)]">知识库：</span>
                                 {linkedKbs.map((kb) => (
                                   <Tag key={kb.id} theme="primary" variant="light" size="small" style={{ marginRight: 4 }}>
                                     {kb.name}（{kb.contentLength.toLocaleString()}字）
                                   </Tag>
                                 ))}
-                                <span className="text-xs text-gray-400 ml-1">共 {totalLen.toLocaleString()} 字符</span>
+                                <span className="text-xs text-[var(--muted-light)] ml-1">共 {totalLen.toLocaleString()} 字符</span>
                               </div>
                             );
                           }
@@ -3757,8 +3744,8 @@ export default function TeacherTasksPage() {
                           const linkedGroups = imageGroups.filter((g) => gIds.includes(g.id));
                           if (linkedGroups.length > 0) {
                             return (
-                              <div className="text-sm text-[#63666F]">
-                                <span className="text-gray-500">图片组：</span>
+                              <div className="text-sm text-[var(--muted)]">
+                                <span className="text-[var(--muted)]">图片组：</span>
                                 {linkedGroups.map((g) => (
                                   <Tag key={g.id} theme="primary" variant="light" size="small" style={{ marginRight: 4 }}>
                                     {g.name}（{g.imageCount}张）
@@ -3771,866 +3758,352 @@ export default function TeacherTasksPage() {
                         return null;
                       })()}
 
-                      {/* 对话编辑对话活动 */}
-                      <div className="space-y-3">
+                      {/* 📐 跨类型统一活动清单（2026-10-12 升级为唯一管理入口）：按授课顺序展示 4 类活动，
+                          新建/编辑/删除/预览/启停/分析/浏览提交/查看报告全部在本清单行内完成。
+                          原按类型分组的 4 个管理区块（对话活动/互动探究/项目提交/课堂作业）已整体删除。
+                          ⛔ DO NOT REVERT / DO NOT ADD THE 4 LEGACY TYPE BLOCKS BACK:
+                          旧区块与本清单是同一批活动数据的两套入口，双入口曾导致「新建作业仍回到旧区块编辑、
+                          老师在两处看到不同操作位」的困惑；要加新操作就加在行内按钮组里。
+                          排序口径与 reorderAcrossTypes / src/lib/activities/unified-order.ts 一致：
+                          启用活动在前按 sortOrder，停用沉底（学生端不显示停用活动）。
+                          🔗 RELATED: buildUnifiedActs（raw 存原始对象）、handleCreateActivity（新建分发弹窗）、
+                          本区块顶部内嵌的新建作业设计表单（依赖组件级 quizDesign* state 与 quizPanelSpId）。 */}
+                      <div className="border border-[var(--primary-light)] bg-[var(--primary-light)] rounded-lg p-3 space-y-2">
                         <div className="flex items-center justify-between">
-                          <h4 className="font-medium text-sm text-[#63666F]">对话活动</h4>
-                          {!isEditingSP && (
-                            <div className="flex gap-2">
-                              <Button
-                                theme="primary"
-                                variant="outline"
-                                size="small"
-                                icon={<AddIcon />}
-                                onClick={() => openNewConversationDialog(task)}
-                              >
-                                新建对话
-                              </Button>
-                              {!HIDE_LEGACY_CONVERSATION_MANAGE && (
-                                <Button
-                                  theme="primary"
-                                  variant="outline"
-                                  size="small"
-                                  icon={<EditIcon />}
-                                  onClick={() => startEditingSubProjects(task)}
-                                >
-                                  对话管理
-                                </Button>
-                              )}
+                          <h4 className="font-medium text-sm text-[var(--muted)]">课堂活动（按授课顺序）</h4>
+                          <Button theme="primary" variant="outline" size="small" icon={<EditIcon />} onClick={() => { if (task.subProjects.length === 0) { MessagePlugin.warning("请先创建学习活动"); return; } setNewActivityTask(task); setNewActivityDialogVisible(true); }}>新建活动</Button>
+                        </div>
+                        {/* 新建作业设计表单内嵌在统一清单顶部：用户从「新建活动」选择课堂作业后，直接在最顶部操作，无需滚到底部。
+                            表单只依赖组件级 quizDesign* state 与 quizPanelSpId；与下方活动列表无渲染耦合。
+                            🔗 RELATED: handleCreateActivity（入口）、handleSaveQuiz / exitQuizDesign / handleAIGenerateQuestions / handleImportQuestionsToDesign */}
+                        {quizDesignMode && !quizDesignId && (
+                          <div className="bg-[var(--card-bg)] rounded-lg p-4 space-y-3">
+                            <input id="import-quiz-file" type="file" accept=".json" onChange={handleImportQuestionsToDesign} className="hidden" />
+                            <div className="flex items-center justify-between">
+                              <h5 className="font-medium text-sm text-[var(--muted)]">新建作业 · {quizDesignTitle || "（未命名）"}</h5>
+                              <Button theme="primary" variant="text" size="small" onClick={exitQuizDesign}>× 退出设计</Button>
                             </div>
-                          )}
-                        </div>
-
-                        {isEditingSP ? (
-                          /* 编辑模式 - 展平所有对话活动到一个区域 */
-                          <div className="space-y-3">
-                            {(() => {
-                              // 展平所有子项目的对话活动，记录来源索引
-                              const flatEds: { spIdx: number; pcIdx: number; pc: PresetConversation }[] = [];
-                              editingSubProjects.forEach((sp, spIdx) => {
-                                sp.presetConversations.forEach((pc, pcIdx) => {
-                                  flatEds.push({ spIdx, pcIdx, pc });
-                                });
-                              });
-                              return (
-                                <div className="space-y-2">
-                                  <div className="flex items-center justify-between">
-                                    <span className="text-sm font-medium text-[#63666F]">
-                                      对话活动 ({flatEds.length})
-                                    </span>
-                                  </div>
-                                  {flatEds.map(({ spIdx, pcIdx, pc }, flatIndex) => (
-                                    <div key={flatIndex} className="bg-[#F7F8FA] rounded-lg p-3 space-y-2">
-                                      <div className="flex items-center justify-between">
-                                        <div className="flex items-center gap-1">
-                                          <Button
-                                            theme="default"
-                                            variant="text"
-                                            size="small"
-                                            disabled={flatIndex === 0}
-                                            onClick={() => moveConversation(spIdx, pcIdx, "up")}
-                                          >
-                                            ↑
-                                          </Button>
-                                          <Button
-                                            theme="default"
-                                            variant="text"
-                                            size="small"
-                                            disabled={flatIndex === flatEds.length - 1}
-                                            onClick={() => moveConversation(spIdx, pcIdx, "down")}
-                                          >
-                                            ↓
-                                          </Button>
-                                          <span className="text-xs text-gray-500 ml-1">对话 {flatIndex + 1}</span>
-                                        </div>
-                                        <Button
-                                          theme="danger"
-                                          variant="text"
-                                          size="small"
-                                          icon={<RemoveIcon />}
-                                          onClick={() => {
-                                            const pcName = pc.title || `对话 ${flatIndex + 1}`;
-                                            if (window.confirm(`确定要删除「${pcName}」吗？此操作不可撤销！`)) {
-                                              removePresetConversation(spIdx, pcIdx);
-                                            }
-                                          }}
-                                        >
-                                          删除
-                                        </Button>
-                                      </div>
-                                      <span className="text-xs text-gray-500">对话活动名称：</span>
-                                      <Input
-                                        value={pc.title}
-                                        onChange={(v) => updatePresetConversation(spIdx, pcIdx, "title", v)}
-                                        placeholder="对话活动名称 *"
-                                        size="small"
-                                      />
-                                      <span className="text-xs text-gray-500">对话活动目标：</span>
-                                      <Textarea
-                                        value={pc.description || ""}
-                                        onChange={(v) => updatePresetConversation(spIdx, pcIdx, "description", v)}
-                                        placeholder="对话活动目标 *"
-                                        rows={2}
-                                      />
-                                      {/* 个人学情分析提示词 */}
-                                      <div className="space-y-1">
-                                        <div className="flex items-center gap-1">
-                                          <span className="text-xs text-gray-500">学生个人学情分析提示词：</span>
-                                          <select
-                                            className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0052D9]"
-                                            value=""
-                                            onChange={(e) => {
-                                              const content = getTemplateContent(e.target.value);
-                                              if (content) updatePresetConversation(spIdx, pcIdx, "analysisPrompt", content);
-                                            }}
-                                          >
-                                            <option value="">选择个人学情模板填充...</option>
-                                            {templates.filter(t => t.type === "student").map(t => (
-                                              <option key={t.id} value={t.id}>{t.name}</option>
-                                            ))}
-                                          </select>
-                                        </div>
-                                        <textarea
-                                          className="w-full px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0052D9]"
-                                          value={pc.analysisPrompt || ""}
-                                          onChange={(e) => updatePresetConversation(spIdx, pcIdx, "analysisPrompt", e.target.value)}
-                                          placeholder="个人学情分析提示词 *"
-                                          rows={2}
-                                        />
-                                      </div>
-                                      {/* 全班学情分析提示词 */}
-                                      <div className="space-y-1">
-                                        <div className="flex items-center gap-1">
-                                          <span className="text-xs text-gray-500">学生全班学情分析提示词：</span>
-                                          <select
-                                            className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0052D9]"
-                                            value=""
-                                            onChange={(e) => {
-                                              const content = getTemplateContent(e.target.value);
-                                              if (content) updatePresetConversation(spIdx, pcIdx, "classAnalysisPrompt", content);
-                                            }}
-                                          >
-                                            <option value="">选择全班学情模板填充...</option>
-                                            {templates.filter(t => t.type === "class").map(t => (
-                                              <option key={t.id} value={t.id}>{t.name}</option>
-                                            ))}
-                                          </select>
-                                        </div>
-                                        <textarea
-                                          className="w-full px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0052D9]"
-                                          value={pc.classAnalysisPrompt || ""}
-                                          onChange={(e) => updatePresetConversation(spIdx, pcIdx, "classAnalysisPrompt", e.target.value)}
-                                          placeholder="全班学情分析提示词 *"
-                                          rows={2}
-                                        />
-                                      </div>
-                                      <div className="space-y-1">
-                                        <div className="flex items-center gap-1">
-                                          <span className="text-xs text-gray-500">对话设计提示词：</span>
-                                          <select
-                                            className="flex-1 px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0052D9]"
-                                            value=""
-                                            onChange={(e) => {
-                                              const content = getConversationTemplateContent(e.target.value);
-                                              if (!content) return;
-                                              // 原样填入模板（保留 {pcDescription}、{taskTitle} 等变量占位符），
-                                              // 由学生对话运行时统一替换，与学生对话时保持一致
-                                              updatePresetConversation(spIdx, pcIdx, "systemPrompt", content);
-                                            }}
-                                          >
-                                            <option value="">选择对话设计模板</option>
-                                            {conversationTemplates.map(t => (
-                                              <option key={t.id} value={t.id}>{t.name}</option>
-                                            ))}
-                                          </select>
-                                        </div>
-                                        <Textarea
-                                          value={pc.systemPrompt || ""}
-                                          onChange={(v) => updatePresetConversation(spIdx, pcIdx, "systemPrompt", v)}
-                                        placeholder="对话提示词 *（选择模板后自动填入，可在此基础上修改）"
-                                        rows={3}
-                                      />
-                                    </div>
-                                  </div>
-                                  ))}
-                                </div>
-                              );
-                            })()}
-                            {isEditingSP && (
-                              <div className="flex justify-end gap-2 pt-2">
-                                <Button
-                                  theme="primary"
-                                  variant="outline"
-                                  size="small"
-                                  icon={<AddIcon />}
-                                  onClick={() => addPresetConversation(editingSubProjects.length - 1)}
-                                >
-                                创建对话
-                              </Button>
-                              </div>
-                            )}
-                            {isEditingSP && (
-                              <div className="flex justify-end gap-2 pt-2">
-                                <Button
-                                  theme="default"
-                                  variant="outline"
-                                  size="small"
-                                  onClick={cancelEditingSubProjects}
-                                >
-                                  取消
-                                </Button>
-                                <Button
-                                  theme="primary"
-                                  size="small"
-                                  icon={<SaveIcon />}
-                                  loading={savingSubProjects}
-                                  onClick={() => saveSubProjects(task.id)}
-                                >
-                                  保存
-                                </Button>
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          /* 只读模式 - 名片式独立展示对话活动 */
-                          (() => {
-                            const allConversations = sortEnabledFirst(task.subProjects.flatMap(sp => sp.presetConversations));
-                            if (allConversations.length === 0) {
-                              return (
-                                <div className="bg-[#F7F8FA] rounded-lg p-3">
-                                  <div className="text-sm text-gray-400 py-4 text-center">暂无对话活动，点击「新建对话」创建</div>
-                                </div>
-                              );
-                            }
-                            return (
-                              <div className="bg-[#F7F8FA] rounded-lg p-3 space-y-2">
-                                {allConversations.map((pc, pcIdx) => {
-                                  const isEnabled = pc.enabled !== false;
-                                  const sp = task.subProjects.find((s: any) => s.presetConversations.some((p: any) => p.id === pc.id));
-                                  const _tpl = conversationTemplates.find((t: any) => t.id === pc.conversationPromptTemplateId);
-                                  const tplName = _tpl?.name || "";
-                                  return (
-                                    <div key={pc.id} className="bg-white rounded-lg p-2">
-                                      <div className="flex items-center justify-between gap-2">
-                                        <div className="flex items-center gap-2 flex-wrap min-w-0">
-                                          {isEnabled ? (
-                                            <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 shrink-0">生效中</span>
-                                          ) : (
-                                            <span className="px-2 py-0.5 rounded-full text-xs bg-orange-100 text-orange-700 shrink-0">失效中</span>
-                                          )}
-                                          <span className="font-medium text-sm text-gray-800 truncate">{pc.title}</span>
-                                        </div>
-                                        <div className="flex items-center gap-1 shrink-0">
-                                          <Button
-                                            theme="default" variant="text" size="small"
-                                            icon={<EditIcon />}
-                                            onClick={() => openEditConversationDialog(task, pc)}
-                                          >
-                                            编辑
-                                          </Button>
-                                          <Button
-                                            theme="danger" variant="text" size="small"
-                                            icon={<DeleteIcon />}
-                                            onClick={() => handleConversationDelete(pc)}
-                                          >
-                                            删除
-                                          </Button>
-                                          <Button
-                                            theme="success"
-                                            variant="text"
-                                            size="small"
-                                            icon={<ChartBarIcon />}
-                                            onClick={() => goTo(`/teacher/tasks/${task.id}/insights?pc=${pc.id}`)}
-                                          >
-                                            分析
-                                          </Button>
-                                          <Switch value={isEnabled} size="small" onChange={(val: boolean) => handleConversationToggle(pc, val)} disabled={operatingPresetConversationId === pc.id} />
-                                          {isEnabled && (
-                                            <>
-                                              <Button
-                                                theme="default" variant="text" size="small"
-                                                disabled={pcIdx === 0}
-                                                onClick={() => { if (sp?.id) handleConversationReorder(pc.id as string, "up", sp.id); }}
-                                              >
-                                                <ChevronUpIcon />
-                                              </Button>
-                                              <Button
-                                                theme="default" variant="text" size="small"
-                                                disabled={pcIdx === allConversations.length - 1}
-                                                onClick={() => { if (sp?.id) handleConversationReorder(pc.id as string, "down", sp.id); }}
-                                              >
-                                                <ChevronDownIcon />
-                                              </Button>
-                                            </>
-                                          )}
-                                        </div>
-                                      </div>
-                                      {tplName && (
-                                        <div className="mt-1 text-xs text-[#0052D9]">对话设计模板：{tplName}</div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            );
-                          })()
-                        )}
-                      </div>
-
-                      {/* 课堂作业管理 - 始终显示列表 */}
-
-                      {/* 互动探究管理 */}
-                      <div className="border-t border-gray-100 pt-2 mt-2">
-                        <div className="flex items-center justify-between mb-1">
-                          <h4 className="font-medium text-sm text-[#63666F]">互动探究</h4>
-                          <Button
-                            theme="primary" variant="outline" size="small" icon={<AddIcon />}
-                            onClick={() => {
-                              if (task.subProjects.length > 0) {
-                                openExplorationThenModal(task.subProjects[0].id!, task);
-                              }
-                            }}
-                          >
-                            新建探究
-                          </Button>
-                        </div>
-
-                        {/* 探究列表面板 */}
-                        <div className="bg-[#F7F8FA] rounded-lg p-3">
-                          {explorationPanelVisible && explorationPanelSpId === task.subProjects[0]?.id ? (
-                            <>
-                              {/* 探究列表 */}
-                              {explorations.length === 0 ? (
-                                <div className="text-center py-3 text-sm text-gray-400">暂无探究，点击「新建探究」创建</div>
-                              ) : (
-                                <div className="space-y-2">
-                                  {sortEnabledFirst(explorations).map((e, eIdx) => (
-                                    <div key={e.id} className="bg-white rounded-lg p-2">
-                                      <div className="flex items-center justify-between mb-1">
-                                        <div className="flex items-center gap-2 flex-wrap">
-                                          {e.enabled ? (
-                                            <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">生效中</span>
-                                          ) : (
-                                            <span className="px-2 py-0.5 rounded-full text-xs bg-orange-100 text-orange-700">失效中</span>
-                                          )}
-                                          {e.enableSubmission && (
-                                            <span className={`px-2 py-0.5 rounded-full text-xs ${(e._count?.ExplorationSubmission ?? 0) > 0 ? "bg-gray-100 text-gray-400" : "bg-blue-100 text-blue-700"}`}>
-                                              启用提交{(e._count?.ExplorationSubmission ?? 0) > 0 ? " 🔒" : ""}
-                                            </span>
-                                          )}
-                                          {e.enableAiCompanion && (
-                                            <span className="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-700">
-                                              AI伴学{(e as any).aiCompanionPrompt ? " ✓" : ""}
-                                            </span>
-                                          )}
-                                          <span className="font-medium text-sm text-gray-800">{e.title}</span>
-                                        </div>
-                                        <div className="flex gap-1 items-center flex-wrap">
-                                          <Button theme="primary" variant="text" size="small"
-                                            icon={<BrowseIcon />}
-                                            onClick={async () => {
-                                              const token = localStorage.getItem("token") || "";
-                                              const res = await fetch(`/api/exploration-activities/${e.id}`, {
-                                                headers: { Authorization: `Bearer ${token}` },
-                                              });
-                                              if (res.ok) {
-                                                const detail = await res.json();
-                                                // 详情返回纯净稿，本地渲染注入版（提交 + 伴学），与学生端一致。
-                                                openPreview(renderLocalPreview(detail.htmlContent || e.htmlContent || "", {
-                                                  enableSubmission: detail.enableSubmission,
-                                                  enableAiCompanion: detail.enableAiCompanion,
-                                                  collectProfile: detail.collectProfile ? parseCollectProfile(detail.collectProfile) : null,
-                                                  explorationId: detail.id,
-                                                }));
-                                                return;
-                                              }
-                                              // 详情拉取失败：列表 htmlContent 已是渲染版，直接预览。
-                                              openPreview(e.htmlContent || "");
-                                            }}>预览</Button>
-                                          {e.enableSubmission && (
-                                            <Button theme="success" variant="text" size="small"
-                                              icon={<ChartBarIcon />}
-                                              onClick={() => goTo(`/teacher/tasks/${expandedTaskId}/exploration/${e.id}`)}>分析</Button>
-                                          )}
-                                          <Button theme="primary" variant="text" size="small"
-                                            icon={<EditIcon />}
-                                            onClick={() => openEditExploration(e)}>编辑</Button>
-                                          <Button theme="danger" variant="text" size="small"
-                                            icon={<DeleteIcon />}
-                                            loading={operatingExplorationId === e.id}
-                                            onClick={() => handleDeleteExploration(e.id)}>删除</Button>
-                                          {/* 清除提交：仅在失效且有人提交时显示（与课堂作业「清除答题」口径一致） */}
-                                          {!e.enabled && (e._count?.ExplorationSubmission ?? 0) > 0 && (
-                                            <Button theme="warning" variant="text" size="small"
-                                              icon={<DeleteIcon />}
-                                              loading={clearingSubmissionsExplorationId === e.id}
-                                              onClick={() => handleClearExplorationSubmissions(e.id)}>清除提交</Button>
-                                          )}
-                                          <Switch value={e.enabled} size="small"
-                                            onChange={(val: boolean) => handleExplorationToggle(e, val)}
-                                            disabled={togglingExplorationId === e.id} />
-                                          {e.enabled && (
-                                            <>
-                                              <Button theme="default" variant="text" size="small"
-                                                disabled={eIdx === 0}
-                                                onClick={() => handleExplorationReorder(e.id, "up")}>
-                                                <ChevronUpIcon />
-                                              </Button>
-                                              <Button theme="default" variant="text" size="small"
-                                                disabled={eIdx === explorations.length - 1}
-                                                onClick={() => handleExplorationReorder(e.id, "down")}>
-                                                <ChevronDownIcon />
-                                              </Button>
-                                            </>
-                                          )}
-                                        </div>
-                                      </div>
-                                      {/* 名称下方：描述 + 提交人数（开启提交才显示人数，与课堂作业「N人已答」对齐） */}
-                                      {(e.description || e.enableSubmission) && (
-                                        <div className="text-xs text-gray-400">
-                                          {[e.description || "", e.enableSubmission ? `${e._count?.ExplorationSubmission ?? 0}人已提交` : ""].filter(Boolean).join(" · ")}
-                                        </div>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </>
-                          ) : (
-                            <div className="text-center py-4 text-sm text-gray-400">
-                              <Button theme="primary" variant="outline" size="small" icon={<AddIcon />}
-                                onClick={() => { if (task.subProjects.length > 0) openExplorationThenModal(task.subProjects[0].id!, task); }}>
-                                新建探究
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* 项目提交管理区（互动探究后、课堂作业前） */}
-                      <div className="border-t border-gray-100 pt-2 mt-2">
-                        <div className="flex items-center justify-between mb-1">
-                          <h4 className="font-medium text-sm text-[#63666F]">项目提交</h4>
-                          <div className="flex gap-2">
-                            <Button
-                              theme="primary"
-                              variant="outline"
-                              size="small"
-                              icon={<EditIcon />}
-                              onClick={() => {
-                                if (task.subProjects.length === 0) {
-                                  MessagePlugin.warning("请先创建学习活动");
-                                  return;
-                                }
-                                setProjDialogMode("new");
-                                setProjDialogId(null);
-                                setProjDialogSpId(task.subProjects[0].id!);
-                                setProjDialogTaskId(task.id);
-                                setProjForm({
-                                  title: "",
-                                  description: "",
-                                  category: "TEXT",
-                                  visibleToClass: true,
-                                  allowLike: false,
-                                  fileSizeLimit: 10,
-                                });
-                                setProjDialogVisible(true);
-                              }}
-                            >
-                              新建项目
-                            </Button>
-                          </div>
-                        </div>
-
-                        <div className="bg-[#F7F8FA] rounded-lg p-3">
-                          {(() => {
-                            const allPs = sortEnabledFirst(task.subProjects.flatMap(
-                              (sp: any) => (sp.projectSubmissions || []) as any[]
-                            ));
-                            if (allPs.length === 0) {
-                              // 空状态样式与课堂作业、互动探究保持一致：居中提示 + 点击标题栏按钮创建
-                              return (
-                                <div className="text-center py-3 text-sm text-gray-400">
-                                  暂无项目，点击「新建项目」创建
-                                </div>
-                              );
-                            }
-                            return (
-                              <div className="space-y-2">
-                                {allPs.map((ps: any, psIdx: number) => (
-                                  <div
-                                    key={ps.id}
-                                    className="bg-white rounded-lg p-2"
-                                  >
-                                    <div className="flex items-center justify-between">
-                                      <div className="flex items-center gap-2 flex-wrap min-w-0">
-                                        {ps.enabled !== false ? (
-                                          <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700 shrink-0">生效中</span>
-                                        ) : (
-                                          <span className="px-2 py-0.5 rounded-full text-xs bg-orange-100 text-orange-700 shrink-0">失效中</span>
-                                        )}
-                                        <span className="font-medium text-sm text-[#1A1A1A] truncate">
-                                          {ps.title}
-                                        </span>
-                                        <Tag theme="warning" variant="light" size="small">
-                                          {ps.category === "TEXT"
-                                            ? "文本"
-                                            : ps.category === "IMAGE"
-                                            ? "图片"
-                                            : "视频"}
-                                        </Tag>
-                                        {ps.visibleToClass && (
-                                          <Tag theme="success" variant="light" size="small">
-                                            全班可见
-                                          </Tag>
-                                        )}
-                                        {ps.allowLike && (
-                                          <Tag theme="primary" variant="light" size="small">
-                                            可点赞
-                                          </Tag>
-                                        )}
-                                      </div>
-                                      <div className="flex items-center gap-1 shrink-0">
-                                        <Button
-                                          theme="default" variant="text" size="small"
-                                          icon={<BrowseIcon />}
-                                          onClick={() => openBrowse(ps.id)}
-                                        >
-                                          浏览
-                                        </Button>
-                                        <Button
-                                          theme="primary" variant="text" size="small"
-                                          icon={<EditIcon />}
-                                          onClick={() => {
-                                            const sp = task.subProjects.find(
-                                              (s: any) => (s.projectSubmissions || []).some((p: any) => p.id === ps.id)
-                                            );
-                                            setProjDialogMode("edit");
-                                            setProjDialogId(ps.id);
-                                            setProjDialogSpId(sp?.id || null);
-                                            setProjDialogTaskId(task.id);
-                                            setProjForm({
-                                              title: ps.title,
-                                              description: ps.description || "",
-                                              category: ps.category,
-                                              visibleToClass: ps.visibleToClass,
-                                              allowLike: ps.allowLike,
-                                              fileSizeLimit: ps.fileSizeLimit,
-                                            });
-                                            setProjDialogVisible(true);
-                                          }}
-                                        >
-                                          编辑
-                                        </Button>
-                                        <Button
-                                          theme="danger" variant="text" size="small"
-                                          icon={<DeleteIcon />}
-                                          onClick={() => setProjDelete(ps)}
-                                        >
-                                          删除
-                                        </Button>
-                                        <Switch
-                                          value={ps.enabled !== false}
-                                          size="small"
-                                          onChange={(val: boolean) => handleProjectToggle(ps, val)}
-                                          disabled={operatingProjectId === ps.id}
-                                        />
-                                        {ps.enabled !== false && (
-                                          <>
-                                            <Button theme="default" variant="text" size="small"
-                                              disabled={psIdx === 0 || reorderingProjectId === ps.id}
-                                              onClick={() => handleProjectReorder(ps.id, "up", ps.subProjectId)}>
-                                              <ChevronUpIcon />
-                                            </Button>
-                                            <Button theme="default" variant="text" size="small"
-                                              disabled={psIdx === allPs.length - 1 || reorderingProjectId === ps.id}
-                                              onClick={() => handleProjectReorder(ps.id, "down", ps.subProjectId)}>
-                                              <ChevronDownIcon />
-                                            </Button>
-                                          </>
-                                        )}
-                                      </div>
-                                    </div>
-                                    <p className="text-xs text-[#63666F] mt-1">
-                                      {ps.description || "（无说明）"} · 上限 {ps.fileSizeLimit}MB
-                                    </p>
-                                  </div>
-                                ))}
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      </div>
-
-                      <div className="border-t border-gray-100 pt-2 mt-2">
-                        {/* 标题行 */}
-                        <div className="flex items-center justify-between mb-1">
-                          <h4 className="font-medium text-sm text-[#63666F]">课堂作业</h4>
-                          <div className="flex gap-2">
-                            {/* 导入作业功能已隐藏 */}
-                            <Button theme="primary" variant="outline" size="small" icon={<EditIcon />} onClick={() => { setQuizDesignId(null); setQuizDesignTitle(""); setQuizDesignDesc(""); setQuizDesignTemplateContent(""); setQuizDesignQuestions([]); setSelectedQuizTemplateId(""); setQuizDesignMode(true); if (!quizPanelVisible && task.subProjects.length > 0) openQuizPanel(task.subProjects[0].id!, task); else if (quizPanelVisible && task.subProjects.length > 0) { setQuizPanelSpId(task.subProjects[0].id!); openQuizPanel(task.subProjects[0].id!, task); } else { setQuizPanelVisible(true); } }}>新建作业</Button>
-                          </div>
-                        </div>
-
-                        {/* 作业列表面板 */}
-                        <div className="bg-[#F7F8FA] rounded-lg p-3">
-                          {quizPanelVisible ? (
+                            {quizDesignQuestions.length === 0 ? (
                               <>
-                                {/* 新建作业设计表单 - 置顶 */}
-                                {quizDesignMode && !quizDesignId && (
-                                  <div className="bg-white rounded-lg p-4 mb-3 space-y-3">
-                                    <input id="import-quiz-file" type="file" accept=".json" onChange={handleImportQuestionsToDesign} className="hidden" />
-                                    <div className="flex items-center justify-between">
-                                      <h5 className="font-medium text-sm text-[#63666F]">新建作业 · {quizDesignTitle || "（未命名）"}</h5>
-                                      <Button theme="default" variant="text" size="small" onClick={exitQuizDesign}>× 退出设计</Button>
+                                <Input value={quizDesignTitle} onChange={(v) => setQuizDesignTitle(v)} placeholder="作业名称 *" size="small" />
+                                <Input value={quizDesignDesc} onChange={(v) => setQuizDesignDesc(v)} placeholder="作业说明（选填）" size="small" />
+                                <div>
+                                  <div className="text-xs text-[var(--muted)] mb-1">选择作业设计模板</div>
+                                  <select className="w-full border rounded-lg px-3 py-2 text-sm" value={selectedQuizTemplateId} onChange={(e) => { setSelectedQuizTemplateId(e.target.value); const tpl = templates.find((t: any) => t.id === e.target.value); setQuizDesignTemplateContent(tpl?.content || ""); }}>
+                                    <option value="">请选择模板...</option>
+                                    {(templates.filter((t: any) => t.type === "QUIZ_DESIGN") || []).map((t: any) => (<option key={t.id} value={t.id}>{t.name}</option>))}
+                                  </select>
+                                  {!selectedQuizTemplateId && <div className="mt-2 p-3 bg-[var(--warning-light)] rounded-lg text-xs text-[var(--warning)]">提示：还没有作业设计模板？去「模板设置」页面创建一个。</div>}
+                                  {selectedQuizTemplateId && (() => {
+                                    const tpl: any = templates.find((t: any) => t.id === selectedQuizTemplateId);
+                                    if (!tpl) return null;
+                                    return (
+                                      <div className="mt-2">
+                                        <TemplatePreviewButton
+                                          templateId={tpl.id}
+                                          templateName={tpl.name}
+                                          templateType={tpl.type}
+                                          hasPreview={!!tpl.hasPreview}
+                                          previewStale={!!tpl.previewStale}
+                                        />
+                                      </div>
+                                    );
+                                  })()}
+                                </div>
+                                <Textarea value={quizDesignTemplateContent} onChange={(v) => setQuizDesignTemplateContent(v)} placeholder="作业设计提示词..." rows={6} />
+                                <div className="flex gap-2 items-center">
+                                  <Button theme="primary" size="small" icon={<PlayIcon />} loading={generatingQuestions} onClick={handleAIGenerateQuestions} disabled={!quizDesignTitle.trim() || !selectedQuizTemplateId}>生成作业</Button>
+                                  <Button theme="primary" variant="outline" size="small" loading={importingQuestions} disabled={!quizDesignTitle.trim()} onClick={() => document.getElementById('import-quiz-file')?.click()}>导入作业</Button>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="space-y-3">
+                                  {quizDesignQuestions.length > 0 && (
+                                    <div className="space-y-3">
+                                      <div className="text-xs font-medium text-[var(--muted)]">题目（共 {quizDesignQuestions.length} 道，可直接修改）</div>
+                                      <DndContext sensors={quizSensors} collisionDetection={closestCenter} onDragEnd={handleQuizDragEnd}>
+                                        <SortableContext items={quizDesignQuestions.map((_, i) => i)} strategy={verticalListSortingStrategy}>
+                                          {quizDesignQuestions.map((q, idx) => (
+                                            <SortableQuizQuestion
+                                              key={idx}
+                                              q={q}
+                                              idx={idx}
+                                              total={quizDesignQuestions.length}
+                                              onUpdate={(field, value) => {
+                                                const updated = [...quizDesignQuestions];
+                                                updated[idx] = { ...updated[idx], [field]: value };
+                                                setQuizDesignQuestions(updated);
+                                              }}
+                                              onMoveUp={() => {
+                                                if (idx > 0) {
+                                                  const updated = [...quizDesignQuestions];
+                                                  [updated[idx - 1], updated[idx]] = [updated[idx], updated[idx - 1]];
+                                                  setQuizDesignQuestions(updated);
+                                                }
+                                              }}
+                                              onMoveDown={() => {
+                                                if (idx < quizDesignQuestions.length - 1) {
+                                                  const updated = [...quizDesignQuestions];
+                                                  [updated[idx], updated[idx + 1]] = [updated[idx + 1], updated[idx]];
+                                                  setQuizDesignQuestions(updated);
+                                                }
+                                              }}
+                                            />
+                                          ))}
+                                        </SortableContext>
+                                      </DndContext>
                                     </div>
-                                    {quizDesignQuestions.length === 0 ? (
+                                  )}
+                                  <div className="flex gap-2 items-center">
+                                    <Button theme="primary" size="small" icon={<SaveIcon />} loading={savingQuiz} onClick={handleSaveQuiz}>保存作业</Button>
+                                    <Button theme="default" variant="outline" size="small" loading={importingQuestions} onClick={() => document.getElementById('import-quiz-file')?.click()}>追加导入</Button>
+                                  </div>
+                                </div>
+                              </>
+                            )}
+                            {generatingQuestions && <div className="text-center py-4 text-sm text-[var(--muted-light)]">AI 正在生成题目，请稍候...</div>}
+                          </div>
+                        )}
+                        {(() => {
+                          const acts = buildUnifiedActs(task);
+                          if (acts.length === 0) {
+                            return <div className="text-center py-3 text-sm text-[var(--muted-light)]">暂无活动，点击「新建活动」创建</div>;
+                          }
+                          const enabledCount = acts.filter((a) => a.enabled).length;
+                          let enabledIdx = -1;
+                          return (
+                            <div className="space-y-1.5">
+                              {acts.map((a) => {
+                                if (a.enabled) enabledIdx += 1;
+                                const myEnabledIdx = a.enabled ? enabledIdx : -1;
+                                const raw = a.raw;
+                                return (
+                                  <div key={`${a.type}-${a.id}`} className="flex items-center gap-2 bg-[var(--card-bg)] rounded px-3 py-1.5 text-sm">
+                                    <Tag size="small" theme="primary" variant="light">{UNIFIED_TYPE_LABEL[a.type]}</Tag>
+                                    {/* 活动未启用提示统一主题色（2026-10-13）：原 warning 语义色 */}
+                                    {!a.enabled && <Tag size="small" theme="primary" variant="light">未启用</Tag>}
+                                    {/* 活动名称跟随主题色系（2026-10-13）：原为硬编码 #333 */}
+                                    <span className="flex-1 truncate text-[var(--title)]">{a.title}</span>
+                                    {a.meta && <span className="text-xs text-[var(--muted-light)]">{a.meta}</span>}
+                                    {/* 行内管理按钮组：按类型分发（承接原 4 个类型区块的全部按钮）
+                                        ⛔ DO NOT REVERT: 所有管理按钮统一 theme="primary" variant="text"，
+                                        让对话/探究/项目/作业的图标和文字全部跟随主题主色（用户 2026-10-13 要求）。
+                                        不再混用 danger/success/warning 等语义色，避免苹果式界面花花绿绿。 */}
+                                    {a.type === "conversation" && (
                                       <>
-                                        <Input value={quizDesignTitle} onChange={(v) => setQuizDesignTitle(v)} placeholder="作业名称 *" size="small" />
-                                        <Input value={quizDesignDesc} onChange={(v) => setQuizDesignDesc(v)} placeholder="作业说明（选填）" size="small" />
-                                        <div>
-                                          <div className="text-xs text-gray-500 mb-1">选择作业设计模板</div>
-                                          <select className="w-full border rounded-lg px-3 py-2 text-sm" value={selectedQuizTemplateId} onChange={(e) => { setSelectedQuizTemplateId(e.target.value); const tpl = templates.find((t: any) => t.id === e.target.value); setQuizDesignTemplateContent(tpl?.content || ""); }}>
-                                            <option value="">请选择模板...</option>
-                                            {(templates.filter((t: any) => t.type === "QUIZ_DESIGN") || []).map((t: any) => (<option key={t.id} value={t.id}>{t.name}</option>))}
-                                          </select>
-                                          {!selectedQuizTemplateId && <div className="mt-2 p-3 bg-yellow-50 rounded-lg text-xs text-yellow-700">提示：还没有作业设计模板？去「模板设置」页面创建一个。</div>}
-                                          {selectedQuizTemplateId && (() => {
-                                            const tpl: any = templates.find((t: any) => t.id === selectedQuizTemplateId);
-                                            if (!tpl) return null;
-                                            return (
-                                              <div className="mt-2">
-                                                <TemplatePreviewButton
-                                                  templateId={tpl.id}
-                                                  templateName={tpl.name}
-                                                  templateType={tpl.type}
-                                                  hasPreview={!!tpl.hasPreview}
-                                                  previewStale={!!tpl.previewStale}
-                                                />
-                                              </div>
-                                            );
-                                          })()}
-                                        </div>
-                                        <Textarea value={quizDesignTemplateContent} onChange={(v) => setQuizDesignTemplateContent(v)} placeholder="作业设计提示词..." rows={6} />
-                                        <div className="flex gap-2 items-center">
-                                          <Button theme="primary" size="small" icon={<PlayIcon />} loading={generatingQuestions} onClick={handleAIGenerateQuestions} disabled={!quizDesignTitle.trim() || !selectedQuizTemplateId}>生成作业</Button>
-                                          <Button theme="primary" variant="outline" size="small" loading={importingQuestions} disabled={!quizDesignTitle.trim()} onClick={() => document.getElementById('import-quiz-file')?.click()}>导入作业</Button>
-                                        </div>
+                                        <Button theme="primary" variant="text" size="small" icon={<EditIcon />} onClick={() => openEditConversationDialog(task, raw)}>编辑</Button>
+                                        <Button theme="primary" variant="text" size="small" icon={<DeleteIcon />} onClick={() => handleConversationDelete(raw)}>删除</Button>
+                                        <Button theme="primary" variant="text" size="small" icon={<ChartBarIcon />} onClick={() => goTo(`/teacher/tasks/${task.id}/insights?pc=${a.id}`)}>分析</Button>
+                                      </>
+                                    )}
+                                    {a.type === "exploration" && (
+                                      <>
+                                        <Button theme="primary" variant="text" size="small"
+                                          icon={<BrowseIcon />}
+                                          onClick={async () => {
+                                            const token = localStorage.getItem("token") || "";
+                                            const res = await fetch(`/api/exploration-activities/${a.id}`, {
+                                              headers: { Authorization: `Bearer ${token}` },
+                                            });
+                                            if (res.ok) {
+                                              const detail = await res.json();
+                                              // 详情返回纯净稿，本地渲染注入版（提交 + 伴学），与学生端一致。
+                                              openPreview(renderLocalPreview(detail.htmlContent || raw.htmlContent || "", {
+                                                enableSubmission: detail.enableSubmission,
+                                                enableAiCompanion: detail.enableAiCompanion,
+                                                collectProfile: detail.collectProfile ? parseCollectProfile(detail.collectProfile) : null,
+                                                explorationId: detail.id,
+                                              }));
+                                              return;
+                                            }
+                                            // 详情拉取失败：列表接口未下发探究 HTML，仅兜底打开已有内容。
+                                            openPreview(raw.htmlContent || "");
+                                          }}>预览</Button>
+                                        {raw.enableSubmission && (
+                                          <Button theme="primary" variant="text" size="small"
+                                            icon={<ChartBarIcon />}
+                                            onClick={() => goTo(`/teacher/tasks/${task.id}/exploration/${a.id}`)}>分析</Button>
+                                        )}
+                                        <Button theme="primary" variant="text" size="small"
+                                          icon={<EditIcon />}
+                                          onClick={() => openEditExploration(raw)}>编辑</Button>
+                                        <Button theme="primary" variant="text" size="small"
+                                          icon={<DeleteIcon />}
+                                          loading={operatingExplorationId === a.id}
+                                          onClick={() => handleDeleteExploration(a.id)}>删除</Button>
+                                        {/* 清除提交：仅在停用且有人提交时显示（与课堂作业「清除答题」口径一致） */}
+                                        {!raw.enabled && (raw._count?.ExplorationSubmission ?? 0) > 0 && (
+                                          <Button theme="primary" variant="text" size="small"
+                                            icon={<DeleteIcon />}
+                                            loading={clearingSubmissionsExplorationId === a.id}
+                                            onClick={() => handleClearExplorationSubmissions(a.id)}>清除提交</Button>
+                                        )}
+                                      </>
+                                    )}
+                                    {a.type === "project" && (
+                                      <>
+                                        <Button theme="primary" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openBrowse(a.id)}>浏览</Button>
+                                        <Button theme="primary" variant="text" size="small" icon={<EditIcon />} onClick={() => {
+                                          setProjDialogMode("edit");
+                                          setProjDialogId(a.id);
+                                          setProjDialogSpId(a.subProjectId);
+                                          setProjDialogTaskId(task.id);
+                                          setProjForm({
+                                            title: raw.title,
+                                            description: raw.description || "",
+                                            category: raw.category,
+                                            visibleToClass: raw.visibleToClass,
+                                            allowLike: raw.allowLike,
+                                            fileSizeLimit: raw.fileSizeLimit,
+                                          });
+                                          setProjDialogVisible(true);
+                                        }}>编辑</Button>
+                                        <Button theme="primary" variant="text" size="small" icon={<DeleteIcon />} onClick={() => setProjDelete(raw)}>删除</Button>
+                                      </>
+                                    )}
+                                    {a.type === "quiz" && (raw.status === "ACTIVE" ? (
+                                      <>
+                                        <Button theme="primary" variant="text" size="small" icon={<ChartBarIcon />} onClick={() => goTo(`/teacher/activities/${a.subProjectId}/quiz/${a.id}/report`)}>查看报告</Button>
+                                        <Button theme="primary" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openQuizPreview(raw)}>预览</Button>
                                       </>
                                     ) : (
                                       <>
-                                        <div className="space-y-3">
-                                          {quizDesignQuestions.length > 0 && (
-                                            <div className="space-y-3">
-                                              <div className="text-xs font-medium text-gray-500">题目（共 {quizDesignQuestions.length} 道，可直接修改）</div>
-                                              <DndContext sensors={quizSensors} collisionDetection={closestCenter} onDragEnd={handleQuizDragEnd}>
-                                                <SortableContext items={quizDesignQuestions.map((_, i) => i)} strategy={verticalListSortingStrategy}>
-                                                  {quizDesignQuestions.map((q, idx) => (
-                                                    <SortableQuizQuestion
-                                                      key={idx}
-                                                      q={q}
-                                                      idx={idx}
-                                                      total={quizDesignQuestions.length}
-                                                      onUpdate={(field, value) => {
-                                                        const updated = [...quizDesignQuestions];
-                                                        updated[idx] = { ...updated[idx], [field]: value };
-                                                        setQuizDesignQuestions(updated);
-                                                      }}
-                                                      onMoveUp={() => {
-                                                        if (idx > 0) {
-                                                          const updated = [...quizDesignQuestions];
-                                                          [updated[idx - 1], updated[idx]] = [updated[idx], updated[idx - 1]];
-                                                          setQuizDesignQuestions(updated);
-                                                        }
-                                                      }}
-                                                      onMoveDown={() => {
-                                                        if (idx < quizDesignQuestions.length - 1) {
-                                                          const updated = [...quizDesignQuestions];
-                                                          [updated[idx], updated[idx + 1]] = [updated[idx + 1], updated[idx]];
-                                                          setQuizDesignQuestions(updated);
-                                                        }
-                                                      }}
-                                                    />
-                                                  ))}
-                                                </SortableContext>
-                                              </DndContext>
-                                            </div>
-                                          )}
-                                          <div className="flex gap-2 items-center">
-                                            <Button theme="primary" size="small" icon={<SaveIcon />} loading={savingQuiz} onClick={handleSaveQuiz}>保存作业</Button>
-                                            <Button theme="default" variant="outline" size="small" loading={importingQuestions} onClick={() => document.getElementById('import-quiz-file')?.click()}>追加导入</Button>
-                                          </div>
-                                        </div>
+                                        <Button theme="primary" variant="text" size="small" icon={<EditIcon />} onClick={() => startEditQuiz(raw)}>快编</Button>
+                                        <Button theme="primary" variant="text" size="small" icon={<FileIcon />} onClick={() => goTo(`/teacher/activities/${a.subProjectId}/quiz/${a.id}/questions`)}>题目管理</Button>
+                                        <Button theme="primary" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openQuizPreview(raw)}>预览</Button>
+                                        {(raw._count?.attempts ?? 0) > 0 && (
+                                          <Button theme="primary" variant="text" size="small" icon={<DeleteIcon />} loading={clearingAttemptsQuizId === a.id} onClick={() => handleClearAttempts(a.id)}>清除答题</Button>
+                                        )}
+                                        <Button theme="primary" variant="text" size="small" icon={<DeleteIcon />} loading={deletingQuizId === a.id} onClick={() => handleQuizDelete(a.id)}>删除</Button>
                                       </>
+                                    ))}
+                                    {/* 启停开关：统一在此分发；quiz 的 enabled 已在 buildUnifiedActs 归一为 status==="ACTIVE" */}
+                                    <Switch
+                                      value={a.enabled}
+                                      size="small"
+                                      onChange={(val: boolean) => {
+                                        if (a.type === "conversation") handleConversationToggle(raw, val);
+                                        else if (a.type === "exploration") handleExplorationToggle(raw, val);
+                                        else if (a.type === "project") handleProjectToggle(raw, val);
+                                        else handleQuizToggle(raw, val);
+                                      }}
+                                      disabled={a.type === "conversation" ? operatingPresetConversationId === a.id
+                                        : a.type === "exploration" ? togglingExplorationId === a.id
+                                        : a.type === "project" ? operatingProjectId === a.id
+                                        : operatingQuizId === a.id}
+                                    />
+                                    {a.enabled ? (
+                                      <div className="flex items-center">
+                                        <Button theme="primary" variant="text" size="small" disabled={myEnabledIdx === 0}
+                                          onClick={() => reorderAcrossTypes(a.type, a.id, "up", a.subProjectId)}>
+                                          <ChevronUpIcon />
+                                        </Button>
+                                        <Button theme="primary" variant="text" size="small" disabled={myEnabledIdx === enabledCount - 1}
+                                          onClick={() => reorderAcrossTypes(a.type, a.id, "down", a.subProjectId)}>
+                                          <ChevronDownIcon />
+                                        </Button>
+                                      </div>
+                                    ) : (
+                                      <span className="w-[64px]"></span>
                                     )}
-                                    {generatingQuestions && <div className="text-center py-4 text-sm text-gray-400">AI 正在生成题目，请稍候...</div>}
                                   </div>
-                                )}
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
 
-                                {/* 作业列表 */}
-                                {quizzes.length === 0 ? (
-                                  <div className="text-center py-3 text-sm text-gray-400">暂无作业，点击「新建作业」创建</div>
-                                ) : (
-                                  <div className="space-y-2">
-                                    {sortEnabledFirst(quizzes).map((q, qIdx) => (
-                                      <div key={q.id} className="bg-white rounded-lg p-2">
-                                        <div className="flex items-center justify-between mb-1">
-                                          <div className="flex items-center gap-2 flex-wrap">
-                                            {q.status === "INACTIVE" && <span className="px-2 py-0.5 rounded-full text-xs bg-orange-100 text-orange-700">失效中</span>}
-                                            {q.status === "ACTIVE" && <span className="px-2 py-0.5 rounded-full text-xs bg-green-100 text-green-700">生效中</span>}
-                                            <span className="font-medium text-sm text-gray-800">{q.title}</span>
-                                            {q.hasAIAnalysis && <span className="px-2 py-0.5 rounded-full text-xs bg-purple-100 text-purple-700">AI 报告</span>}
-                                          </div>
-                                          <div className="flex gap-1 items-center flex-wrap">
-                                            {/* 失效中（INACTIVE）按钮 */}
-                                            {q.status === "INACTIVE" && (
-                                              <>
-                                                <Button theme="primary" variant="text" size="small" icon={<EditIcon />} onClick={() => startEditQuiz(q)}>快编</Button>
-                                                <Button theme="primary" variant="text" size="small" icon={<FileIcon />} onClick={() => goTo(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/questions`)}>题目管理</Button>
-                                                <Button theme="default" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openQuizPreview(q)}>预览</Button>
-                                                {(q._count?.attempts ?? 0) > 0 && (
-                                                  <Button theme="warning" variant="text" size="small" icon={<DeleteIcon />} loading={clearingAttemptsQuizId === q.id} onClick={() => handleClearAttempts(q.id)}>清除答题</Button>
-                                                )}
-                                                <Button theme="danger" variant="text" size="small" icon={<DeleteIcon />} loading={deletingQuizId === q.id} onClick={() => handleQuizDelete(q.id)}>删除</Button>
-                                              </>
-                                            )}
-                                            
-                                            {/* 生效中（ACTIVE）按钮 */}
-                                            {q.status === "ACTIVE" && (
-                                              <>
-                                                <Button theme="success" variant="text" size="small" icon={<ChartBarIcon />} onClick={() => goTo(`/teacher/activities/${quizPanelSpId}/quiz/${q.id}/report`)}>查看报告</Button>
-                                                <Button theme="default" variant="text" size="small" icon={<BrowseIcon />} onClick={() => openQuizPreview(q)}>预览</Button>
-                                              </>
-                                            )}
-                                            <Switch
-                                              value={q.status === "ACTIVE"}
-                                              size="small"
-                                              onChange={(val: boolean) => handleQuizToggle(q, val)}
-                                              disabled={operatingQuizId === q.id}
-                                            />
-                                            {(() => {
-                                              const activeIndices = quizzes.map((q, i) => q.status === "ACTIVE" ? i : -1).filter(i => i >= 0);
-                                              const firstActiveIdx = activeIndices[0];
-                                              const lastActiveIdx = activeIndices[activeIndices.length - 1];
-                                              return q.status === "ACTIVE" && (
-                                                <>
-                                                  <Button
-                                                    theme="default" variant="text" size="small"
-                                                    disabled={qIdx === firstActiveIdx}
-                                                    onClick={() => handleQuizReorder(q.id, "up", quizPanelSpId!)}
-                                                  >
-                                                    <ChevronUpIcon />
-                                                  </Button>
-                                                  <Button
-                                                    theme="default" variant="text" size="small"
-                                                    disabled={qIdx === lastActiveIdx}
-                                                    onClick={() => handleQuizReorder(q.id, "down", quizPanelSpId!)}
-                                                  >
-                                                    <ChevronDownIcon />
-                                                  </Button>
-                                                </>
-                                              );
-                                            })()}
-                                          </div>
+                        {/* 编辑作业设计表单仍内嵌于统一清单底部：由停用作业行的「快编」入口触发（startEditQuiz）。
+                            新建作业表单已移到统一清单顶部，避免长列表滚动。
+                            ⚠️ GOTCHA: handleSaveQuiz 依赖 quizPanelSpId 定位 subProjectId；表单只依赖组件级 quizDesign* state。
+                            🔗 RELATED: 顶部新建表单、startEditQuiz / handleSaveQuiz / exitQuizDesign */}
+                                                {quizDesignMode && quizDesignId && (
+                          <div className="bg-[var(--card-bg)] rounded-lg p-4 space-y-3">
+                            <div className="flex items-center justify-between">
+                              <h5 className="font-medium text-sm text-[var(--muted)]">编辑作业</h5>
+                              <Button theme="primary" variant="text" size="small" onClick={exitQuizDesign}>× 退出设计</Button>
+                            </div>
+                            <Input value={quizDesignTitle} onChange={(v) => setQuizDesignTitle(v)} placeholder="作业名称 *" size="small" />
+                            <Input value={quizDesignDesc} onChange={(v) => setQuizDesignDesc(v)} placeholder="作业说明（选填）" size="small" />
+                            {quizDesignQuestions.length > 0 && (
+                              <div className="space-y-3">
+                                <div className="text-xs font-medium text-[var(--muted)]">题目（共 {quizDesignQuestions.length} 道，可直接修改）</div>
+                                {quizDesignQuestions.map((question, idx) => {
+                                  const options = typeof question.options === "string" ? JSON.parse(question.options || "{}") : (question.options || {});
+                                  return (
+                                    <div key={idx} className="bg-[var(--primary-lighter)] rounded-lg p-3 text-sm">
+                                      <div className="flex items-start gap-2">
+                                        <div className="flex flex-col gap-0.5 p-1">
+                                          <button type="button" onClick={() => { if (idx === 0) return; const updated = [...quizDesignQuestions]; const temp = updated[idx - 1]; updated[idx - 1] = updated[idx]; updated[idx] = temp; setQuizDesignQuestions(updated); }} disabled={idx === 0} className="w-5 h-4 flex items-center justify-center text-[var(--primary)] hover:text-[var(--primary)] disabled:opacity-30 disabled:cursor-not-allowed text-xs font-bold">▲</button>
+                                          <button type="button" onClick={() => { if (idx === quizDesignQuestions.length - 1) return; const updated = [...quizDesignQuestions]; const temp = updated[idx + 1]; updated[idx + 1] = updated[idx]; updated[idx] = temp; setQuizDesignQuestions(updated); }} disabled={idx === quizDesignQuestions.length - 1} className="w-5 h-4 flex items-center justify-center text-[var(--primary)] hover:text-[var(--primary)] disabled:opacity-30 disabled:cursor-not-allowed text-xs font-bold">▼</button>
                                         </div>
-                                        <div className="text-xs text-gray-400">{q.description || "无说明"} · {q.questions?.length || 0}题 · {q._count?.attempts || 0}人已答</div>
-
-                                        {/* 编辑表单 - 就地展开在卡片内 */}
-                                        {quizDesignMode && quizDesignId === q.id && (
-                                          <div className="mt-3 pt-3 border-t border-gray-100 space-y-3">
-                                            <div className="flex items-center justify-between">
-                                              <h5 className="font-medium text-sm text-[#63666F]">编辑作业</h5>
-                                              <Button theme="default" variant="text" size="small" onClick={exitQuizDesign}>× 退出设计</Button>
-                                            </div>
-                                            <Input value={quizDesignTitle} onChange={(v) => setQuizDesignTitle(v)} placeholder="作业名称 *" size="small" />
-                                            <Input value={quizDesignDesc} onChange={(v) => setQuizDesignDesc(v)} placeholder="作业说明（选填）" size="small" />
-                                            {quizDesignQuestions.length > 0 && (
-                                              <div className="space-y-3">
-                                                <div className="text-xs font-medium text-gray-500">题目（共 {quizDesignQuestions.length} 道，可直接修改）</div>
-                                                {quizDesignQuestions.map((question, idx) => {
-                                                  const options = typeof question.options === "string" ? JSON.parse(question.options || "{}") : (question.options || {});
+                                        <span className="font-medium text-[var(--muted)] mt-1">{idx + 1}.</span>
+                                        <div className="flex-1 space-y-2">
+                                          <Input value={question.content} onChange={(v) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], content: v }; setQuizDesignQuestions(updated); }} size="small" />
+                                          <div className="grid grid-cols-2 gap-1">
+                                            {["A", "B", "C", "D"].map((opt) => (
+                                              <div key={opt} className="flex items-center gap-1">
+                                                <span className="text-xs text-[var(--muted-light)]">{opt}.</span>
+                                                <Input value={options[opt] || ""} onChange={(v) => { const updated = [...quizDesignQuestions]; const newOpts = { ...options, [opt]: v }; updated[idx] = { ...updated[idx], options: newOpts }; setQuizDesignQuestions(updated); }} size="small" />
+                                              </div>
+                                            ))}
+                                          </div>
+                                          <div className="flex gap-2 items-center text-xs">
+                                            <span className="text-[var(--muted-light)]">题型：</span>
+                                            <select value={question.type || "SINGLE_CHOICE"} onChange={(e) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], type: e.target.value }; setQuizDesignQuestions(updated); }} className="border rounded px-1 py-0.5">
+                                              <option value="SINGLE_CHOICE">单选</option><option value="MULTIPLE_CHOICE">多选</option><option value="TRUE_FALSE">判断</option>
+                                            </select>
+                                            <span className="text-[var(--muted-light)] ml-2">答案：</span>
+                                            {question.type === "TRUE_FALSE" ? (
+                                              <select value={question.answer || "T"} onChange={(e) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], answer: e.target.value }; setQuizDesignQuestions(updated); }} className="border rounded px-1 py-0.5">
+                                                <option value="T">正确</option><option value="F">错误</option>
+                                              </select>
+                                            ) : question.type !== "MULTIPLE_CHOICE" ? (
+                                              <select value={question.answer || "A"} onChange={(e) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], answer: e.target.value }; setQuizDesignQuestions(updated); }} className="border rounded px-1 py-0.5">
+                                                <option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option>
+                                              </select>
+                                            ) : (
+                                              <div className="flex gap-2 items-center">
+                                                {["A", "B", "C", "D"].map((opt) => {
+                                                  const correctList = (question.answer || "").split(",").map((s: string) => s.trim()).filter(Boolean);
+                                                  const checked = correctList.includes(opt);
                                                   return (
-                                                    <div key={idx} className="bg-[#F7F8FA] rounded-lg p-3 text-sm">
-                                                      <div className="flex items-start gap-2">
-                                                        <div className="flex flex-col gap-0.5 p-1">
-                                                          <button type="button" onClick={() => { if (idx === 0) return; const updated = [...quizDesignQuestions]; const temp = updated[idx - 1]; updated[idx - 1] = updated[idx]; updated[idx] = temp; setQuizDesignQuestions(updated); }} disabled={idx === 0} className="w-5 h-4 flex items-center justify-center text-blue-600 hover:text-blue-800 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-bold">▲</button>
-                                                          <button type="button" onClick={() => { if (idx === quizDesignQuestions.length - 1) return; const updated = [...quizDesignQuestions]; const temp = updated[idx + 1]; updated[idx + 1] = updated[idx]; updated[idx] = temp; setQuizDesignQuestions(updated); }} disabled={idx === quizDesignQuestions.length - 1} className="w-5 h-4 flex items-center justify-center text-blue-600 hover:text-blue-800 disabled:opacity-30 disabled:cursor-not-allowed text-xs font-bold">▼</button>
-                                                        </div>
-                                                        <span className="font-medium text-gray-500 mt-1">{idx + 1}.</span>
-                                                        <div className="flex-1 space-y-2">
-                                                          <Input value={question.content} onChange={(v) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], content: v }; setQuizDesignQuestions(updated); }} size="small" />
-                                                          <div className="grid grid-cols-2 gap-1">
-                                                            {["A", "B", "C", "D"].map((opt) => (
-                                                              <div key={opt} className="flex items-center gap-1">
-                                                                <span className="text-xs text-gray-400">{opt}.</span>
-                                                                <Input value={options[opt] || ""} onChange={(v) => { const updated = [...quizDesignQuestions]; const newOpts = { ...options, [opt]: v }; updated[idx] = { ...updated[idx], options: newOpts }; setQuizDesignQuestions(updated); }} size="small" />
-                                                              </div>
-                                                            ))}
-                                                          </div>
-                                                          <div className="flex gap-2 items-center text-xs">
-                                                            <span className="text-gray-400">题型：</span>
-                                                            <select value={question.type || "SINGLE_CHOICE"} onChange={(e) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], type: e.target.value }; setQuizDesignQuestions(updated); }} className="border rounded px-1 py-0.5">
-                                                              <option value="SINGLE_CHOICE">单选</option><option value="MULTIPLE_CHOICE">多选</option><option value="TRUE_FALSE">判断</option>
-                                                            </select>
-                                                            <span className="text-gray-400 ml-2">答案：</span>
-                                                            {question.type === "TRUE_FALSE" ? (
-                                                              <select value={question.answer || "T"} onChange={(e) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], answer: e.target.value }; setQuizDesignQuestions(updated); }} className="border rounded px-1 py-0.5">
-                                                                <option value="T">正确</option><option value="F">错误</option>
-                                                              </select>
-                                                            ) : question.type !== "MULTIPLE_CHOICE" ? (
-                                                              <select value={question.answer || "A"} onChange={(e) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], answer: e.target.value }; setQuizDesignQuestions(updated); }} className="border rounded px-1 py-0.5">
-                                                                <option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option>
-                                                              </select>
-                                                            ) : (
-                                                              <div className="flex gap-2 items-center">
-                                                                {["A", "B", "C", "D"].map((opt) => {
-                                                                  const correctList = (question.answer || "").split(",").map((s: string) => s.trim()).filter(Boolean);
-                                                                  const checked = correctList.includes(opt);
-                                                                  return (
-                                                                    <label key={opt} className="flex items-center gap-1 cursor-pointer">
-                                                                      <input type="checkbox" checked={checked} onChange={() => {
-                                                                        const updated = [...quizDesignQuestions];
-                                                                        const list = checked ? correctList.filter((s: string) => s !== opt) : [...correctList, opt];
-                                                                        updated[idx] = { ...updated[idx], answer: list.join(",") };
-                                                                        setQuizDesignQuestions(updated);
-                                                                      }} />
-                                                                      <span>{opt}</span>
-                                                                    </label>
-                                                                  );
-                                                                })}
-                                                              </div>
-                                                            )}
-                                                            <span className="text-gray-400 ml-2">难度：</span>
-                                                            <select value={question.difficulty || "BASIC"} onChange={(e) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], difficulty: e.target.value }; setQuizDesignQuestions(updated); }} className="border rounded px-1 py-0.5">
-                                                              <option value="BASIC">基础</option><option value="INTERMEDIATE">提升</option><option value="ADVANCED">拓展</option>
-                                                            </select>
-                                                          </div>
-                                                          <div><span className="text-xs text-gray-400">答案解析</span><Input value={question.explanation || ""} onChange={(v) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], explanation: v }; setQuizDesignQuestions(updated); }} size="small" placeholder="答案解析（可为空）" /></div>
-                                                        </div>
-                                                      </div>
-                                                    </div>
+                                                    <label key={opt} className="flex items-center gap-1 cursor-pointer">
+                                                      <input type="checkbox" checked={checked} onChange={() => {
+                                                        const updated = [...quizDesignQuestions];
+                                                        const list = checked ? correctList.filter((s: string) => s !== opt) : [...correctList, opt];
+                                                        updated[idx] = { ...updated[idx], answer: list.join(",") };
+                                                        setQuizDesignQuestions(updated);
+                                                      }} />
+                                                      <span>{opt}</span>
+                                                    </label>
                                                   );
                                                 })}
                                               </div>
                                             )}
-                                            <div className="flex gap-2 justify-end"><Button theme="primary" size="small" icon={<SaveIcon />} loading={savingQuiz} onClick={handleSaveQuiz}>保存作业</Button></div>
-                                          {generatingQuestions && <div className="text-center py-4 text-sm text-gray-400">AI 正在生成题目，请稍候...</div>}
+                                            <span className="text-[var(--muted-light)] ml-2">难度：</span>
+                                            <select value={question.difficulty || "BASIC"} onChange={(e) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], difficulty: e.target.value }; setQuizDesignQuestions(updated); }} className="border rounded px-1 py-0.5">
+                                              <option value="BASIC">基础</option><option value="INTERMEDIATE">提升</option><option value="ADVANCED">拓展</option>
+                                            </select>
                                           </div>
-                                        )}
+                                          <div><span className="text-xs text-[var(--muted-light)]">答案解析</span><Input value={question.explanation || ""} onChange={(v) => { const updated = [...quizDesignQuestions]; updated[idx] = { ...updated[idx], explanation: v }; setQuizDesignQuestions(updated); }} size="small" placeholder="答案解析（可为空）" /></div>
+                                        </div>
                                       </div>
-                                    ))}
-                                  </div>
-                                )}
-                              </>
-                            ) : (
-                              <div className="text-center py-4 text-sm text-gray-400">暂无作业，点击「新建作业」创建</div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
                             )}
+                            <div className="flex gap-2 justify-end"><Button theme="primary" size="small" icon={<SaveIcon />} loading={savingQuiz} onClick={handleSaveQuiz}>保存作业</Button></div>
+                            {generatingQuestions && <div className="text-center py-4 text-sm text-[var(--muted-light)]">AI 正在生成题目，请稍候...</div>}
                           </div>
+                        )}
+                      </div>
 
-                          {/* 新建作业表单 - 已移到列表顶部 */}
-                          </div>
+                      </div>
                     </div>
-                  )}
+                  </div>
                 </Card>
               );
             })}
@@ -4639,7 +4112,7 @@ export default function TeacherTasksPage() {
 
         {tasks.length > 0 && (
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm text-[#63666F]">
+            <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
               <span>每页</span>
               <InputNumber
                 value={pageSize}
@@ -4686,7 +4159,7 @@ export default function TeacherTasksPage() {
                 />
                 <div className="flex gap-3">
                   <div className="flex-1">
-                    <label className="block text-sm text-gray-700 mb-1">年级 <span className="text-red-500">*</span></label>
+                    <label className="block text-sm text-[var(--foreground)] mb-1">年级 <span className="text-[var(--danger)]">*</span></label>
                     <Select
                       value={formGrade}
                       onChange={(v) => setFormGrade(v as string)}
@@ -4727,7 +4200,7 @@ export default function TeacherTasksPage() {
                     />
                   </div>
                   <div className="flex-1">
-                    <label className="block text-sm text-gray-700 mb-1">学科 <span className="text-red-500">*</span></label>
+                    <label className="block text-sm text-[var(--foreground)] mb-1">学科 <span className="text-[var(--danger)]">*</span></label>
                     <Select
                       value={formSubject}
                       onChange={(v) => setFormSubject(v as string)}
@@ -4765,11 +4238,11 @@ export default function TeacherTasksPage() {
                 </div>
                 <div>
                   <div className="flex items-center justify-between mb-1">
-                    <label className="block text-sm text-gray-700">课堂目标 <span className="text-red-500">*</span></label>
+                    <label className="block text-sm text-[var(--foreground)]">课堂目标 <span className="text-[var(--danger)]">*</span></label>
                     <div className="flex items-center gap-2">
                       {objectivesBackup !== null && (
                         <span
-                          className="text-xs text-[#0052D9] cursor-pointer hover:underline"
+                          className="text-xs text-[var(--primary)] cursor-pointer hover:underline"
                           onClick={restoreObjectives}
                         >
                           撤销
@@ -4798,10 +4271,10 @@ export default function TeacherTasksPage() {
               <div className="flex-1 space-y-4">
               {/* 个人学情分析提示词 */}
                 <div className="space-y-2">
-                  <h4 className="font-medium text-sm text-[#63666F]">个人学情分析提示词</h4>
+                  <h4 className="font-medium text-sm text-[var(--muted)]">个人学情分析提示词</h4>
                   <div className="flex gap-2 items-center">
                     <select
-                      className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
+                      className="flex-1 px-3 py-2 border border-[var(--card-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                       value=""
                       onChange={(e) => {
                         const content = getTemplateContent(e.target.value);
@@ -4817,7 +4290,7 @@ export default function TeacherTasksPage() {
                     </select>
                   </div>
                   <textarea
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
+                    className="w-full px-3 py-2 border border-[var(--card-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                     value={formAnalysisPrompt || editingTask?.analysisPrompt || ""}
                     onChange={(e) => {
                       setFormAnalysisPrompt(e.target.value);
@@ -4829,10 +4302,10 @@ export default function TeacherTasksPage() {
 
                 {/* 全班学情分析提示词 */}
                 <div className="space-y-2">
-                  <h4 className="font-medium text-sm text-[#63666F]">全班学情分析提示词</h4>
+                  <h4 className="font-medium text-sm text-[var(--muted)]">全班学情分析提示词</h4>
                   <div className="flex gap-2 items-center">
                     <select
-                      className="flex-1 px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
+                      className="flex-1 px-3 py-2 border border-[var(--card-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                       value=""
                       onChange={(e) => {
                         const content = getTemplateContent(e.target.value);
@@ -4848,7 +4321,7 @@ export default function TeacherTasksPage() {
                     </select>
                   </div>
                   <textarea
-                    className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
+                    className="w-full px-3 py-2 border border-[var(--card-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                     value={formClassAnalysisPrompt || (editingTask as any)?.classAnalysisPrompt || ""}
                     onChange={(e) => {
                       setFormClassAnalysisPrompt(e.target.value);
@@ -4862,7 +4335,7 @@ export default function TeacherTasksPage() {
 
             {/* 分配班级 */}
             <div className="space-y-2">
-              <h4 className="font-medium text-sm text-[#63666F]">分配班级（必选）</h4>
+              <h4 className="font-medium text-sm text-[var(--muted)]">分配班级（必选）</h4>
               <div className="flex flex-wrap gap-2">
                 {classes.map((cls) => (
                   <Tag
@@ -4876,14 +4349,14 @@ export default function TeacherTasksPage() {
                   </Tag>
                 ))}
                 {classes.length === 0 && (
-                  <span className="text-sm text-gray-400">请先创建班级</span>
+                  <span className="text-sm text-[var(--muted-light)]">请先创建班级</span>
                 )}
               </div>
             </div>
 
             {/* 引用知识库 */}
             <div className="space-y-2">
-              <h4 className="font-medium text-sm text-[#63666F]">引用知识库（选填）</h4>
+              <h4 className="font-medium text-sm text-[var(--muted)]">引用知识库（选填）</h4>
               <div className="flex flex-wrap gap-2">
                 {knowledgeBases.map((kb) => (
                   <Tag
@@ -4897,7 +4370,7 @@ export default function TeacherTasksPage() {
                   </Tag>
                 ))}
                 {knowledgeBases.length === 0 && (
-                  <span className="text-sm text-gray-400">
+                  <span className="text-sm text-[var(--muted-light)]">
                     暂无知识库，请先到「知识库」页面创建
                   </span>
                 )}
@@ -4912,20 +4385,20 @@ export default function TeacherTasksPage() {
                     style={{ width: 120 }}
                     label={false}
                   />
-                  <span className={`text-xs ${getSelectedKbTotalLength(selectedKbIds) > 50000 ? "text-red-500 font-medium" : "text-[#63666F]"}`}>
+                  <span className={`text-xs ${getSelectedKbTotalLength(selectedKbIds) > 50000 ? "text-[var(--danger)] font-medium" : "text-[var(--muted)]"}`}>
                     已选 {getSelectedKbTotalLength(selectedKbIds).toLocaleString()} / 50,000 字符
                     {getSelectedKbTotalLength(selectedKbIds) > 50000 && " ⚠ 超出限制"}
                   </span>
                 </div>
               )}
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-[var(--muted-light)]">
                 选择后，该课堂下所有对话活动将自动注入所选知识库的全文内容，总字符数不超过 50,000
               </p>
             </div>
 
             {/* 引用图片组 */}
             <div className="space-y-2">
-              <h4 className="font-medium text-sm text-[#63666F]">引用图片组（选填）</h4>
+              <h4 className="font-medium text-sm text-[var(--muted)]">引用图片组（选填）</h4>
               <div className="flex flex-wrap gap-2">
                 {imageGroups.map((g) => (
                   <Tag
@@ -4939,17 +4412,17 @@ export default function TeacherTasksPage() {
                   </Tag>
                 ))}
                 {imageGroups.length === 0 && (
-                  <span className="text-xs text-gray-400 py-1">
+                  <span className="text-xs text-[var(--muted-light)] py-1">
                     暂无图片组，请先到「图片仓库」页面创建
                   </span>
                 )}
               </div>
-              <p className="text-xs text-gray-400">
+              <p className="text-xs text-[var(--muted-light)]">
                 选择后，该课堂下所有对话活动中的 AI 可根据学生问题智能发送组内图片（教师课前准备的素材图）
               </p>
             </div>
 
-            <div className="flex gap-2 justify-end pt-2 border-t border-gray-100">
+            <div className="flex gap-2 justify-end pt-2 border-t border-[var(--card-border)]">
               <Button onClick={() => { setFormVisible(false); resetForm(); }}>取消</Button>
               <Button theme="primary" loading={saving} onClick={handleSave}>
                 {editingTask ? "保存修改" : "创建课堂"}
@@ -4967,7 +4440,7 @@ export default function TeacherTasksPage() {
         >
           <div className="space-y-4">
             <p>确定要删除此课堂吗？所有对话活动将一并删除。</p>
-            <p className="text-sm text-red-600 font-medium">此操作不可撤销！</p>
+            <p className="text-sm text-[var(--danger)] font-medium">此操作不可撤销！</p>
             <div className="flex gap-2 justify-end">
               <Button onClick={() => { setDeleteVisible(false); setDeleteTaskId(null); }}>取消</Button>
               <Button theme="danger" loading={saving} onClick={handleDelete}>确认删除</Button>
@@ -4986,7 +4459,7 @@ export default function TeacherTasksPage() {
             const task = tasks.find((t) => t.id === clearTaskId);
             return (
               <div className="space-y-4">
-                <p className="text-gray-600">
+                <p className="text-[var(--muted)]">
                   选择要清理对话记录的班级。选择「全部」将清理此课堂下所有班级的学生对话记录。
                 </p>
                 <Select
@@ -5002,7 +4475,7 @@ export default function TeacherTasksPage() {
                   placeholder="选择班级"
                   style={{ width: "100%" }}
                 />
-                <div className="bg-yellow-50 rounded-lg p-3 text-sm text-yellow-700">
+                <div className="bg-[var(--warning-light)] rounded-lg p-3 text-sm text-[var(--warning)]">
                   <p className="font-medium mb-1">⚠️ 注意事项</p>
                   <ul className="list-disc list-inside space-y-0.5">
                     <li>此操作将删除选中国生的所有对话记录和消息</li>
@@ -5031,13 +4504,13 @@ export default function TeacherTasksPage() {
           destroyOnClose
         >
           {quizAnalysisLoading ? (
-            <div className="text-center py-8 text-sm text-gray-400">加载中...</div>
+            <div className="text-center py-8 text-sm text-[var(--muted-light)]">加载中...</div>
           ) : quizAnalysisData ? (
             <div className="space-y-4">
               {/* 班级选择 */}
               {quizAnalysisData.classIds && quizAnalysisData.classIds.length > 0 && (
                 <div className="flex items-center gap-2 flex-wrap">
-                  <span className="text-sm text-gray-500">班级：</span>
+                  <span className="text-sm text-[var(--muted)]">班级：</span>
                   {quizAnalysisData.classIds.map((cid: string) => {
                     const cls = classes.find(c => c.id === cid);
                     return (
@@ -5065,24 +4538,24 @@ export default function TeacherTasksPage() {
               )}
               {/* 基础统计 */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="bg-blue-50 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-blue-600">{quizAnalysisData.totalStudents || 0}</div>
-                  <div className="text-xs text-blue-500">作答人数</div>
+                <div className="bg-[var(--primary-light)] rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-[var(--primary)]">{quizAnalysisData.totalStudents || 0}</div>
+                  <div className="text-xs text-[var(--primary)]">作答人数</div>
                 </div>
-                <div className="bg-green-50 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-green-600">{quizAnalysisData.classAvgScore || 0}</div>
-                  <div className="text-xs text-green-500">班级均分</div>
+                <div className="bg-[var(--success-light)] rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-[var(--success)]">{quizAnalysisData.classAvgScore || 0}</div>
+                  <div className="text-xs text-[var(--success)]">班级均分</div>
                 </div>
-                <div className="bg-orange-50 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-orange-600">{quizAnalysisData.questionStats?.length || 0}</div>
-                  <div className="text-xs text-orange-500">总题数</div>
+                <div className="bg-[var(--warning-light)] rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-[var(--warning)]">{quizAnalysisData.questionStats?.length || 0}</div>
+                  <div className="text-xs text-[var(--warning)]">总题数</div>
                 </div>
               </div>
 
               {/* 分数分布柱状图 */}
               {quizAnalysisData.scoreBuckets && quizAnalysisData.scoreBuckets.some((b: any) => b.count > 0) && (
                 <div>
-                  <div className="text-sm font-medium text-gray-600 mb-2">分数分布</div>
+                  <div className="text-sm font-medium text-[var(--muted)] mb-2">分数分布</div>
                   <ResponsiveContainer width="100%" height={160}>
                     <BarChart data={quizAnalysisData.scoreBuckets} margin={{ top: 5, right: 10, left: -20, bottom: 5 }}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
@@ -5098,7 +4571,7 @@ export default function TeacherTasksPage() {
               {/* 题目正确率柱状图 */}
               {quizAnalysisData.questionStats && quizAnalysisData.questionStats.length > 0 ? (
                 <div>
-                  <div className="text-sm font-medium text-gray-600 mb-2">各题正确率</div>
+                  <div className="text-sm font-medium text-[var(--muted)] mb-2">各题正确率</div>
                   <ResponsiveContainer width="100%" height={Math.max(120, quizAnalysisData.questionStats.length * 36)}>
                     <BarChart
                       data={quizAnalysisData.questionStats.map((qs: any, idx: number) => ({
@@ -5121,13 +4594,13 @@ export default function TeacherTasksPage() {
                   </ResponsiveContainer>
                 </div>
               ) : (
-                <div className="text-center py-4 text-sm text-gray-400">暂无作答数据</div>
+                <div className="text-center py-4 text-sm text-[var(--muted-light)]">暂无作答数据</div>
               )}
 
               {/* 难度维度饼图 */}
               {quizAnalysisData.difficultyStats && quizAnalysisData.difficultyStats.length > 0 && (
                 <div>
-                  <div className="text-sm font-medium text-gray-600 mb-2">各难度正确率</div>
+                  <div className="text-sm font-medium text-[var(--muted)] mb-2">各难度正确率</div>
                   <div className="flex justify-center">
                     <ResponsiveContainer width={240} height={180}>
                       <PieChart>
@@ -5154,15 +4627,15 @@ export default function TeacherTasksPage() {
 
               {/* 薄弱题目 / 低分学生 */}
               {quizAnalysisData.weakQuestions && quizAnalysisData.weakQuestions !== "" && (
-                <div className="bg-red-50 rounded-lg p-3">
-                  <div className="text-sm font-medium text-red-600 mb-1">薄弱题目（正确率&lt;60%）</div>
-                  <div className="text-xs text-red-700 whitespace-pre-line"><Markdown>{quizAnalysisData.weakQuestions}</Markdown></div>
+                <div className="bg-[var(--danger-light)] rounded-lg p-3">
+                  <div className="text-sm font-medium text-[var(--danger)] mb-1">薄弱题目（正确率&lt;60%）</div>
+                  <div className="text-xs text-[var(--danger)] whitespace-pre-line"><Markdown>{quizAnalysisData.weakQuestions}</Markdown></div>
                 </div>
               )}
               {quizAnalysisData.lowScoreStudents && quizAnalysisData.lowScoreStudents !== "" && (
-                <div className="bg-orange-50 rounded-lg p-3">
-                  <div className="text-sm font-medium text-orange-600 mb-1">低分学生（&lt;60分）</div>
-                  <div className="text-xs text-orange-700 whitespace-pre-line"><Markdown>{quizAnalysisData.lowScoreStudents}</Markdown></div>
+                <div className="bg-[var(--warning-light)] rounded-lg p-3">
+                  <div className="text-sm font-medium text-[var(--warning)] mb-1">低分学生（&lt;60分）</div>
+                  <div className="text-xs text-[var(--warning)] whitespace-pre-line"><Markdown>{quizAnalysisData.lowScoreStudents}</Markdown></div>
                 </div>
               )}
 
@@ -5184,12 +4657,12 @@ export default function TeacherTasksPage() {
 
               <div ref={quizAIRef}>
                 {quizAnalysisData.aiContent ? (
-                  <div className="bg-gray-50 rounded-lg p-3">
-                    <div className="text-sm font-medium text-gray-600 mb-1">AI 分析报告</div>
-                    <div className="text-sm text-gray-700 whitespace-pre-line prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all"><Markdown>{quizAnalysisData.aiContent}</Markdown></div>
+                  <div className="bg-[var(--hover-bg)] rounded-lg p-3">
+                    <div className="text-sm font-medium text-[var(--muted)] mb-1">AI 分析报告</div>
+                    <div className="text-sm text-[var(--foreground)] whitespace-pre-line prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all"><Markdown>{quizAnalysisData.aiContent}</Markdown></div>
                   </div>
                 ) : (
-                  <div className="text-center py-4 text-xs text-gray-400">AI 分析生成中...</div>
+                  <div className="text-center py-4 text-xs text-[var(--muted-light)]">AI 分析生成中...</div>
                 )}
               </div>
 
@@ -5198,7 +4671,7 @@ export default function TeacherTasksPage() {
               </div>
             </div>
           ) : (
-            <div className="text-center py-8 text-sm text-gray-400">加载失败</div>
+            <div className="text-center py-8 text-sm text-[var(--muted-light)]">加载失败</div>
           )}
         </Dialog>
 
@@ -5214,7 +4687,7 @@ export default function TeacherTasksPage() {
         >
           <div className="space-y-4">
             <div className="space-y-2">
-              <span className="text-sm font-medium text-gray-600">对话活动名称</span>
+              <span className="text-sm font-medium text-[var(--muted)]">对话活动名称</span>
               <Input
                 value={convForm.title}
                 onChange={(v) => setConvForm({ ...convForm, title: v })}
@@ -5224,11 +4697,11 @@ export default function TeacherTasksPage() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium text-gray-600">对话活动目标</span>
+                <span className="text-sm font-medium text-[var(--muted)]">对话活动目标</span>
                 <div className="flex items-center gap-2">
                   {convObjectiveBackup !== null && (
                     <span
-                      className="text-xs text-[#0052D9] cursor-pointer hover:underline"
+                      className="text-xs text-[var(--primary)] cursor-pointer hover:underline"
                       onClick={restoreConvObjective}
                     >
                       撤销
@@ -5255,7 +4728,7 @@ export default function TeacherTasksPage() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium text-gray-600">对话设计提示词（系统提示词）</span>
+                <span className="text-sm font-medium text-[var(--muted)]">对话设计提示词（系统提示词）</span>
                 <Select
                   value=""
                   onChange={(v) => {
@@ -5286,7 +4759,7 @@ export default function TeacherTasksPage() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium text-gray-600">个人学情分析提示词</span>
+                <span className="text-sm font-medium text-[var(--muted)]">个人学情分析提示词</span>
                 <Select
                   value=""
                   onChange={(v) => {
@@ -5314,7 +4787,7 @@ export default function TeacherTasksPage() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-2">
-                <span className="text-sm font-medium text-gray-600">全班学情分析提示词</span>
+                <span className="text-sm font-medium text-[var(--muted)]">全班学情分析提示词</span>
                 <Select
                   value=""
                   onChange={(v) => {
@@ -5340,7 +4813,7 @@ export default function TeacherTasksPage() {
               />
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+            <div className="flex justify-end gap-2 pt-2 border-t border-[var(--card-border)]">
               <Button onClick={() => setConvDialogVisible(false)}>取消</Button>
               <Button
                 theme="primary"
@@ -5361,7 +4834,7 @@ export default function TeacherTasksPage() {
           onConfirm={confirmConversationDelete}
           confirmBtn={{ content: "删除", theme: "danger" }}
         >
-          <p className="text-sm text-gray-600">
+          <p className="text-sm text-[var(--muted)]">
             确定删除「{convDeletePc?.title}」吗？该活动下的学生对话记录与学情分析也会一并删除，且不可恢复。
           </p>
         </Dialog>
@@ -5386,7 +4859,7 @@ export default function TeacherTasksPage() {
             />
 
             {explorationHasSubmissions && (
-              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-2 leading-relaxed">
+              <div className="text-xs text-[var(--warning)] bg-[var(--warning-light)] border border-[var(--warning-light)] rounded p-2 leading-relaxed">
                 ⚠️ 已有学生提交，HTML 内容已锁定，无法编辑或重新生成（可修改标题、设计意图、分析提示词）。如需改内容，请新建探究。
               </div>
             )}
@@ -5394,11 +4867,11 @@ export default function TeacherTasksPage() {
             {/* 主区域：左对话流 + 右预览/源码 */}
             <div className="flex gap-3" style={{ minHeight: 340 }}>
               {/* 左栏：对话流 + 输入条 */}
-              <div className="w-[380px] shrink-0 flex flex-col border border-gray-200 rounded-lg overflow-hidden">
+              <div className="w-[380px] shrink-0 flex flex-col border border-[var(--card-border)] rounded-lg overflow-hidden">
                 {/* 对话流 */}
-                <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-gray-50" style={{ maxHeight: 300 }}>
+                <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-[var(--hover-bg)]" style={{ maxHeight: 300 }}>
                   {chatMessages.length === 0 ? (
-                    <div className="text-sm text-gray-400 text-center px-4 py-16 leading-relaxed">
+                    <div className="text-sm text-[var(--muted-light)] text-center px-4 py-16 leading-relaxed">
                       描述你想要的互动网页（主题、互动机制、视觉风格等），发送后 AI 生成第一版。
                       <br />也可点「AI 帮我写」自动生成设计意图，或「上传」HTML 后继续对话修改。
                     </div>
@@ -5408,8 +4881,8 @@ export default function TeacherTasksPage() {
                         <div
                           className={
                             m.role === "user"
-                              ? "max-w-[85%] bg-blue-500 text-white text-sm rounded-lg rounded-br-sm px-3 py-2 whitespace-pre-wrap"
-                              : "max-w-[85%] bg-white text-gray-700 text-sm rounded-lg rounded-bl-sm px-3 py-2 border border-gray-200 whitespace-pre-wrap"
+                              ? "max-w-[85%] bg-[var(--primary-light)]0 text-white text-sm rounded-lg rounded-br-sm px-3 py-2 whitespace-pre-wrap"
+                              : "max-w-[85%] bg-[var(--card-bg)] text-[var(--foreground)] text-sm rounded-lg rounded-bl-sm px-3 py-2 border border-[var(--card-border)] whitespace-pre-wrap"
                           }
                         >
                           {m.content}
@@ -5419,7 +4892,7 @@ export default function TeacherTasksPage() {
                   )}
                 </div>
                 {/* 输入条 */}
-                <div className="border-t border-gray-200 p-2 space-y-2 bg-white">
+                <div className="border-t border-[var(--card-border)] p-2 space-y-2 bg-[var(--card-bg)]">
                   <Textarea
                     value={draftInput}
                     onChange={(v) => setDraftInput(v)}
@@ -5453,35 +4926,35 @@ export default function TeacherTasksPage() {
               <div className="flex-1 min-w-0 flex flex-col">
                 {/* 工具条 */}
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-600">
+                  <span className="text-sm font-medium text-[var(--muted)]">
                     {htmlVersions.length > 0 ? `第 ${versionIndex + 1} 版` : "预览"}
                   </span>
                   <div className="flex items-center gap-0.5">
-                    <Button theme="default" variant="text" size="small" onClick={handleUndo} disabled={explorationHasSubmissions || versionIndex <= 0}>
+                    <Button theme="primary" variant="text" size="small" onClick={handleUndo} disabled={explorationHasSubmissions || versionIndex <= 0}>
                       撤销
                     </Button>
-                    <Button theme="default" variant="text" size="small" onClick={handleRedo} disabled={explorationHasSubmissions || versionIndex >= htmlVersions.length - 1}>
+                    <Button theme="primary" variant="text" size="small" onClick={handleRedo} disabled={explorationHasSubmissions || versionIndex >= htmlVersions.length - 1}>
                       重做
                     </Button>
-                    <Button theme="default" variant="text" size="small" icon={<FileIcon />} onClick={handleUploadHtml} disabled={explorationHasSubmissions}>
+                    <Button theme="primary" variant="text" size="small" icon={<FileIcon />} onClick={handleUploadHtml} disabled={explorationHasSubmissions}>
                       上传
                     </Button>
-                    <Button theme="default" variant="text" size="small" icon={<FileIcon />} onClick={handleExportHtml}>
+                    <Button theme="primary" variant="text" size="small" icon={<FileIcon />} onClick={handleExportHtml}>
                       导出
                     </Button>
                     {explorationHtml.trim() ? (
                       detectInstrumentation(explorationHtml).needsAdaptation ? (
                         <Tooltip content="该页面未接入提交采集，开启「启用提交」时将自动接入">
-                          <span className="text-xs text-gray-400 px-1">△ 未接入采集</span>
+                          <span className="text-xs text-[var(--muted-light)] px-1">△ 未接入采集</span>
                         </Tooltip>
                       ) : (
                         <Tooltip content="该页面已接入提交采集，学生得分/进度可正常上报">
-                          <span className="text-xs text-green-600 px-1">✓ 已接入采集</span>
+                          <span className="text-xs text-[var(--success)] px-1">✓ 已接入采集</span>
                         </Tooltip>
                       )
                     ) : null}
                     {explorationPreview && (
-                      <Button theme="default" variant="text" size="small" onClick={() => openPreview(explorationPreview)}>
+                      <Button theme="primary" variant="text" size="small" onClick={() => openPreview(explorationPreview)}>
                         全屏
                       </Button>
                     )}
@@ -5489,19 +4962,19 @@ export default function TeacherTasksPage() {
                 </div>
 
                 {/* 预览/源码 tab */}
-                <div className="flex-1 flex flex-col border border-gray-200 rounded-lg overflow-hidden">
-                  <div className="flex border-b border-gray-200 bg-gray-50">
+                <div className="flex-1 flex flex-col border border-[var(--card-border)] rounded-lg overflow-hidden">
+                  <div className="flex border-b border-[var(--card-border)] bg-[var(--hover-bg)]">
                     <button
                       type="button"
                       onClick={() => setActiveTab("preview")}
-                      className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === "preview" ? "border-blue-500 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === "preview" ? "border-[var(--primary)] text-[var(--primary)]" : "border-transparent text-[var(--muted)] hover:text-[var(--foreground)]"}`}
                     >
                       预览
                     </button>
                     <button
                       type="button"
                       onClick={() => setActiveTab("code")}
-                      className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === "code" ? "border-blue-500 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
+                      className={`px-4 py-2 text-sm font-medium border-b-2 ${activeTab === "code" ? "border-[var(--primary)] text-[var(--primary)]" : "border-transparent text-[var(--muted)] hover:text-[var(--foreground)]"}`}
                     >
                       源码
                     </button>
@@ -5543,9 +5016,9 @@ export default function TeacherTasksPage() {
             </div>
 
             {/* 启用提交功能 */}
-            <div className="border-t border-gray-100 pt-3 space-y-2">
+            <div className="border-t border-[var(--card-border)] pt-3 space-y-2">
               <div className="flex items-center gap-3">
-                <span className="text-sm font-medium text-gray-600">启用提交</span>
+                <span className="text-sm font-medium text-[var(--muted)]">启用提交</span>
                 <Switch
                   value={explorationEnableSubmission}
                   size="small"
@@ -5614,33 +5087,33 @@ export default function TeacherTasksPage() {
               </div>
               {confirmedInjection ? (
                 detectInstrumentation(explorationHtml).needsAdaptation ? (
-                  <div className="text-xs text-amber-600 bg-amber-50 rounded p-2 flex items-center justify-between gap-2">
+                  <div className="text-xs text-[var(--warning)] bg-[var(--warning-light)] rounded p-2 flex items-center justify-between gap-2">
                     <span>⚠️ 提交已启用，但采集接入未成功——仅采集基础数据（时长/操作/滚动），分数/关卡/作答暂无法上报。</span>
                     <Button size="small" variant="text" theme="warning" loading={adapting} onClick={handleAdaptInstrumentation}>
                       重试接入
                     </Button>
                   </div>
                 ) : (
-                  <div className="text-xs text-green-600 bg-green-50 rounded p-2">
+                  <div className="text-xs text-[var(--success)] bg-[var(--success-light)] rounded p-2">
                     ✓ 已启用提交并接入采集，分数/关卡/作答可正常上报，点击保存生效。
                   </div>
                 )
               ) : explorationEnableSubmission ? (
-                <div className="text-xs text-amber-600 bg-amber-50 rounded p-2">
+                <div className="text-xs text-[var(--warning)] bg-[var(--warning-light)] rounded p-2">
                   为互动探究的HTML注入提交功能，采集学生互动探究过程的数据用于分析，这是测试功能，未必成功。
                 </div>
               ) : (
-                <div className="text-xs text-gray-400 bg-gray-50 rounded p-2">
+                <div className="text-xs text-[var(--muted-light)] bg-[var(--hover-bg)] rounded p-2">
                   纯展示模式，学生只能浏览互动内容，无法提交成绩。
                 </div>
               )}
             </div>
 
             {/* AI伴学功能 */}
-            <div className="border-t border-gray-100 pt-3 space-y-2">
+            <div className="border-t border-[var(--card-border)] pt-3 space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-3">
-                  <span className="text-sm font-medium text-gray-600">AI伴学</span>
+                  <span className="text-sm font-medium text-[var(--muted)]">AI伴学</span>
                   <Switch
                     value={explorationEnableAiCompanion}
                     size="small"
@@ -5648,19 +5121,19 @@ export default function TeacherTasksPage() {
                     onChange={handleAiCompanionToggle}
                   />
                   {aiCompanionStatus === "analyzing" && (
-                    <span className="text-xs text-orange-500 flex items-center gap-1">
-                      <span className="inline-block w-3 h-3 border-2 border-orange-500 border-t-transparent rounded-full animate-spin" />
+                    <span className="text-xs text-[var(--warning)] flex items-center gap-1">
+                      <span className="inline-block w-3 h-3 border-2 border-[var(--warning)] border-t-transparent rounded-full animate-spin" />
                       正在分析交互内容，生成指导策略...
                     </span>
                   )}
                   {aiCompanionStatus === "ready" && explorationEnableAiCompanion && (
-                    <span className="text-xs text-green-600">✓ AI伴学已就绪</span>
+                    <span className="text-xs text-[var(--success)]">✓ AI伴学已就绪</span>
                   )}
                   {aiCompanionStatus === "error" && (
-                    <span className="text-xs text-red-500">✗ 生成失败</span>
+                    <span className="text-xs text-[var(--danger)]">✗ 生成失败</span>
                   )}
                   {!explorationEnableAiCompanion && aiCompanionPromptText && (
-                    <span className="text-xs text-gray-500">提示词已保留（再次启用秒开）</span>
+                    <span className="text-xs text-[var(--muted)]">提示词已保留（再次启用秒开）</span>
                   )}
                 </div>
                 {explorationEditId && aiCompanionPromptText && (
@@ -5677,7 +5150,7 @@ export default function TeacherTasksPage() {
               </div>
               {explorationEnableAiCompanion ? (
                 <>
-                  <div className="text-xs text-purple-700 bg-purple-50 rounded p-2">
+                  <div className="text-xs text-[var(--accent)] bg-[var(--primary-lighter)] rounded p-2">
                     学生可在互动页面右下角看到"AI伴学"按钮，可随时提问获取AI指导。
                     AI会先分析完整HTML内容生成指导策略，再结合实时页面状态回答。
                   </div>
@@ -5694,7 +5167,7 @@ export default function TeacherTasksPage() {
                   )}
                 </>
               ) : (
-                <div className="text-xs text-gray-400 bg-gray-50 rounded p-2">
+                <div className="text-xs text-[var(--muted-light)] bg-[var(--hover-bg)] rounded p-2">
                   {aiCompanionPromptText
                     ? "关闭后学生无法使用AI伴学功能（已生成的提示词会保留，再次启用时秒开）。"
                     : "关闭后学生无法使用AI伴学功能。"}
@@ -5702,7 +5175,7 @@ export default function TeacherTasksPage() {
               )}
             </div>
 
-            <div className="flex justify-end gap-2 pt-2 border-t border-gray-100">
+            <div className="flex justify-end gap-2 pt-2 border-t border-[var(--card-border)]">
               <Button onClick={() => setExplorationModalVisible(false)}>取消</Button>
               <Button
                 theme="primary"
@@ -5809,16 +5282,16 @@ export default function TeacherTasksPage() {
         >
           {previewLoading ? (
             <div className="text-center py-12">
-              <div className="inline-block w-8 h-8 border-2 border-blue-400 border-t-transparent rounded-full animate-spin mb-3" />
-              <div className="text-sm text-gray-500">{previewStatus || "正在分析..."}</div>
-              <div className="text-xs text-gray-300 mt-2">AI 分析可能需要 10-30 秒</div>
+              <div className="inline-block w-8 h-8 border-2 border-[var(--primary)] border-t-transparent rounded-full animate-spin mb-3" />
+              <div className="text-sm text-[var(--muted)]">{previewStatus || "正在分析..."}</div>
+              <div className="text-xs text-[var(--muted-light)] mt-2">AI 分析可能需要 10-30 秒</div>
             </div>
           ) : previewError ? (
             <div className="space-y-3">
-              <div className="text-sm text-yellow-600 bg-yellow-50 rounded p-3">
+              <div className="text-sm text-[var(--warning)] bg-[var(--warning-light)] rounded p-3">
                 ⚠️ {previewError}
               </div>
-              <div className="text-xs text-gray-400">
+              <div className="text-xs text-[var(--muted-light)]">
                 将使用基础追踪方案（点击次数、停留时间、滚动深度）。继续注入？
               </div>
             </div>
@@ -5826,13 +5299,13 @@ export default function TeacherTasksPage() {
             <div className="space-y-4 max-h-[65vh] overflow-y-auto pr-2">
 
               {/* AI 总结 */}
-              <div className="text-sm text-gray-700 bg-blue-50 rounded p-3 leading-relaxed">
+              <div className="text-sm text-[var(--foreground)] bg-[var(--primary-light)] rounded p-3 leading-relaxed">
                 {previewAnalysis.summary || "AI 分析完成，请确认以下采集项"}
               </div>
 
               {/* 固定采集项 */}
               <div>
-                <div className="text-xs font-medium text-gray-500 mb-2">📊 提交后可查看的数据</div>
+                <div className="text-xs font-medium text-[var(--muted)] mb-2">📊 提交后可查看的数据</div>
                 <div className="grid grid-cols-2 gap-2">
                   {[
                     { label: "停留时间", desc: "学生在页面上花费的时长" },
@@ -5842,9 +5315,9 @@ export default function TeacherTasksPage() {
                     { label: "最终得分", desc: "学生提交时的成绩" },
                     { label: "操作记录", desc: "学生的具体操作步骤" },
                   ].map((item) => (
-                    <div key={item.label} className="bg-gray-50 rounded px-3 py-2">
-                      <div className="text-xs font-medium text-gray-700">{item.label}</div>
-                      <div className="text-xs text-gray-400">{item.desc}</div>
+                    <div key={item.label} className="bg-[var(--hover-bg)] rounded px-3 py-2">
+                      <div className="text-xs font-medium text-[var(--foreground)]">{item.label}</div>
+                      <div className="text-xs text-[var(--muted-light)]">{item.desc}</div>
                     </div>
                   ))}
                 </div>
@@ -5853,21 +5326,21 @@ export default function TeacherTasksPage() {
               {/* 页面互动元素 */}
               {previewAnalysis.interactiveElements?.length > 0 && (
                 <div>
-                  <div className="text-xs font-medium text-gray-500 mb-2">🔗 页面中的互动元素</div>
-                  <div className="space-y-1 max-h-48 overflow-y-auto border border-gray-100 rounded p-2">
+                  <div className="text-xs font-medium text-[var(--muted)] mb-2">🔗 页面中的互动元素</div>
+                  <div className="space-y-1 max-h-48 overflow-y-auto border border-[var(--card-border)] rounded p-2">
                     {previewAnalysis.interactiveElements.slice(0, 20).map((el: any, i: number) => {
                       const name = pickElementName(el);
                       const desc = pickElementDesc(el);
                       return (
-                        <div key={i} className="text-xs text-gray-600 flex gap-2 py-0.5">
-                          <span className="text-blue-400 shrink-0">•</span>
+                        <div key={i} className="text-xs text-[var(--muted)] flex gap-2 py-0.5">
+                          <span className="text-[var(--primary)] shrink-0">•</span>
                           <span className="font-medium shrink-0">{name}</span>
-                          {desc && <span className="text-gray-400 truncate">{desc}</span>}
+                          {desc && <span className="text-[var(--muted-light)] truncate">{desc}</span>}
                         </div>
                       );
                     })}
                     {previewAnalysis.interactiveElements.length > 20 && (
-                      <div className="text-xs text-gray-400 pt-1">
+                      <div className="text-xs text-[var(--muted-light)] pt-1">
                         还有 {previewAnalysis.interactiveElements.length - 20} 个元素未显示
                       </div>
                     )}
@@ -5878,10 +5351,10 @@ export default function TeacherTasksPage() {
               {/* 注意事项 */}
               {previewAnalysis.warnings?.length > 0 && (
                 <div>
-                  <div className="text-xs font-medium text-yellow-600 mb-2">⚠️ 注意事项</div>
+                  <div className="text-xs font-medium text-[var(--warning)] mb-2">⚠️ 注意事项</div>
                   <div className="space-y-1">
                     {previewAnalysis.warnings.map((w: any, i: number) => (
-                      <div key={i} className="text-xs text-yellow-700 bg-yellow-50 rounded px-3 py-2 leading-relaxed">
+                      <div key={i} className="text-xs text-[var(--warning)] bg-[var(--warning-light)] rounded px-3 py-2 leading-relaxed">
                         {typeof w === "string" ? w : JSON.stringify(w)}
                       </div>
                     ))}
@@ -5889,7 +5362,7 @@ export default function TeacherTasksPage() {
                 </div>
               )}
 
-              <div className="text-xs text-gray-400 pt-2 border-t leading-relaxed">
+              <div className="text-xs text-[var(--muted-light)] pt-2 border-t leading-relaxed">
                 确认后，系统将为此 HTML 注入提交按钮和追踪脚本。学生提交后可查看完整行为数据。
               </div>
             </div>
@@ -5925,11 +5398,11 @@ export default function TeacherTasksPage() {
           {quizPreviewData && quizPreviewData.questions.length > 0 ? (
             <div className="flex flex-col" style={{ height: "70vh" }}>
               {/* 顶部进度 */}
-              <div className="flex items-center justify-between px-4 py-3 bg-[#FAFBFC] border-b border-gray-200">
-                <div className="text-sm text-[#63666F]">
+              <div className="flex items-center justify-between px-4 py-3 bg-[var(--hover-bg)] border-b border-[var(--card-border)]">
+                <div className="text-sm text-[var(--muted)]">
                   第 {quizPreviewIndex + 1} / {quizPreviewData.questions.length} 题
                 </div>
-                <div className="text-xs text-gray-400">
+                <div className="text-xs text-[var(--muted-light)]">
                   已答 {Object.keys(quizPreviewAnswers).length} / {quizPreviewData.questions.length}
                 </div>
               </div>
@@ -5941,13 +5414,13 @@ export default function TeacherTasksPage() {
                   const options = typeof q.options === "string" ? JSON.parse(q.options || "{}") : (q.options || {});
                   const userAns = quizPreviewAnswers[q.id];
                   return (
-                    <div className="bg-white rounded-xl shadow-sm p-6 border-2 border-[#0052D9]">
+                    <div className="bg-[var(--card-bg)] rounded-xl shadow-sm p-6 border-2 border-[var(--primary)]">
                       <div className="flex items-start gap-3 mb-4">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold bg-[#0052D9] text-white">
+                        <div className="w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 text-sm font-bold bg-[var(--primary)] text-white">
                           {quizPreviewIndex + 1}
                         </div>
                         <div className="flex-1">
-                          <div className="text-base font-medium text-[#1A1A1A]"><Markdown>{q.content}</Markdown></div>
+                          <div className="text-base font-medium text-[var(--foreground)]"><Markdown>{q.content}</Markdown></div>
                         </div>
                       </div>
                       <div className="space-y-3 ml-11">
@@ -5960,19 +5433,19 @@ export default function TeacherTasksPage() {
                               const answerNorm = rawAnswer === "true" ? "T" : rawAnswer === "false" ? "F" : rawAnswer.toUpperCase();
                               const isCorrect = answerNorm === k;
                               const isSelected = userAns === k;
-                              let bgClass = "bg-gray-50";
-                              if (isCorrect) bgClass = "bg-green-50 border border-green-200";
-                              else if (isSelected && !isCorrect) bgClass = "bg-red-50 border border-red-200";
+                              let bgClass = "bg-[var(--hover-bg)]";
+                              if (isCorrect) bgClass = "bg-[var(--success-light)] border border-[var(--success-light)]";
+                              else if (isSelected && !isCorrect) bgClass = "bg-[var(--danger-light)] border border-[var(--danger-light)]";
                               return (
                                 <div key={k} className={`flex items-center gap-3 p-4 rounded-lg transition-all ${bgClass}`}>
                                   <span className={`text-sm font-medium w-6 ${
-                                    isCorrect ? "text-green-600" : isSelected ? "text-red-500" : "text-gray-400"
+                                    isCorrect ? "text-[var(--success)]" : isSelected ? "text-[var(--danger)]" : "text-[var(--muted-light)]"
                                   }`}>{k === "T" ? "T" : "F"}.</span>
                                   <span className={`text-sm flex-1 ${
-                                    isCorrect ? "text-green-700" : isSelected ? "text-red-700" : "text-gray-600"
+                                    isCorrect ? "text-[var(--success)]" : isSelected ? "text-[var(--danger)]" : "text-[var(--muted)]"
                                   }`}>{label}</span>
-                                  {isSelected && !isCorrect && <span className="ml-auto text-xs text-red-400">你的答案</span>}
-                                  {isCorrect && <span className="ml-auto text-xs text-green-500">正确答案</span>}
+                                  {isSelected && !isCorrect && <span className="ml-auto text-xs text-[var(--danger)]">你的答案</span>}
+                                  {isCorrect && <span className="ml-auto text-xs text-[var(--success)]">正确答案</span>}
                                 </div>
                               );
                             })}
@@ -5981,7 +5454,7 @@ export default function TeacherTasksPage() {
                           /* 兜底：主观题（填空/简答）无选项，预览若渲染空白教师会误以为题目缺失。
                              出题协议已禁止主观题（⛔ DO NOT REVERT，见 src/lib/prompts/quiz.ts QUIZ_FORMAT_INSTRUCTIONS 注释），
                              此分支仅防御历史/手动添加的主观题，只读展示参考答案。 */
-                          <div className="p-4 rounded-lg bg-amber-50 border border-amber-200 text-sm text-amber-800">
+                          <div className="p-4 rounded-lg bg-[var(--warning-light)] border border-[var(--warning-light)] text-sm text-[var(--warning)]">
                             本题为主观题（学生作答文字后由 AI 评分）。参考答案：{String(q.answer || "（无）")}
                           </div>
                         ) : (
@@ -5991,22 +5464,22 @@ export default function TeacherTasksPage() {
                             const correctList = (q.answer || "").split(",").map((s: string) => s.trim()).filter(Boolean);
                             const isSelected = isMulti ? selectedList.includes(k) : userAns === k;
                             const isCorrect = isMulti ? correctList.includes(k) : q.answer === k;
-                            let bgClass = "bg-gray-50";
-                            if (isCorrect) bgClass = "bg-green-50 border border-green-200";
-                            else if (isSelected && !isCorrect) bgClass = "bg-red-50 border border-red-200";
+                            let bgClass = "bg-[var(--hover-bg)]";
+                            if (isCorrect) bgClass = "bg-[var(--success-light)] border border-[var(--success-light)]";
+                            else if (isSelected && !isCorrect) bgClass = "bg-[var(--danger-light)] border border-[var(--danger-light)]";
                             return (
                               <div
                                 key={k}
                                 className={`flex items-center gap-3 p-4 rounded-lg transition-all ${bgClass}`}
                               >
                                 <span className={`text-sm font-medium w-6 ${
-                                  isCorrect ? "text-green-600" : isSelected ? "text-red-500" : "text-gray-400"
+                                  isCorrect ? "text-[var(--success)]" : isSelected ? "text-[var(--danger)]" : "text-[var(--muted-light)]"
                                 }`}>{k}.</span>
                                 <span className={`text-sm flex-1 ${
-                                  isCorrect ? "text-green-700" : isSelected ? "text-red-700" : "text-gray-600"
+                                  isCorrect ? "text-[var(--success)]" : isSelected ? "text-[var(--danger)]" : "text-[var(--muted)]"
                                 }`}><Markdown inline>{String(v)}</Markdown></span>
-                                {isSelected && !isCorrect && <span className="ml-auto text-xs text-red-400">你的答案</span>}
-                                {isCorrect && <span className="ml-auto text-xs text-green-500">正确答案</span>}
+                                {isSelected && !isCorrect && <span className="ml-auto text-xs text-[var(--danger)]">你的答案</span>}
+                                {isCorrect && <span className="ml-auto text-xs text-[var(--success)]">正确答案</span>}
                               </div>
                             );
                           })
@@ -6018,7 +5491,7 @@ export default function TeacherTasksPage() {
               </div>
 
               {/* 底部导航栏 */}
-              <div className="border-t border-gray-200 px-4 py-3 flex items-center justify-between bg-[#FAFBFC]">
+              <div className="border-t border-[var(--card-border)] px-4 py-3 flex items-center justify-between bg-[var(--hover-bg)]">
                 <Button
                   variant="outline"
                   size="large"
@@ -6027,7 +5500,7 @@ export default function TeacherTasksPage() {
                 >
                   上一题
                 </Button>
-                <div className="text-sm text-gray-400">
+                <div className="text-sm text-[var(--muted-light)]">
                   {quizPreviewIndex === quizPreviewData.questions.length - 1 ? "（最后一题）" : ""}
                 </div>
                 <Button
@@ -6041,7 +5514,7 @@ export default function TeacherTasksPage() {
               </div>
             </div>
           ) : (
-            <div className="text-center py-8 text-sm text-gray-400">暂无题目</div>
+            <div className="text-center py-8 text-sm text-[var(--muted-light)]">暂无题目</div>
           )}
         </Dialog>
 
@@ -6055,13 +5528,13 @@ export default function TeacherTasksPage() {
           destroyOnClose
         >
           {loadingAnalysis ? (
-            <div className="text-center py-8 text-sm text-gray-400">加载中...</div>
+            <div className="text-center py-8 text-sm text-[var(--muted-light)]">加载中...</div>
           ) : analysisData ? (
             <div className="space-y-4">
               {/* 班级选择 */}
               {analysisData.classIds && analysisData.classIds.length > 0 && (
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-gray-500">班级：</span>
+                  <span className="text-sm text-[var(--muted)]">班级：</span>
                   <div className="flex flex-wrap gap-2">
                     {analysisData.classIds.map((cid: string) => {
                       const cls = classes.find(c => c.id === cid);
@@ -6091,32 +5564,32 @@ export default function TeacherTasksPage() {
               )}
               {/* 概览 */}
               <div className="grid grid-cols-3 gap-3">
-                <div className="bg-blue-50 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-blue-700">{analysisData.submittedCount || 0}</div>
-                  <div className="text-xs text-blue-500">已提交</div>
+                <div className="bg-[var(--primary-light)] rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-[var(--primary)]">{analysisData.submittedCount || 0}</div>
+                  <div className="text-xs text-[var(--primary)]">已提交</div>
                 </div>
-                <div className="bg-green-50 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-green-700">
+                <div className="bg-[var(--success-light)] rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-[var(--success)]">
                     {analysisData.hasScoring ? (analysisData.averageScore ?? 0) : "—"}
                   </div>
-                  <div className="text-xs text-green-500">{analysisData.hasScoring ? "平均分" : "不评分"}</div>
+                  <div className="text-xs text-[var(--success)]">{analysisData.hasScoring ? "平均分" : "不评分"}</div>
                 </div>
-                <div className="bg-orange-50 rounded-lg p-3 text-center">
-                  <div className="text-2xl font-bold text-orange-700">{analysisData.totalStudents || 0}</div>
-                  <div className="text-xs text-orange-500">班级人数</div>
+                <div className="bg-[var(--warning-light)] rounded-lg p-3 text-center">
+                  <div className="text-2xl font-bold text-[var(--warning)]">{analysisData.totalStudents || 0}</div>
+                  <div className="text-xs text-[var(--warning)]">班级人数</div>
                 </div>
               </div>
 
               {/* 行为数据统计 */}
               {(analysisData.avgTimeSpent > 0 || analysisData.avgInteractions > 0) && (
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="bg-purple-50 rounded-lg p-3 text-center">
-                    <div className="text-2xl font-bold text-purple-700">{analysisData.avgTimeSpent}</div>
-                    <div className="text-xs text-purple-500">平均停留（秒）</div>
+                  <div className="bg-[var(--primary-lighter)] rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-[var(--accent)]">{analysisData.avgTimeSpent}</div>
+                    <div className="text-xs text-[var(--accent)]">平均停留（秒）</div>
                   </div>
-                  <div className="bg-indigo-50 rounded-lg p-3 text-center">
-                    <div className="text-2xl font-bold text-indigo-700">{analysisData.avgInteractions}</div>
-                    <div className="text-xs text-indigo-500">平均互动次数</div>
+                  <div className="bg-[var(--primary-lighter)] rounded-lg p-3 text-center">
+                    <div className="text-2xl font-bold text-[var(--accent)]">{analysisData.avgInteractions}</div>
+                    <div className="text-xs text-[var(--accent)]">平均互动次数</div>
                   </div>
                 </div>
               )}
@@ -6124,12 +5597,12 @@ export default function TeacherTasksPage() {
               {/* 操作类型统计 */}
               {analysisData.actionTypeStats && Object.keys(analysisData.actionTypeStats).length > 0 && (
                 <div>
-                  <div className="text-sm font-medium text-gray-600 mb-2">操作类型统计</div>
+                  <div className="text-sm font-medium text-[var(--muted)] mb-2">操作类型统计</div>
                   <div className="flex flex-wrap gap-2">
                     {Object.entries(analysisData.actionTypeStats).map(([type, count]) => (
-                      <div key={type} className="bg-gray-50 rounded-full px-3 py-1 text-xs">
-                        <span className="text-gray-500">{type}</span>
-                        <span className="ml-1 font-medium text-gray-700">{String(count)}次</span>
+                      <div key={type} className="bg-[var(--hover-bg)] rounded-full px-3 py-1 text-xs">
+                        <span className="text-[var(--muted)]">{type}</span>
+                        <span className="ml-1 font-medium text-[var(--foreground)]">{String(count)}次</span>
                       </div>
                     ))}
                   </div>
@@ -6139,18 +5612,18 @@ export default function TeacherTasksPage() {
               {/* 分数分布 */}
               {analysisData.scoreDistribution && (
                 <div>
-                  <div className="text-sm font-medium text-gray-600 mb-2">分数分布</div>
+                  <div className="text-sm font-medium text-[var(--muted)] mb-2">分数分布</div>
                   <div className="space-y-1">
                     {Object.entries(analysisData.scoreDistribution).map(([range, count]) => (
                       <div key={range} className="flex items-center gap-2 text-xs">
-                        <span className="w-16 text-gray-500">{range}分</span>
-                        <div className="flex-1 bg-gray-100 rounded-full h-2">
+                        <span className="w-16 text-[var(--muted)]">{range}分</span>
+                        <div className="flex-1 bg-[var(--primary-lighter)] rounded-full h-2">
                           <div
-                            className="bg-blue-400 rounded-full h-2"
+                            className="bg-[var(--primary)] rounded-full h-2"
                             style={{ width: `${Math.min(((count as number) / Math.max(analysisData.submittedCount, 1)) * 100, 100)}%` }}
                           />
                         </div>
-                        <span className="text-gray-600 w-4">{String(count)}人</span>
+                        <span className="text-[var(--muted)] w-4">{String(count)}人</span>
                       </div>
                     ))}
                   </div>
@@ -6160,21 +5633,21 @@ export default function TeacherTasksPage() {
               {/* 提交记录 */}
               {analysisData.studentRecords && analysisData.studentRecords.length > 0 && (
                 <div>
-                  <div className="text-sm font-medium text-gray-600 mb-2">提交记录</div>
+                  <div className="text-sm font-medium text-[var(--muted)] mb-2">提交记录</div>
                   <div className="max-h-60 overflow-y-auto space-y-2">
                     {analysisData.studentRecords.map((record: any, idx: number) => (
-                      <div key={idx} className="border border-gray-100 rounded-lg p-3 text-xs">
+                      <div key={idx} className="border border-[var(--card-border)] rounded-lg p-3 text-xs">
                         <div className="flex items-center justify-between mb-1">
-                          <span className="font-medium text-gray-700">{record.studentName || record.studentId}</span>
-                          <span className="text-gray-400">{new Date(record.submittedAt).toLocaleString()}</span>
+                          <span className="font-medium text-[var(--foreground)]">{record.studentName || record.studentId}</span>
+                          <span className="text-[var(--muted-light)]">{new Date(record.submittedAt).toLocaleString()}</span>
                         </div>
-                        <div className="flex gap-4 text-gray-500">
+                        <div className="flex gap-4 text-[var(--muted)]">
                           {analysisData.hasScoring && (
-                            <span>得分：<span className="text-orange-600 font-medium">{record.score}/{record.maxScore}</span></span>
+                            <span>得分：<span className="text-[var(--warning)] font-medium">{record.score}/{record.maxScore}</span></span>
                           )}
-                          <span>停留：<span className="text-gray-600">{record.timeSpent}秒</span></span>
-                          <span>互动：<span className="text-gray-600">{record.interactions}次</span></span>
-                          <span>操作：<span className="text-gray-600">{record.actionCount}条</span></span>
+                          <span>停留：<span className="text-[var(--muted)]">{record.timeSpent}秒</span></span>
+                          <span>互动：<span className="text-[var(--muted)]">{record.interactions}次</span></span>
+                          <span>操作：<span className="text-[var(--muted)]">{record.actionCount}条</span></span>
                         </div>
                       </div>
                     ))}
@@ -6183,9 +5656,9 @@ export default function TeacherTasksPage() {
               )}
 
               {/* 教学建议 */}
-              <div className="border-t border-gray-100 pt-3">
+              <div className="border-t border-[var(--card-border)] pt-3">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-600">教学建议</span>
+                  <span className="text-sm font-medium text-[var(--muted)]">教学建议</span>
                   <Button
                     theme="primary" variant="outline" size="small"
                     loading={generatingAdvice}
@@ -6195,16 +5668,16 @@ export default function TeacherTasksPage() {
                   </Button>
                 </div>
                 {analysisData.teachingAdvice ? (
-                  <div className="bg-yellow-50 rounded-lg p-3 text-sm text-gray-700 whitespace-pre-line">
+                  <div className="bg-[var(--warning-light)] rounded-lg p-3 text-sm text-[var(--foreground)] whitespace-pre-line">
                     {analysisData.teachingAdvice}
                   </div>
                 ) : (
-                  <div className="text-xs text-gray-400 text-center py-2">暂无建议，点击上方按钮生成</div>
+                  <div className="text-xs text-[var(--muted-light)] text-center py-2">暂无建议，点击上方按钮生成</div>
                 )}
               </div>
             </div>
           ) : (
-            <div className="text-center py-8 text-sm text-gray-400">暂无数据</div>
+            <div className="text-center py-8 text-sm text-[var(--muted-light)]">暂无数据</div>
           )}
         </Dialog>
 
@@ -6266,7 +5739,7 @@ export default function TeacherTasksPage() {
           }
         >
           <div className="space-y-3">
-            <div className="text-xs text-gray-500">
+            <div className="text-xs text-[var(--muted)]">
               这是AI分析互动HTML后生成的伴学指导手册，作为AI伴学的系统提示词使用。
               可手动调整其中的指导策略和回答风格。
             </div>
@@ -6277,6 +5750,36 @@ export default function TeacherTasksPage() {
               rows={20}
               style={{ fontFamily: "monospace", fontSize: 12 }}
             />
+          </div>
+        </Dialog>
+
+        {/* 📐 「新建活动」类型选择弹窗（2026-10-12）：统一入口，选完类型分发到各类型现有创建流程
+            （对话/探究/项目为弹窗，课堂作业为设计面板），见 handleCreateActivity。
+            🔗 RELATED: 统一活动排序区块（搜索「课堂活动（按授课顺序）」） */}
+        <Dialog
+          header="新建活动"
+          visible={newActivityDialogVisible}
+          onClose={() => setNewActivityDialogVisible(false)}
+          footer={null}
+          width={460}
+        >
+          <div className="grid grid-cols-2 gap-3 pb-2">
+            {([
+              { type: "conversation" as const, name: "对话活动", desc: "AI 引导对话" },
+              { type: "exploration" as const, name: "互动探究", desc: "网页互动 + 提交" },
+              { type: "project" as const, name: "项目提交", desc: "学生上传作品" },
+              { type: "quiz" as const, name: "课堂作业", desc: "在线答题练习" },
+            ]).map((item) => (
+              <button
+                key={item.type}
+                className="text-left border border-[var(--card-border)] hover:border-[var(--primary)] hover:bg-[var(--primary-light)] rounded-lg px-4 py-3 transition-colors"
+                onClick={() => handleCreateActivity(item.type)}
+              >
+                {/* 活动类型名称跟随主题标题色（2026-10-13）：原硬编码 #333 */}
+                <div className="font-medium text-sm text-[var(--title)]">{item.name}</div>
+                <div className="text-xs text-[var(--muted-light)] mt-1">{item.desc}</div>
+              </button>
+            ))}
           </div>
         </Dialog>
 
@@ -6292,7 +5795,7 @@ export default function TeacherTasksPage() {
         >
           <div className="space-y-4">
             <div>
-              <label className="text-sm text-[#333]">项目名称 *</label>
+              <label className="text-sm text-[var(--foreground)]">项目名称 *</label>
               <Input
                 value={projForm.title}
                 onChange={(v) => setProjForm({ ...projForm, title: v as string })}
@@ -6300,7 +5803,7 @@ export default function TeacherTasksPage() {
               />
             </div>
             <div>
-              <label className="text-sm text-[#333]">说明（可选）</label>
+              <label className="text-sm text-[var(--foreground)]">说明（可选）</label>
               <Textarea
                 value={projForm.description}
                 onChange={(v) => setProjForm({ ...projForm, description: v as string })}
@@ -6308,7 +5811,7 @@ export default function TeacherTasksPage() {
               />
             </div>
             <div>
-              <label className="text-sm text-[#333]">项目类别</label>
+              <label className="text-sm text-[var(--foreground)]">项目类别</label>
               <div className="flex gap-2 mt-1">
                 {(["TEXT", "IMAGE", "VIDEO"] as const).map((c) => (
                   <Button
@@ -6324,7 +5827,7 @@ export default function TeacherTasksPage() {
               </div>
             </div>
             <div className="flex gap-6">
-              <label className="flex items-center gap-2 text-sm text-[#333]">
+              <label className="flex items-center gap-2 text-sm text-[var(--foreground)]">
                 <input
                   type="checkbox"
                   checked={projForm.visibleToClass}
@@ -6338,7 +5841,7 @@ export default function TeacherTasksPage() {
                 />
                 全班可见
               </label>
-              <label className="flex items-center gap-2 text-sm text-[#333]">
+              <label className="flex items-center gap-2 text-sm text-[var(--foreground)]">
                 <input
                   type="checkbox"
                   checked={projForm.allowLike}
@@ -6351,7 +5854,7 @@ export default function TeacherTasksPage() {
               </label>
             </div>
             <div>
-              <label className="text-sm text-[#333]">文件大小限制（MB，默认 10）</label>
+              <label className="text-sm text-[var(--foreground)]">文件大小限制（MB，默认 10）</label>
               <InputNumber
                 value={projForm.fileSizeLimit}
                 min={1}
@@ -6373,7 +5876,7 @@ export default function TeacherTasksPage() {
           cancelBtn="取消"
           theme="danger"
         >
-          <p className="text-sm text-[#333]">
+          <p className="text-sm text-[var(--foreground)]">
             确定删除「{projDelete?.title}」吗？该任务下所有学生的提交及附件文件将一并删除，不可恢复。
           </p>
         </Dialog>

@@ -80,9 +80,9 @@ export default function ClassDetailPage() {
       colKey: "password",
       title: "密码状态",
       cell: ({ row }: { row: { password: string | null } }) => row.password ? (
-        <span className="text-green-600 text-xs">已设密码</span>
+        <span className="text-[var(--success)] text-xs">已设密码</span>
       ) : (
-        <span className="text-gray-400 text-xs">仅邀请码</span>
+        <span className="text-[var(--muted-light)] text-xs">仅邀请码</span>
       ),
     },
     {
@@ -207,9 +207,9 @@ export default function ClassDetailPage() {
   return (
     <TeacherLayout>
       <div className="mb-4 flex items-center gap-3">
-        <Button theme="default" variant="text" size="small" icon={<ArrowLeftIcon />} onClick={() => router.back()} className="mr-1" />
+        <Button theme="primary" variant="text" size="small" icon={<ArrowLeftIcon />} onClick={() => router.back()} className="mr-1" />
         <h2 className="text-xl font-semibold">{classData?.name}</h2>
-        <p className="text-gray-500 text-sm mt-1">
+        <p className="text-[var(--muted)] text-sm mt-1">
           邀请码：{classData?.inviteCode}
         </p>
       </div>
@@ -218,7 +218,7 @@ export default function ClassDetailPage() {
         <div className="mb-4 flex items-center gap-3">
           {selectedRowKeys.length > 0 && (
             <>
-              <span className="text-sm text-gray-600">
+              <span className="text-sm text-[var(--muted)]">
                 已选 {selectedRowKeys.length} 名学生
               </span>
               <Button
@@ -248,12 +248,12 @@ export default function ClassDetailPage() {
         footer={null}
       >
         <div className="space-y-4">
-          <p className="text-gray-700">
+          <p className="text-[var(--foreground)]">
             确定要删除学生 <strong>{deleteStudentName}</strong> 吗？
           </p>
-          <div className="bg-red-50 rounded-lg p-3 text-sm text-red-700">
+          <div className="bg-[var(--danger-light)] rounded-lg p-3 text-sm text-[var(--danger)]">
             <p className="font-medium mb-1">此操作将同时删除：</p>
-            <ul className="list-disc list-inside space-y-0.5 text-red-600">
+            <ul className="list-disc list-inside space-y-0.5 text-[var(--danger)]">
               <li>该学生的所有对话记录和消息</li>
               <li>该学生的互动探究提交和学伴对话记录</li>
               <li>该学生的练习记录和作业答题数据</li>
@@ -279,12 +279,12 @@ export default function ClassDetailPage() {
       >
         {resetStudentName && (
           <div className="space-y-4">
-            <p className="text-gray-700">
+            <p className="text-[var(--foreground)]">
               确定要重置学生 <strong>{resetStudentName}</strong> 的密码吗？
             </p>
-            <div className="bg-yellow-50 rounded-lg p-3 text-sm text-yellow-700">
+            <div className="bg-[var(--warning-light)] rounded-lg p-3 text-sm text-[var(--warning)]">
               <p className="font-medium mb-1">重置后：</p>
-              <ul className="list-disc list-inside space-y-0.5 text-yellow-600">
+              <ul className="list-disc list-inside space-y-0.5 text-[var(--warning)]">
                 <li>密码将恢复为默认密码（123456）</li>
                 <li>学生可使用姓名/学号+密码登录</li>
                 <li>学生可在个人中心重新设置密码</li>
@@ -307,12 +307,12 @@ export default function ClassDetailPage() {
         footer={null}
       >
         <div className="space-y-4">
-          <p className="text-gray-700">
+          <p className="text-[var(--foreground)]">
             确定要删除选中的 <strong>{selectedRowKeys.length}</strong> 名学生吗？
           </p>
-          <div className="bg-red-50 rounded-lg p-3 text-sm text-red-700">
+          <div className="bg-[var(--danger-light)] rounded-lg p-3 text-sm text-[var(--danger)]">
             <p className="font-medium mb-1">此操作将同时删除：</p>
-            <ul className="list-disc list-inside space-y-0.5 text-red-600">
+            <ul className="list-disc list-inside space-y-0.5 text-[var(--danger)]">
               <li>这些学生的所有对话记录和消息</li>
               <li>这些学生的互动探究提交和学伴对话记录</li>
               <li>这些学生的练习记录和作业答题数据</li>

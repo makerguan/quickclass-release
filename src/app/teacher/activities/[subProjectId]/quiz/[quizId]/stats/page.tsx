@@ -179,7 +179,7 @@ export default function QuizStatsPage() {
         {/* 顶部导航 */}
         <div className="flex items-center gap-3">
           <Button
-            theme="default"
+            theme="primary"
             variant="text"
             icon={<ChevronLeftIcon />}
             onClick={() => router.push("/teacher/tasks")}
@@ -194,11 +194,11 @@ export default function QuizStatsPage() {
             <div className="space-y-3">
               <div className="flex items-start justify-between">
                 <div>
-                  <h2 className="text-xl font-semibold text-[#1A1A1A]">{quizInfo.title}</h2>
-                  {quizInfo.description && <p className="text-sm text-[#63666F] mt-1">{quizInfo.description}</p>}
+                  <h2 className="text-xl font-semibold text-[var(--title)]">{quizInfo.title}</h2>
+                  {quizInfo.description && <p className="text-sm text-[var(--muted)] mt-1">{quizInfo.description}</p>}
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-sm text-[#63666F]">班级：</span>
+                  <span className="text-sm text-[var(--muted)]">班级：</span>
                   <Select
                     value={selectedClassId}
                     onChange={(val) => setSelectedClassId(String(val))}
@@ -227,28 +227,28 @@ export default function QuizStatsPage() {
           <>
             {/* 核心统计卡片 */}
             <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <div className="bg-white rounded-lg p-4 border border-gray-100">
-                <div className="text-sm text-[#63666F] mb-1">班级平均分</div>
-                <div className="text-2xl font-bold text-[#0052D9]">{reportData.classAvgScore}</div>
-                <div className="text-xs text-[#63666F] mt-1">总分100</div>
+              <div className="bg-[var(--card-bg)] rounded-lg p-4 border border-[var(--card-border)]">
+                <div className="text-sm text-[var(--muted)] mb-1">班级平均分</div>
+                <div className="text-2xl font-bold text-[var(--primary)]">{reportData.classAvgScore}</div>
+                <div className="text-xs text-[var(--muted)] mt-1">总分100</div>
               </div>
-              <div className="bg-white rounded-lg p-4 border border-gray-100">
-                <div className="text-sm text-[#63666F] mb-1">最高分</div>
-                <div className="text-2xl font-bold text-purple-600">{reportData.stats?.maxScore || 0}</div>
+              <div className="bg-[var(--card-bg)] rounded-lg p-4 border border-[var(--card-border)]">
+                <div className="text-sm text-[var(--muted)] mb-1">最高分</div>
+                <div className="text-2xl font-bold text-[var(--accent)]">{reportData.stats?.maxScore || 0}</div>
               </div>
-              <div className="bg-white rounded-lg p-4 border border-gray-100">
-                <div className="text-sm text-[#63666F] mb-1">最低分</div>
-                <div className="text-2xl font-bold text-orange-600">{reportData.stats?.minScore || 0}</div>
+              <div className="bg-[var(--card-bg)] rounded-lg p-4 border border-[var(--card-border)]">
+                <div className="text-sm text-[var(--muted)] mb-1">最低分</div>
+                <div className="text-2xl font-bold text-[var(--warning)]">{reportData.stats?.minScore || 0}</div>
               </div>
-              <div className="bg-white rounded-lg p-4 border border-gray-100">
-                <div className="text-sm text-[#63666F] mb-1">合格率</div>
-                <div className="text-2xl font-bold text-teal-600">{reportData.stats?.passRate || 0}%</div>
-                <div className="text-xs text-[#63666F] mt-1">合格线{reportData.passScore ?? 60}分</div>
+              <div className="bg-[var(--card-bg)] rounded-lg p-4 border border-[var(--card-border)]">
+                <div className="text-sm text-[var(--muted)] mb-1">合格率</div>
+                <div className="text-2xl font-bold text-[var(--success)]">{reportData.stats?.passRate || 0}%</div>
+                <div className="text-xs text-[var(--muted)] mt-1">合格线{reportData.passScore ?? 60}分</div>
               </div>
-              <div className="bg-white rounded-lg p-4 border border-gray-100">
-                <div className="text-sm text-[#63666F] mb-1">已完成人数</div>
-                <div className="text-2xl font-bold text-indigo-600">{reportData.totalStudents}</div>
-                <div className="text-xs text-[#63666F] mt-1">人已答完</div>
+              <div className="bg-[var(--card-bg)] rounded-lg p-4 border border-[var(--card-border)]">
+                <div className="text-sm text-[var(--muted)] mb-1">已完成人数</div>
+                <div className="text-2xl font-bold text-[var(--accent)]">{reportData.totalStudents}</div>
+                <div className="text-xs text-[var(--muted)] mt-1">人已答完</div>
               </div>
             </div>
 
@@ -256,8 +256,8 @@ export default function QuizStatsPage() {
             {reportData.scoreBuckets && reportData.scoreBuckets.length > 0 && (
               <Card>
                 <div className="flex items-center gap-2 mb-4">
-                  <ChartBarIcon className="text-[#0052D9]" />
-                  <h3 className="font-medium text-[#1A1A1A]">分数段分布</h3>
+                  <ChartBarIcon className="text-[var(--primary)]" />
+                  <h3 className="font-medium text-[var(--foreground)]">分数段分布</h3>
                 </div>
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={reportData.scoreBuckets}>
@@ -278,8 +278,8 @@ export default function QuizStatsPage() {
             {reportData.difficultyStats && reportData.difficultyStats.length > 0 && (
               <Card>
                 <div className="flex items-center gap-2 mb-4">
-                  <ChartBarIcon className="text-[#00A870]" />
-                  <h3 className="font-medium text-[#1A1A1A]">难度维度分析</h3>
+                  <ChartBarIcon className="text-[var(--success)]" />
+                  <h3 className="font-medium text-[var(--foreground)]">难度维度分析</h3>
                 </div>
                 <div className="flex justify-center">
                   <ResponsiveContainer width="100%" height={280}>
@@ -291,7 +291,7 @@ export default function QuizStatsPage() {
                     </RadarChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="flex justify-center gap-6 mt-2 text-xs text-[#63666F]">
+                <div className="flex justify-center gap-6 mt-2 text-xs text-[var(--muted)]">
                   {reportData.difficultyStats.map((d: DifficultyStat, idx: number) => (
                     <span key={idx}>
                       {d.name}（{d.total}题，正确率{d.correctRate}%）
@@ -305,8 +305,8 @@ export default function QuizStatsPage() {
             {reportData.questionStats && reportData.questionStats.length > 0 && (
               <Card>
                 <div className="flex items-center gap-2 mb-4">
-                  <ChartBarIcon className="text-[#63666F]" />
-                  <h3 className="font-medium text-[#1A1A1A]">各题正确率</h3>
+                  <ChartBarIcon className="text-[var(--muted)]" />
+                  <h3 className="font-medium text-[var(--foreground)]">各题正确率</h3>
                 </div>
                 <ResponsiveContainer width="100%" height={Math.max(150, reportData.questionStats.length * 40)}>
                   <BarChart
@@ -350,8 +350,8 @@ export default function QuizStatsPage() {
             {reportData.studentScores && reportData.studentScores.length > 0 && (
               <Card>
                 <div className="flex items-center gap-2 mb-4">
-                  <ChartBarIcon className="text-[#63666F]" />
-                  <h3 className="font-medium text-[#1A1A1A]">学生得分排名</h3>
+                  <ChartBarIcon className="text-[var(--muted)]" />
+                  <h3 className="font-medium text-[var(--foreground)]">学生得分排名</h3>
                   <Tag theme="primary" size="small">{reportData.studentScores.length}人</Tag>
                 </div>
                 <div className="space-y-2">
@@ -361,34 +361,34 @@ export default function QuizStatsPage() {
                       className={`flex items-center justify-between px-4 py-2 rounded-lg ${
                         idx < 3
                           ? idx === 0
-                            ? "bg-yellow-50"
+                            ? "bg-[var(--warning-light)]"
                             : idx === 1
-                            ? "bg-gray-50"
-                            : "bg-orange-50"
-                          : "bg-[#F7F8FA]"
+                            ? "bg-[var(--hover-bg)]"
+                            : "bg-[var(--warning-light)]"
+                          : "bg-[var(--primary-lighter)]"
                       }`}
                     >
                       <div className="flex items-center gap-3">
                         <span
                           className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-medium ${
                             idx === 0
-                              ? "bg-yellow-400 text-white"
+                              ? "bg-[var(--warning)] text-white"
                               : idx === 1
-                              ? "bg-gray-400 text-white"
+                              ? "bg-[var(--muted-light)] text-white"
                               : idx === 2
-                              ? "bg-orange-400 text-white"
-                              : "bg-gray-200 text-gray-600"
+                              ? "bg-[var(--warning)] text-white"
+                              : "bg-[var(--hover-bg)] text-[var(--muted)]"
                           }`}
                         >
                           {idx + 1}
                         </span>
-                        <span className="font-medium text-[#1A1A1A]">{s.name}</span>
+                        <span className="font-medium text-[var(--foreground)]">{s.name}</span>
                       </div>
                       <div className="flex items-center gap-3">
                         {s.score >= 90 && <Tag theme="success" size="small">优秀</Tag>}
                         {s.score < 60 && <Tag theme="danger" size="small">不及格</Tag>}
-                        <span className="text-lg font-bold text-[#0052D9]">{s.score}</span>
-                        <span className="text-xs text-[#63666F]">分</span>
+                        <span className="text-lg font-bold text-[var(--primary)]">{s.score}</span>
+                        <span className="text-xs text-[var(--muted)]">分</span>
                       </div>
                     </div>
                   ))}
@@ -400,18 +400,18 @@ export default function QuizStatsPage() {
             {reportData.weakQuestions && (
               <Card>
                 <div className="flex items-center gap-2 mb-4">
-                  <ChartBarIcon className="text-[#ED7B2F]" />
-                  <h3 className="font-medium text-[#1A1A1A]">薄弱题目</h3>
+                  <ChartBarIcon className="text-[var(--warning)]" />
+                  <h3 className="font-medium text-[var(--foreground)]">薄弱题目</h3>
                   <Tag theme="warning" size="small">正确率 &lt; 60%</Tag>
                 </div>
                 <div className="space-y-2 text-sm">
                   {reportData.weakQuestions.split("\n").filter(Boolean).map((wq: string, idx: number) => (
-                    <div key={idx} className="px-3 py-2 bg-[#FFF8F0] rounded-lg text-[#ED7B2F]">
+                    <div key={idx} className="px-3 py-2 bg-[var(--warning-light)] rounded-lg text-[var(--warning)]">
                       <Markdown inline>{wq}</Markdown>
                     </div>
                   ))}
                   {!reportData.weakQuestions && (
-                    <p className="text-gray-400">暂无薄弱题目</p>
+                    <p className="text-[var(--muted-light)]">暂无薄弱题目</p>
                   )}
                 </div>
               </Card>
@@ -421,15 +421,15 @@ export default function QuizStatsPage() {
             {reportData.lowScoreStudentsList && reportData.lowScoreStudentsList.length > 0 && (
               <Card>
                 <div className="flex items-center gap-2 mb-4">
-                  <ChartBarIcon className="text-[#E34D41]" />
-                  <h3 className="font-medium text-[#1A1A1A]">需要关注的学生</h3>
+                  <ChartBarIcon className="text-[var(--danger)]" />
+                  <h3 className="font-medium text-[var(--foreground)]">需要关注的学生</h3>
                   <Tag theme="danger" size="small">&lt; {reportData.passScore ?? 60}分 · {reportData.lowScoreStudentsList.length}人</Tag>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {reportData.lowScoreStudentsList.map((s: StudentScore) => (
-                    <div key={s.userId} className="px-3 py-2 bg-red-50 rounded-lg flex items-center gap-2">
-                      <span className="text-sm font-medium text-[#E34D41]">{s.name}</span>
-                      <span className="text-xs text-red-400">{s.score}分</span>
+                    <div key={s.userId} className="px-3 py-2 bg-[var(--danger-light)] rounded-lg flex items-center gap-2">
+                      <span className="text-sm font-medium text-[var(--danger)]">{s.name}</span>
+                      <span className="text-xs text-[var(--danger)]">{s.score}分</span>
                     </div>
                   ))}
                 </div>
@@ -440,15 +440,15 @@ export default function QuizStatsPage() {
             {reportData.incompleteStudents && reportData.incompleteStudents.length > 0 && (
               <Card>
                 <div className="flex items-center gap-2 mb-4">
-                  <ChartBarIcon className="text-[#ED7B2F]" />
-                  <h3 className="font-medium text-[#1A1A1A]">未完成作业的学生</h3>
+                  <ChartBarIcon className="text-[var(--warning)]" />
+                  <h3 className="font-medium text-[var(--foreground)]">未完成作业的学生</h3>
                   <Tag theme="warning" size="small">{reportData.incompleteStudents.length}人</Tag>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {reportData.incompleteStudents.map((s: any) => (
-                    <div key={s.userId || s.name} className="px-3 py-2 bg-orange-50 rounded-lg flex items-center gap-2">
-                      <span className="text-sm font-medium text-[#ED7B2F]">{s.name}</span>
-                      <span className="text-xs text-orange-400">已答{s.answered}/{s.total}题</span>
+                    <div key={s.userId || s.name} className="px-3 py-2 bg-[var(--warning-light)] rounded-lg flex items-center gap-2">
+                      <span className="text-sm font-medium text-[var(--warning)]">{s.name}</span>
+                      <span className="text-xs text-[var(--warning)]">已答{s.answered}/{s.total}题</span>
                     </div>
                   ))}
                 </div>
@@ -459,15 +459,15 @@ export default function QuizStatsPage() {
             {reportData.notAttemptedStudents && reportData.notAttemptedStudents.length > 0 && (
               <Card>
                 <div className="flex items-center gap-2 mb-4">
-                  <ChartBarIcon className="text-gray-400" />
-                  <h3 className="font-medium text-[#1A1A1A]">未参加作业的学生</h3>
+                  <ChartBarIcon className="text-[var(--muted-light)]" />
+                  <h3 className="font-medium text-[var(--foreground)]">未参加作业的学生</h3>
                   <Tag theme="default" size="small">{reportData.notAttemptedStudents.length}人</Tag>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {reportData.notAttemptedStudents.map((s: any) => (
-                    <div key={s.userId} className="px-3 py-2 bg-gray-50 rounded-lg flex items-center gap-2">
-                      <span className="text-sm text-gray-500">{s.name}</span>
-                      <span className="text-xs text-gray-400">未参加</span>
+                    <div key={s.userId} className="px-3 py-2 bg-[var(--hover-bg)] rounded-lg flex items-center gap-2">
+                      <span className="text-sm text-[var(--muted)]">{s.name}</span>
+                      <span className="text-xs text-[var(--muted-light)]">未参加</span>
                     </div>
                   ))}
                 </div>
@@ -478,8 +478,8 @@ export default function QuizStatsPage() {
             <Card>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center gap-2">
-                  <ChartBarIcon className="text-purple-600" />
-                  <h3 className="font-medium text-[#1A1A1A]">AI 智能分析报告</h3>
+                  <ChartBarIcon className="text-[var(--accent)]" />
+                  <h3 className="font-medium text-[var(--foreground)]">AI 智能分析报告</h3>
                 </div>
                 <Button
                   theme="primary"
@@ -501,18 +501,18 @@ export default function QuizStatsPage() {
                 return isHtml ? (
                   <iframe
                     srcDoc={cleanContent}
-                    className="w-full border-none rounded-lg bg-white"
+                    className="w-full border-none rounded-lg bg-[var(--card-bg)]"
                     style={{ minHeight: "400px" }}
                     sandbox="allow-scripts"
                     title="AI 学情分析报告"
                   />
                 ) : (
-                  <div className="bg-purple-50 rounded-lg p-4 text-sm text-gray-700 whitespace-pre-line prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all">
+                  <div className="bg-[var(--primary-lighter)] rounded-lg p-4 text-sm text-[var(--foreground)] whitespace-pre-line prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all">
                     <Markdown>{cleanContent}</Markdown>
                   </div>
                 );
               })() : (
-                <div className="text-center py-8 text-gray-400">
+                <div className="text-center py-8 text-[var(--muted-light)]">
                   <p>点击「生成分析」按钮，AI 将基于作业数据生成智能分析报告</p>
                 </div>
               )}
@@ -524,9 +524,9 @@ export default function QuizStatsPage() {
         {!reportData && (
           <Card>
             <div className="text-center py-12">
-              <ChartBarIcon className="w-12 h-12 mx-auto text-gray-300 mb-4" />
-              <p className="text-gray-500">暂无统计数据</p>
-              <p className="text-sm text-gray-400 mt-2">
+              <ChartBarIcon className="w-12 h-12 mx-auto text-[var(--muted-light)] mb-4" />
+              <p className="text-[var(--muted)]">暂无统计数据</p>
+              <p className="text-sm text-[var(--muted-light)] mt-2">
                 请等待学生完成作业后再查看统计
               </p>
             </div>

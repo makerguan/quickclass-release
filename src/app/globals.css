@@ -27,17 +27,271 @@ body {
   }
 }
 
-.teacher-menu .t-menu-item {
-  transition: background-color 0.2s;
+/* ⚠️ GOTCHA（2026-10-13 实测）：TDesign 菜单项类名是 .t-menu__item（双下划线），
+   不是 .t-menu-item —— 写错会静默不生效，表现为「选中项永远是 TDesign 默认浅蓝底+蓝字」。
+   ⛔ DO NOT 改回单横线写法。 */
+.teacher-menu .t-menu__item {
+  transition: all 0.2s ease;
+  border-radius: 8px;
+  margin: 0 10px 2px 10px;
 }
 
-.teacher-menu .t-menu-item:hover {
-  background-color: #E8F0FE !important;
+.teacher-menu .t-menu__item:hover {
+  background-color: var(--primary-light) !important;
+  color: var(--primary) !important;
 }
 
-.teacher-menu .t-menu-item.t-is-active {
-  background-color: #0052D9 !important;
+/* 苹果式选中态（2026-10-13）：纯色填充、无渐变无投影，圆角胶囊与 macOS 侧栏一致 */
+.teacher-menu .t-menu__item.t-is-active {
+  background: var(--primary) !important;
   color: white !important;
+}
+
+/* 选中项的图标/文字是独立节点，须显式覆盖（TDesign 会把 color 写在 svg 上） */
+.teacher-menu .t-menu__item.t-is-active svg,
+.teacher-menu .t-menu__item.t-is-active .t-menu__content,
+.teacher-menu .t-menu__item.t-is-active .t-icon {
+  color: white !important;
+  fill: currentColor;
+}
+
+/* 菜单整体背景透明，露出侧栏底色 */
+.teacher-menu,
+.teacher-menu .t-menu {
+  background-color: transparent !important;
+}
+
+/* 📐 教师端主题化 TDesign 组件（2026-10-13）：让按钮/标签/卡片等共享 CSS 变量主色，
+   无需逐页替换即可覆盖绝大多数教师端页面。
+   🔗 RELATED: src/components/layout/TeacherLayout.tsx、src/lib/teacher-theme.ts
+   ⛔ DO NOT REVERT: 不要回退到组件默认色，否则切换主题后按钮仍保持 TDesign 默认蓝。
+
+   ⚠️ GOTCHA（2026-10-13 实测）：实体按钮规则必须排除 --variant-text。
+   课堂管理/课堂活动的「编辑/删除/题目管理…」等行内管理按钮都用 variant="text"，
+   若一并染成实心底色 → 饱和色小药丸上的图标+文字看不清（用户反馈）。
+   正确做法：实体变体染底色，文字变体只染文字/图标色、保持透明底。
+
+   作用域用 html[data-teacher-theme] 而不是 .teacher-scope：TDesign 弹窗/浮层 portal 到 body，
+   不在 layout 树内，用类名作用域会让弹窗按钮退回 TDesign 默认蓝。
+   ⛔ DO NOT REVERT 到 .teacher-scope：标记与变量由 TeacherLayout 同步/清理（见其 useEffect）。 */
+
+/* 实体变体（base/outline/dashed）：跟随主题色 */
+html[data-teacher-theme] .t-button--theme-primary:not(.t-button--variant-text) {
+  background-color: var(--primary) !important;
+  border-color: var(--primary) !important;
+}
+
+html[data-teacher-theme] .t-button--theme-primary:not(.t-button--variant-text):hover {
+  background-color: var(--primary-dark) !important;
+  border-color: var(--primary-dark) !important;
+}
+
+html[data-teacher-theme] .t-button--theme-success:not(.t-button--variant-text) {
+  background-color: var(--success) !important;
+  border-color: var(--success) !important;
+}
+
+html[data-teacher-theme] .t-button--theme-warning:not(.t-button--variant-text) {
+  background-color: var(--warning) !important;
+  border-color: var(--warning) !important;
+}
+
+html[data-teacher-theme] .t-button--theme-danger:not(.t-button--variant-text) {
+  background-color: var(--danger) !important;
+  border-color: var(--danger) !important;
+}
+
+/* 文字变体：苹果式——不留底色，只给 icon 和文字上主题色；hover 时才给极浅底 */
+html[data-teacher-theme] .t-button--variant-text.t-button--theme-primary {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  color: var(--primary) !important;
+}
+
+html[data-teacher-theme] .t-button--variant-text.t-button--theme-success {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  color: var(--success) !important;
+}
+
+html[data-teacher-theme] .t-button--variant-text.t-button--theme-warning {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  color: var(--warning) !important;
+}
+
+html[data-teacher-theme] .t-button--variant-text.t-button--theme-danger {
+  background-color: transparent !important;
+  border-color: transparent !important;
+  color: var(--danger) !important;
+}
+
+html[data-teacher-theme] .t-button--variant-text.t-button--theme-primary:hover {
+  background-color: var(--primary-light) !important;
+  color: var(--primary-dark) !important;
+}
+
+html[data-teacher-theme] .t-button--variant-text.t-button--theme-success:hover {
+  background-color: var(--success-light) !important;
+  color: var(--success) !important;
+}
+
+html[data-teacher-theme] .t-button--variant-text.t-button--theme-warning:hover {
+  background-color: var(--warning-light) !important;
+  color: var(--warning) !important;
+}
+
+html[data-teacher-theme] .t-button--variant-text.t-button--theme-danger:hover {
+  background-color: var(--danger-light) !important;
+  color: var(--danger) !important;
+}
+
+/* 描边变体（variant="outline"）：边框与文字跟随主题，hover 填充浅底。
+   ⚠️ 2026-10-13 实测：不写这段，outline 按钮会保持 TDesign 默认蓝（各页「新建/搜索」等次级按钮用） */
+html[data-teacher-theme] .t-button--variant-outline.t-button--theme-primary {
+  border-color: var(--primary) !important;
+  color: var(--primary) !important;
+  background-color: transparent !important;
+}
+html[data-teacher-theme] .t-button--variant-outline.t-button--theme-primary:hover {
+  background-color: var(--primary-light) !important;
+}
+html[data-teacher-theme] .t-button--variant-outline.t-button--theme-success {
+  border-color: var(--success) !important;
+  color: var(--success) !important;
+  background-color: transparent !important;
+}
+html[data-teacher-theme] .t-button--variant-outline.t-button--theme-success:hover {
+  background-color: var(--success-light) !important;
+}
+html[data-teacher-theme] .t-button--variant-outline.t-button--theme-warning {
+  border-color: var(--warning) !important;
+  color: var(--warning) !important;
+  background-color: transparent !important;
+}
+html[data-teacher-theme] .t-button--variant-outline.t-button--theme-warning:hover {
+  background-color: var(--warning-light) !important;
+}
+html[data-teacher-theme] .t-button--variant-outline.t-button--theme-danger {
+  border-color: var(--danger) !important;
+  color: var(--danger) !important;
+  background-color: transparent !important;
+}
+html[data-teacher-theme] .t-button--variant-outline.t-button--theme-danger:hover {
+  background-color: var(--danger-light) !important;
+}
+
+/* 分页器（2026-10-13 实测：当前页仍是 TDesign 默认蓝方块） */
+html[data-teacher-theme] .t-pagination__number.t-is-current {
+  background-color: var(--primary) !important;
+  border-color: var(--primary) !important;
+  color: #fff !important;
+}html[data-teacher-theme] .t-pagination__number:hover {
+  border-color: var(--primary) !important;
+  color: var(--primary) !important;
+}
+html[data-teacher-theme] .t-pagination__total,
+html[data-teacher-theme] .t-pagination__jump {
+  color: var(--muted) !important;
+}
+
+/* 长文排版（@tailwindcss/typography 的 .prose）：默认正文色是硬编码的灰蓝 #374151，
+   通过插件自身的 CSS 变量接管，让 AI 生成的长文也跟随教师端主题。
+   ⛔ DO NOT 逐个选择器写 color 覆盖 —— 插件内部层级多，改变量是唯一可靠的做法。 */
+html[data-teacher-theme] .prose {
+  --tw-prose-body: var(--foreground);
+  --tw-prose-headings: var(--title);
+  --tw-prose-lead: var(--muted);
+  --tw-prose-links: var(--primary);
+  --tw-prose-bold: var(--foreground);
+  --tw-prose-counters: var(--muted);
+  --tw-prose-bullets: var(--primary-light);
+  --tw-prose-hr: var(--card-border);
+  --tw-prose-quotes: var(--foreground);
+  --tw-prose-quote-borders: var(--primary);
+  --tw-prose-captions: var(--muted);
+  --tw-prose-code: var(--foreground);
+}
+
+/* 进度条（2026-10-13）：TDesign Progress 内条默认绿/橙，需跟随主题。
+   类名用通配匹配 —— TDesign 版本间可能是 t-progress--status-success 或 t-progress--success，
+   写成精确选择器容易在某处静默失效。 */
+html[data-teacher-theme] .t-progress__inner {
+  background-color: var(--primary) !important;
+}
+html[data-teacher-theme] [class*="t-progress--status-success"] .t-progress__inner,
+html[data-teacher-theme] [class*="t-progress--success"] .t-progress__inner {
+  background-color: var(--success) !important;
+}
+html[data-teacher-theme] [class*="t-progress--status-warning"] .t-progress__inner,
+html[data-teacher-theme] [class*="t-progress--warning"] .t-progress__inner {
+  background-color: var(--warning) !important;
+}
+html[data-teacher-theme] [class*="t-progress--status-error"] .t-progress__inner,
+html[data-teacher-theme] [class*="t-progress--status-danger"] .t-progress__inner,
+html[data-teacher-theme] [class*="t-progress--error"] .t-progress__inner {
+  background-color: var(--danger) !important;
+}
+
+/* ⚠️ GOTCHA（2026-10-13 实测）：TDesign 的 Tag 类名是 .t-tag--primary/.t-tag--success…
+   —— 没有 "theme-" 那段（那是 Button 的命名风格）。写成 .t-tag--theme-* 会静默不生效，
+   表现为「标签永远是 TDesign 默认蓝/绿」，排查时优先看真实类名。
+   ⛔ DO NOT 改回 .t-tag--theme-* */
+html[data-teacher-theme] .t-tag--primary {
+  background-color: var(--primary-light) !important;
+  color: var(--primary) !important;
+  border-color: var(--primary-light) !important;
+}
+
+html[data-teacher-theme] .t-tag--success {
+  background-color: var(--success-light) !important;
+  color: var(--success) !important;
+  border-color: var(--success-light) !important;
+}
+
+html[data-teacher-theme] .t-tag--warning {
+  background-color: var(--warning-light) !important;
+  color: var(--warning) !important;
+  border-color: var(--warning-light) !important;
+}
+
+html[data-teacher-theme] .t-tag--danger {
+  background-color: var(--danger-light) !important;
+  color: var(--danger) !important;
+  border-color: var(--danger-light) !important;
+}
+
+html[data-teacher-theme] .t-card {
+  background-color: var(--card-bg) !important;
+  border-color: var(--card-border) !important;
+}
+
+html[data-teacher-theme] .t-select .t-input,
+html[data-teacher-theme] .t-input__inner,
+html[data-teacher-theme] .t-textarea__inner {
+  background-color: var(--card-bg) !important;
+  border-color: var(--card-border) !important;
+  color: var(--foreground) !important;
+}
+
+html[data-teacher-theme] .t-select .t-input:hover,
+html[data-teacher-theme] .t-input__inner:hover,
+html[data-teacher-theme] .t-textarea__inner:hover {
+  border-color: var(--primary) !important;
+}
+
+html[data-teacher-theme] .t-radio-button.t-is-checked {
+  background-color: var(--primary) !important;
+  border-color: var(--primary) !important;
+  color: white !important;
+}
+
+html[data-teacher-theme] .t-switch.t-is-checked .t-switch__handle {
+  background-color: var(--primary) !important;
+}
+
+html[data-teacher-theme] .t-switch.t-is-checked {
+  background-color: var(--primary-light) !important;
 }
 
 /* 模板设置页：紧凑卡片，压缩 TDesign Card 默认内边距（默认 16px 24px） */
@@ -57,4 +311,39 @@ body {
 
 .animate-marquee {
   animation: marquee 20s linear infinite;
+}
+
+/* 课堂卡片信息预览气泡：弹出/收入缩放动画（2026-10-13）
+   显示：从 0.5 倍弹性弹出（轻微 overshoot 到 1.06 再回正）；
+   消失：从 1 倍缩小收入（配合 TDesign Popup 的 fade 过渡） */
+.preview-popup-anim {
+  transform-origin: bottom center;
+  animation: preview-popup-in 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.t-popup--animation-leave-active .preview-popup-anim {
+  animation: preview-popup-out 0.2s ease-in forwards;
+}
+@keyframes preview-popup-in {
+  0% {
+    opacity: 0;
+    transform: scale(0.5);
+  }
+  70% {
+    opacity: 1;
+    transform: scale(1.06);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes preview-popup-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.5);
+  }
 }
