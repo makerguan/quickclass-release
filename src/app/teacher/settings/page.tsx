@@ -783,7 +783,10 @@ export default function TeacherSettingsPage() {
                   <div className="text-sm font-medium text-[var(--primary)]">{versionInfo.version}</div>
                   {updateAvailable && (
                     <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-[var(--danger-light)] text-[var(--danger)] rounded-full border border-[var(--danger-light)] animate-pulse">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[var(--danger-light)]0" />
+                      {/* ⛔ DO NOT REVERT（2026-10-14 修复）：曾写成 bg-[var(--danger-light)]0（尾部多余 0，类失效）。
+                          圆点外层 badge 本身就是 --danger-light 浅红底，圆点再用浅色会同色隐形，必须用实色 --danger。
+                          同文件 807-811 行警示图标容器同根因。 */}
+                      <span className="w-1.5 h-1.5 rounded-full bg-[var(--danger)]" />
                       新版本 {latestVersion}
                     </span>
                   )}
@@ -804,10 +807,13 @@ export default function TeacherSettingsPage() {
               : "bg-[var(--warning-light)] border-[var(--warning-light)]"
           }`}>
             <div className="flex items-start gap-3">
+              {/* ⛔ DO NOT REVERT（2026-10-14 修复）：图标容器内是白色 svg，必须实色底——--danger/warning-light 浅色底配白图标看不清。
+                  曾写成 bg-[var(--danger-light)]0 / bg-[var(--warning-light)]0（尾部多余 0，类失效变透明）。
+                  同文件「新版本」badge 圆点同根因。 */}
               <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
                 conversationCount >= conversationWarningThreshold
-                  ? "bg-[var(--danger-light)]0"
-                  : "bg-[var(--warning-light)]0"
+                  ? "bg-[var(--danger)]"
+                  : "bg-[var(--warning)]"
               }`}>
                 <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />

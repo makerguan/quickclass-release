@@ -561,12 +561,16 @@ export default function TeacherConversationsPage() {
                     <CheckCircleIcon />
                     {selectedIds.size === conversations.length ? "取消全选" : "全选"}
                   </button>
+                  {/* ⛔ DO NOT REVERT（2026-10-14 修复）：本文件共 5 处 bg-[var(--danger/warning-light)]0 坏类（约 569/604/656/851/890 行）——
+                      尾部多余 0 使 Tailwind 任意值类失效 → 背景透明，白字/白对勾浮在页面上看不清（用户报告）。修复为实色底白字。
+                      ⚠️ GOTCHA: --danger-light/--warning-light 是浅色，只能配深色文字，勿与 text-white 搭配。
+                      🔗 RELATED: templates/page.tsx 确认删除按钮、settings/page.tsx 新版本圆点与警示图标，同根因同修法。 */}
                   <button
                     onClick={handleBatchDelete}
                     disabled={selectedIds.size === 0}
                     className={`px-3 py-1.5 text-sm rounded-lg flex items-center gap-1 ${
                       selectedIds.size > 0
-                        ? "bg-[var(--danger-light)]0 text-white hover:bg-[var(--danger)]"
+                        ? "bg-[var(--danger)] text-white"
                         : "bg-[var(--primary-lighter)] text-[var(--muted-light)] cursor-not-allowed"
                     }`}
                   >
@@ -601,7 +605,7 @@ export default function TeacherConversationsPage() {
                       disabled={(classes.find((c) => c.id === selectedClassId)?.conversationCount || 0) === 0}
                       className={`px-3 py-1.5 text-sm rounded-lg flex items-center gap-1 ${
                         (classes.find((c) => c.id === selectedClassId)?.conversationCount || 0) > 0
-                          ? "bg-[var(--warning-light)]0 text-white hover:bg-[var(--warning)]"
+                          ? "bg-[var(--warning)] text-white"
                           : "bg-[var(--primary-lighter)] text-[var(--muted-light)] cursor-not-allowed"
                       }`}
                     >
@@ -653,7 +657,7 @@ export default function TeacherConversationsPage() {
                         onClick={(e) => toggleSelect(conv.id, e)}
                         className={`w-5 h-5 rounded border-2 flex items-center justify-center cursor-pointer transition-colors ${
                           isSelected
-                            ? "bg-[var(--danger-light)]0 border-[var(--danger)]"
+                            ? "bg-[var(--danger)] border-[var(--danger)]"
                             : "border-[var(--card-border)] hover:border-[var(--danger)]"
                         }`}
                       >
@@ -848,7 +852,7 @@ export default function TeacherConversationsPage() {
               <button
                 onClick={confirmDelete}
                 disabled={deleting}
-                className="px-4 py-2 bg-[var(--danger-light)]0 text-white rounded-lg hover:bg-[var(--danger)] disabled:opacity-50 flex items-center gap-2"
+                className="px-4 py-2 bg-[var(--danger)] text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
               >
                 {deleting && (
                   <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
@@ -887,7 +891,7 @@ export default function TeacherConversationsPage() {
               <button
                 onClick={confirmClearClass}
                 disabled={deleting}
-                className="px-4 py-2 bg-[var(--warning-light)]0 text-white rounded-lg hover:bg-[var(--warning)] disabled:opacity-50 flex items-center gap-2"
+                className="px-4 py-2 bg-[var(--warning)] text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
               >
                 {deleting && (
                   <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">

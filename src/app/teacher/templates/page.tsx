@@ -1428,10 +1428,13 @@ export default function TemplateSettingsPage() {
                 >
                   取消
                 </Button>
+                {/* ⛔ DO NOT REVERT（2026-10-14 修复）：曾写成 bg-[var(--danger-light)]0——尾部多余 0 使 Tailwind 类失效 → 透明底白字看不清。
+                    改为实色 danger 底白字；--danger-light 是浅色只配深字，勿与 text-white 搭配。
+                    🔗 RELATED: conversations/page.tsx 同根因 5 处、settings/page.tsx 3 处。 */}
                 <button
                   onClick={handleDelete}
                   disabled={deleting}
-                  className="px-4 py-2 bg-[var(--danger-light)]0 text-white rounded-lg hover:bg-[var(--danger)] disabled:opacity-50"
+                  className="px-4 py-2 bg-[var(--danger)] text-white rounded-lg disabled:opacity-50"
                 >
                   {deleting ? "删除中..." : "确认删除"}
                 </button>
