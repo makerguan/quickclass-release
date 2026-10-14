@@ -80,11 +80,10 @@ const CHART_PROTOCOL_SECTION = (htmlMode: boolean): string => `## 图表输出�
  * 意图词表宁宽勿严：漏判会让"要求插图"的模板收到画图禁令（直接不画图，后果更糟）；
  * 误判无害——协议首句有"仅当模板明确要求插图时才画图"守卫。
  *
- * ⚠️ GOTCHA：词表里的英文 chart 是给手写/历史模板兜底的。作业/探究分析线帮写产物必须
- * 纯中文（buildAnalysisWritingRules 已严禁英文 chart/html 字样）——因为那两条生成路由的
- * isHtmlOutput 用 includes('chart') 嗅探模板正文，模板含英文 chart 会被误判为网页型输出，
- * 与模板要求的 Markdown 形态错乱。中文意图词（雷达图/饼图/柱状图等）均不含嗅探子串
- * （嗅探词是「图表协议」四字连排，不是「图表」二字），安全。
+ * 英文 chart 也保留在词表中，用于匹配 ```chart 示例块或教师手写英文指令。
+ * isHtmlOutput 判定已改为只看 HTML 结构/标签信号（<!DOCTYPE、<html、<div、echarts、
+ * ECharts、html、「图表协议」等），不再用 includes('chart') 嗅探，因此模板正文含 chart
+ * 不会导致网页型误判。中文意图词（雷达图/饼图/柱状图等）同样安全。
  */
 export const CHART_INTENT_RE =
   /chart|图表|插图|配图|画图|画一张|绘制|饼图|柱状图|折线图|雷达图|散点图|趋势图|进度条/i;

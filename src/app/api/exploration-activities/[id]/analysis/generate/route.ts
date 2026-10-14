@@ -194,14 +194,14 @@ export async function POST(
 
     // 检测是否为 HTML 输出
     const isHtmlOutput = effectivePrompt ? (
-      // 显式信号：新 chart 协议数据型模板（确定性判定，优先于关键词嗅探）
+      // 显式信号：HTML 结构/标签或网页型图表库（确定性判定，优先于关键词嗅探）
+      // 注意：不再用 includes('chart') 嗅探——文本型模板里的 ```chart 示例块会被误判为网页型。
       effectivePrompt.includes('图表协议') ||
       effectivePrompt.includes('<!DOCTYPE') ||
       effectivePrompt.includes('<html') ||
       effectivePrompt.includes('<div') ||
       effectivePrompt.includes('echarts') ||
       effectivePrompt.includes('ECharts') ||
-      effectivePrompt.includes('chart') ||
       effectivePrompt.toLowerCase().includes('html')
     ) : false;
 
@@ -282,8 +282,8 @@ export async function POST(
       // 未要求 → 注入画图禁令。
       // ⛔ DO NOT REVERT：不要改回纯 Markdown 输出——曾因 text 分支无协议，文本型探究报告
       // 永远无图，与学情分析线能力不对齐。
-      // ⚠️ GOTCHA：模板正文必须纯中文表述——isHtmlOutput 嗅探含 includes('chart')，模板混入
-      // 英文 chart 会被误判为网页型输出，与模板要求的 Markdown 形态错乱。
+      // 注意：isHtmlOutput 已不再用 includes('chart') 嗅探，模板正文可含英文 chart
+      // （如 ```chart 示例块）而不影响文本型判定。
       : "\n\n## 字数限制\n" + wordLimitText + "\n\n" + buildChartPolicySection(effectivePrompt ?? undefined) + "\n\n## 输出格式\n直接输出分析内容（Markdown格式）";
 
     const prompt = `${systemFrame}\n\n${dataSection}${templateSection}${outputFormat}`;

@@ -41,9 +41,9 @@ const INTENT_REQUIRED_HINT: Record<string, string> = {
  * - currentContent 非空：优化模式（以教师初稿为基础改写，不推翻其设计）
  * - mode="generic"|"custom"（通用/个性）与 style="text"|"html"（文本型/网页型）对三类模板生效：
  *   student/class 学情分析（generic 必须另选 scope="task"|"pc"，变量清单按作用域裁剪）
- *   QUIZ_ANALYSIS / EXPLORATION_ANALYSIS（无 scope 维度；⚠️ 触发词契约：html 版模板正文必须含
- *   <!DOCTYPE html> 供运行时 isHtmlOutput 关键词嗅探识别，text 版严禁含 chart/html 英文字样否则误判
- *   为网页型——见 buildAnalysisWritingRules 注释）
+ *   QUIZ_ANALYSIS / EXPLORATION_ANALYSIS（无 scope 维度；⚠️ 输出形态判定：html 版模板正文必须含
+ *   <!DOCTYPE html> 供运行时 isHtmlOutput 关键词识别；text 版避免 HTML 结构特征词（<!DOCTYPE、<html、
+ *   <div、echarts、html 等），chart 已不再嗅探，不写任何格式代码或示例块——见 buildAnalysisWritingRules 注释）
  *
  * 质量护栏（学 /api/tasks/generate-objectives 的校验+重试范式）：
  * 生成后代码级校验 {变量} 全部在类型清单内，越界则把越界变量反馈给 AI 自动重试 1 次；

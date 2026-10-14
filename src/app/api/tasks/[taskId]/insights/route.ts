@@ -409,14 +409,14 @@ export async function POST(
 
     // 检测提示词是否为 HTML 格式
     const isHtmlOutput = effectivePrompt ? (
-      // 显式信号：新 chart 协议数据型模板（确定性判定，优先于关键词嗅探）
+      // 显式信号：HTML 结构/标签或网页型图表库（确定性判定，优先于关键词嗅探）
+      // 注意：不再用 includes('chart') 嗅探——文本型模板里的 ```chart 示例块会被误判为网页型。
       effectivePrompt.includes('图表协议') ||
       effectivePrompt.includes('<!DOCTYPE') ||
       effectivePrompt.includes('<html') ||
       effectivePrompt.includes('<div') ||
       effectivePrompt.includes('echarts') ||
       effectivePrompt.includes('ECharts') ||
-      effectivePrompt.includes('chart') ||
       effectivePrompt.toLowerCase().includes('html')
     ) : false;
 
