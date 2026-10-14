@@ -292,6 +292,17 @@ export default function TeacherTasksPage() {
     }
   };
 
+  // 退出独占聚焦的延迟定时器：先播放收缩动画，动画结束（>300ms）后再恢复全列表与原分页（2026-10-14）
+  // ⚠️ GOTCHA：见 exitExclusive 注释——同帧恢复原序/分页会让 grid-rows 收缩过渡失效，必须延迟
+  // ⚠️ GOTCHA: 此 ref 存 requestAnimationFrame 的 id（浏览器中返回 number）
+  const exitExclusiveTimerRef = useRef<number | null>(null);
+  const clearExitExclusiveTimer = () => {
+    if (exitExclusiveTimerRef.current !== null) {
+      window.cancelAnimationFrame(exitExclusiveTimerRef.current);
+      exitExclusiveTimerRef.current = null;
+    }
+  };
+
   // 编辑/创建课堂表单
   const [formVisible, setFormVisible] = useState(false);
   const [editingTask, setEditingTask] = useState<LearningTask | null>(null);
@@ -364,19 +375,38 @@ export default function TeacherTasksPage() {
     return () => {
       window.removeEventListener("scroll", onScroll);
       if (timer) clearTimeout(timer);
+      // 卸载时清掉"退出独占"的延迟定时器，避免卸载后 setState（2026-10-14）
+      clearExitExclusiveTimer();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // 退出独占聚焦：恢复全列表、不展开、还原进入前的分页（2026-10-13）
+  // ⚠️ GOTCHA（2026-10-14）：不能把 setExclusiveTaskId(null)/setCurrentPage(prevTaskPage)
+  // 与 setExpandedTaskId(null) 放在同一帧执行——独占聚焦会把目标课堂置顶到列表首位（displayTasks 重排），
+  // 若目标课堂原本不在第一页/首位，退出时同帧恢复原序+分页会让 React 移动/卸载该卡片 DOM，
+  // grid-rows-[1fr]→[0fr] 的 CSS 过渡因起始位置元素被挪走而"瞬间消失"（表现为只有排顶部的课堂有收缩动画）。
+  // 修复：分两步——
+  //  1. 本帧立即恢复原排序 + 原分页（exclusiveTaskId 清空），让列表回到目标课堂原本所在页，
+  //     避免"先展示置顶的第一页、动画完再跳回原页"的闪跳感；
+  //  2. 等 React 完成重排、浏览器渲染一帧后（requestAnimationFrame 双帧），
+  //     目标课堂已在其原位，此时再清 expandedTaskId 触发 grid-rows 收缩过渡，动画在原位平滑播放。
+  // 若中途又点击其他课堂进入独占，clearExitExclusiveTimer 会取消第二帧。
   const exitExclusive = () => {
+    clearExitExclusiveTimer();
     setExclusiveTaskId(null);
-    setExpandedTaskId(null);
-    setExpandedSpIds(new Set());
     setCurrentPage(prevTaskPage);
     // 主动退出独占时同步清除视图记忆中的独占标记，避免刷新/返回后被带回独占（2026-10-13）
     viewStateRef.current = { taskId: null, spIds: [], scrollY: window.scrollY, exclusiveTaskId: null };
     persistTasksView();
+    // 双 rAF：确保重排 + 首帧渲染完成后再收缩
+    exitExclusiveTimerRef.current = window.requestAnimationFrame(() => {
+      exitExclusiveTimerRef.current = window.requestAnimationFrame(() => {
+        exitExclusiveTimerRef.current = null;
+        setExpandedTaskId(null);
+        setExpandedSpIds(new Set());
+      });
+    });
   };
 
   // 跳转到其他页面前先记录一次（带走最新滚动位置）
@@ -3495,7 +3525,10 @@ export default function TeacherTasksPage() {
             {pagedTasks.map((task) => {
               const isExpanded = expandedTaskId === task.id;
               // 独占聚焦时：目标课堂显示并展开，其余课堂透明淡出（保留 DOM 做平滑过渡）
-              const isExclusiveHidden = exclusiveTaskId !== null && exclusiveTaskId !== task.id;
+              // 退出过渡中（expandedTaskId 已清、exclusiveTaskId 尚在）：不再隐藏其余课堂，
+              // 让列表与目标课堂收缩同步淡入，避免收缩完成后列表"闪跳"出现（2026-10-14）
+              const isExclusiveHidden =
+                exclusiveTaskId !== null && exclusiveTaskId !== task.id && expandedTaskId !== null;
               // 四类活动数量统计：头部不再直接展示，收拢到"信息预览"悬停提示（2026-10-13）
               const counts = task.subProjects?.reduce(
                 (acc, sp) => {
@@ -3514,7 +3547,11 @@ export default function TeacherTasksPage() {
                     isExclusiveHidden
                       ? "opacity-0 scale-[0.98] pointer-events-none"
                       : "opacity-100 scale-100"
-                  } ${exclusiveTaskId === task.id ? "ring-2 ring-[var(--primary)]" : ""}`}
+                  } ${
+                    exclusiveTaskId === task.id && expandedTaskId === task.id
+                      ? "ring-2 ring-[var(--primary)]"
+                      : ""
+                  }`}
                 >
                   <div
                     id={`task-card-${task.id}`}
@@ -3525,6 +3562,8 @@ export default function TeacherTasksPage() {
                         exitExclusive();
                       } else {
                         // 记录原分页页号，进入独占聚焦（置顶 + 回第一页）
+                        // 先取消上一个"退出独占"的延迟恢复，防止收缩动画期间点击其他课堂时旧定时器误恢复分页（2026-10-14）
+                        clearExitExclusiveTimer();
                         setPrevTaskPage(safePage);
                         setExclusiveTaskId(task.id);
                         setExpandedTaskId(task.id);
@@ -4199,7 +4238,11 @@ export default function TeacherTasksPage() {
               current={safePage}
               showJumper
               showPageSize={false}
-              onChange={(pageInfo) => setCurrentPage(pageInfo.current)}
+              onChange={(pageInfo) => {
+                // 手动翻页时取消待执行的"退出独占"延迟恢复，避免收缩动画期间翻页被旧定时器拉回 prevTaskPage（2026-10-14）
+                clearExitExclusiveTimer();
+                setCurrentPage(pageInfo.current);
+              }}
             />
           </div>
         )}
