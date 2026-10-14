@@ -4205,10 +4205,16 @@ export default function TeacherTasksPage() {
         )}
 
         {/* 创建/编辑课堂对话框 - 只保留基本信息 */}
+        {/* ⛔ DO NOT REVERT（2026-10-14 用户要求）：编辑/创建课堂弹窗禁止「点遮罩/按 ESC」关闭——
+            表单未保存时误触会静默丢弃全部已填内容，必须走「取消/×」显式关闭。
+            TDesign 两属性全局默认均为 true（ConfigContext.js dialog 段），不显式传 false 就会误关。
+            🔗 RELATED: 同文件「编辑对话活动」「互动探究」「AI伴学提示词」「编辑项目」弹窗同规则，改一处要一起看。 */}
         <Dialog
           header={editingTask ? "编辑课堂" : "创建课堂"}
           visible={formVisible}
           onClose={() => { setFormVisible(false); resetForm(); }}
+          closeOnOverlayClick={false}
+          closeOnEscKeydown={false}
           footer={null}
           width={900}
           top="48px"
@@ -4741,10 +4747,13 @@ export default function TeacherTasksPage() {
         </Dialog>
 
         {/* 对话活动 - 名片式新建/编辑弹窗 */}
+        {/* ⛔ DO NOT REVERT（2026-10-14 用户要求）：同「编辑课堂」弹窗——未保存时点遮罩/ESC 会静默丢内容，只允许显式关闭 */}
         <Dialog
           header={convDialogMode === "edit" ? "编辑对话活动" : "新建对话活动"}
           visible={convDialogVisible}
           onClose={() => setConvDialogVisible(false)}
+          closeOnOverlayClick={false}
+          closeOnEscKeydown={false}
           footer={null}
           width={720}
           destroyOnClose
@@ -4921,6 +4930,7 @@ export default function TeacherTasksPage() {
         </Dialog>
 
         {/* 互动探究 - 新建/编辑弹窗 */}
+        {/* ⛔ DO NOT REVERT（2026-10-14 用户要求）：与其他编辑弹窗统一——点遮罩已禁止，此处补禁 ESC；对话流含未保存的多轮设计意图 */}
         <Dialog
           header={explorationEditId ? "编辑互动探究" : "新建互动探究"}
           visible={explorationModalVisible}
@@ -4929,6 +4939,7 @@ export default function TeacherTasksPage() {
           width={1040}
           destroyOnClose
           closeOnOverlayClick={false}
+          closeOnEscKeydown={false}
           top="48px"
         >
           <div className="space-y-4">
@@ -4951,6 +4962,9 @@ export default function TeacherTasksPage() {
               <div className="w-[380px] shrink-0 flex flex-col border border-[var(--card-border)] rounded-lg overflow-hidden">
                 {/* 对话流 */}
                 <div className="flex-1 overflow-y-auto p-3 space-y-3 bg-[var(--hover-bg)]" style={{ maxHeight: 300 }}>
+                  {/* ⚠️ GOTCHA（2026-10-14 修复）：用户气泡必须「深底白字」——曾写成 bg-[var(--primary-light)]0 text-white，
+                      尾部多个 0 使 Tailwind 类失效 → 背景透明，白字落在浅灰对话区上看不清（用户报告"字体颜色不对"）。
+                      ⛔ DO NOT REVERT；改色时保持深色背景+白字对比度，--primary-light(#E8F0FE) 是浅色只能配深字。 */}
                   {chatMessages.length === 0 ? (
                     <div className="text-sm text-[var(--muted-light)] text-center px-4 py-16 leading-relaxed">
                       描述你想要的互动网页（主题、互动机制、视觉风格等），发送后 AI 生成第一版。
@@ -4962,7 +4976,7 @@ export default function TeacherTasksPage() {
                         <div
                           className={
                             m.role === "user"
-                              ? "max-w-[85%] bg-[var(--primary-light)]0 text-white text-sm rounded-lg rounded-br-sm px-3 py-2 whitespace-pre-wrap"
+                              ? "max-w-[85%] bg-[var(--primary)] text-white text-sm rounded-lg rounded-br-sm px-3 py-2 whitespace-pre-wrap"
                               : "max-w-[85%] bg-[var(--card-bg)] text-[var(--foreground)] text-sm rounded-lg rounded-bl-sm px-3 py-2 border border-[var(--card-border)] whitespace-pre-wrap"
                           }
                         >
@@ -5724,10 +5738,13 @@ export default function TeacherTasksPage() {
         </Dialog>
 
         {/* AI伴学提示词查看/编辑弹窗 */}
+        {/* ⛔ DO NOT REVERT（2026-10-14 用户要求）：内含可编辑提示词 Textarea + 保存按钮，同「编辑课堂」弹窗规则防误关 */}
         <Dialog
           header="AI伴学提示词"
           visible={showAiCompanionPrompt}
           onClose={() => setShowAiCompanionPrompt(false)}
+          closeOnOverlayClick={false}
+          closeOnEscKeydown={false}
           width={720}
           zIndex={100000}
           footer={
@@ -5826,11 +5843,14 @@ export default function TeacherTasksPage() {
         </Dialog>
 
         {/* 项目提交 新建/编辑 弹窗 */}
+        {/* ⛔ DO NOT REVERT（2026-10-14 用户要求）：同「编辑课堂」弹窗——未保存时点遮罩/ESC 会静默丢内容，只允许显式关闭 */}
         <Dialog
           header={projDialogMode === "new" ? "新建项目" : "编辑项目"}
           visible={projDialogVisible}
           onClose={() => setProjDialogVisible(false)}
           onConfirm={saveProj}
+          closeOnOverlayClick={false}
+          closeOnEscKeydown={false}
           confirmBtn={{ content: "保存", loading: projSaving }}
           cancelBtn="取消"
           width={520}
