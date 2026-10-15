@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import { Button, Input, MessagePlugin, Tag } from "tdesign-react";
 import {
   SendIcon,
@@ -127,6 +127,75 @@ interface Conversation {
 
 // 与服务端 /api/chat 约定的「已切换模型」流内标记：识别后显示切换提示并剥离（不入正文）
 const SWITCH_PREFIX = "\u0000SWITCH\u0000";
+
+/**
+ * 📐 活动类型中文名（2026-10-15）：侧边栏活动名称 hover 时显示类型（见 ActivityNameTip），
+ * 与下方活动列表的 act.type 字面量一一对应。
+ * 现状约束：仅展示用，不参与排序/过滤；新增活动类型时必须同步补本映射，否则 hover 无文字。
+ * 🔗 RELATED：本文件活动列表渲染处（搜索 ACTIVITY_TYPE_LABEL）；教师端"活动"命名口径同此。
+ * ⛔ DO NOT REVERT：勿改回"仅靠图标区分类型"——图标对低年级/色弱学生不友好，文字是唯一语义出口。
+ */
+const ACTIVITY_TYPE_LABEL: Record<"conversation" | "exploration" | "project" | "quiz", string> = {
+  conversation: "对话活动",
+  exploration: "互动探究",
+  project: "项目提交",
+  quiz: "课堂作业",
+};
+
+/**
+ * 📐 活动名称 hover 类型提示（2026-10-15）：鼠标移到活动名称上，显示类型名 0.5s 后自动消失。
+ * 不用 TDesign Tooltip 的 duration——它只对组件首次挂载生效一次，做不到"每次 hover 都自动隐藏"，
+ * 故自实现：hover 启动 500ms 定时器，到点 setVisible(false) 淡出；移开立即隐藏。
+ * 现状约束：气泡 absolute 定位于 relative wrapper 上（标题 span 自带 overflow:hidden 的 truncate，
+ *   气泡若放 span 内部会被裁剪）；wrapper 用 min-w-0 max-w-full 保住原 truncate 收缩/省略行为。
+ * 🔗 RELATED：ACTIVITY_TYPE_LABEL（类型中文名）；本文件活动列表渲染处。
+ * ⛔ DO NOT REVERT：勿换回 TDesign Tooltip（无法每次 hover 自动隐藏）；勿把气泡塞进 truncate span 内部。
+ */
+function ActivityNameTip({
+  label,
+  active,
+  color,
+  children,
+}: {
+  label: string;
+  active: boolean;
+  color?: string;
+  children: ReactNode;
+}) {
+  const [visible, setVisible] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  const show = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    setVisible(true);
+    timerRef.current = window.setTimeout(() => setVisible(false), 500);
+  };
+  const hide = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    setVisible(false);
+  };
+  useEffect(
+    () => () => {
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+    },
+    []
+  );
+
+  return (
+    <span className="relative inline-flex min-w-0 max-w-full" onMouseEnter={show} onMouseLeave={hide}>
+      <span className={`text-[15px] truncate ${active ? "font-medium" : "text-[#333]"}`} style={active ? { color } : undefined}>
+        {children}
+      </span>
+      <span
+        className={`pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#333] px-2 py-1 text-xs text-white shadow-md transition-opacity duration-150 ${
+          visible ? "opacity-100" : "opacity-0"
+        }`}
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
 
 /** 将服务端返回的 messages 列表规范化为前端 Message 结构（页面内多处使用，统一收敛）
  * 多模态消息 content 是 JSON 字符串，需要解析出文本、图片、音频。 */
@@ -945,9 +1014,11 @@ export default function StudentChatPage() {
                                       <EditIcon size="14px" style={{ color }} />
                                     )}
                                   </span>
-                                  <span className={`text-[15px] truncate ${isActive ? "font-medium" : "text-[#333]"}`} style={isActive ? { color } : undefined}>
+                                  {/* 2026-10-15：活动名称 hover 显示类型名 0.5s 后自动消失（ActivityNameTip 自实现，
+                                      见常量区组件定义；不用 TDesign Tooltip——其 duration 仅首次挂载生效） */}
+                                  <ActivityNameTip label={ACTIVITY_TYPE_LABEL[act.type]} active={isActive} color={color}>
                                     {title}
-                                  </span>
+                                  </ActivityNameTip>
                                   {act.type === "conversation" && findConversations(act.pc.id).length > 0 && (
                                     <Tag theme="success" variant="light" size="small">
                                       已学

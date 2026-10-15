@@ -175,14 +175,32 @@ function extractText(node: ReactNode): string {
  * src/app/student/chat/page.tsx:951（学生聊天页调用点）。
  * ⛔ DO NOT REVERT：不要为了"就近取用组件体变量"把它挪回函数体内 —— 那正是闪烁 bug 的根源。
  */
+/**
+ * ⚠️ GOTCHA / 旧数据兼容（2026-10-15）：
+ * MERMAID_HINT 提示词（src/lib/image-library.ts，commit f46c1e9 引入）上线前生成的对话里，
+ * AI 画示意图未被要求用 ```mermaid 围栏，常见输出 ```graph / ```graph TD / ```flowchart TD /
+ * 空语言围栏 → react-markdown 给 code 的 className 是 language-graph / language-flowchart / 空，
+ * MarkdownPre 原逻辑只认 language-mermaid → 历史消息里这些示意图全被渲染成普通代码块（学生看到源码）。
+ * 本正则对「代码块内容首行是 mermaid 图表类型关键字」的代码做兼容，一律交给 MermaidBlock；
+ * 即便误判，MermaidBlock parse 失败也会回退成源码代码块（外观等价普通代码块），不会更糟。
+ * 现状约束：graph/flowchart 必须带方向缩写（TD/TB/LR/RL/BT/DU），防止把 `graph = {...}` 等
+ * 普通代码首行误判成 mermaid；其余类型关键字本身足够独特（普通代码不会以此开头）。
+ * 🔗 RELATED：MermaidBlock 与本函数（本文件）；MERMAID_HINT（src/lib/image-library.ts）。
+ * ⛔ DO NOT REVERT：勿删兼容分支——f46c1e9 之前的历史对话示意图全靠它兜底；
+ *   若将来做数据迁移（给旧消息补 ```mermaid 围栏）并确认旧数据已清空，才能移除。
+ */
+const MERMAID_FIRST_LINE_RE =
+  /^\s*(?:sequenceDiagram|mindmap|timeline|stateDiagram(?:-v2)?|classDiagram(?:-v2)?|erDiagram|gantt|journey|pie|gitGraph|quadrantChart|sankey-beta|xychart-beta|block-beta|C4Context|C4Container|C4Component|C4Deployment|zenuml|architecture-beta|packet-beta|kanban|excalidraw|requirementDiagram|(?:graph|flowchart)\s+(?:TD|TB|LR|RL|BT|DU))\b/;
+
 function MarkdownPre({ children }: { children?: ReactNode }) {
   // mermaid 代码块：整块交给 MermaidBlock 渲染（pre 内不能嵌 div，故在此拦截）
   const child = Array.isArray(children) ? children[0] : children;
-  if (
-    isValidElement<{ className?: string; children?: ReactNode }>(child) &&
-    /^language-mermaid/.test(String(child.props.className || ""))
-  ) {
-    return <MermaidBlock code={extractText(child.props.children)} />;
+  if (isValidElement<{ className?: string; children?: ReactNode }>(child)) {
+    const code = extractText(child.props.children);
+    // 标准 ```mermaid 围栏，或旧数据兼容：内容首行是 mermaid 图表类型（见 MERMAID_FIRST_LINE_RE 注释）
+    if (/^language-mermaid/.test(String(child.props.className || "")) || MERMAID_FIRST_LINE_RE.test(code)) {
+      return <MermaidBlock code={code} />;
+    }
   }
   return <pre>{children}</pre>;
 }
