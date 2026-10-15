@@ -12,6 +12,7 @@ import {
   type ConversationTemplateVars,
 } from "@/lib/prompts";
 import { cleanInsightContent } from "@/lib/insight-clean";
+import { extractMessageText } from "@/lib/message-content";
 
 // 查询本对话活动下各学生的个人分析报告（取每人最新版），拼接为间接数据文本。
 // 用于 PC 层「全班分析」时，将下级学生个人分析作为间接数据注入提示词。
@@ -281,7 +282,7 @@ export async function POST(
           const s = students.find((s) => s.id === uid);
           dialogData += `## ${s?.name || "未知"}\n`;
           convs.slice(0, 3).forEach((conv) => {
-            const msgs = conv.Message.map((m) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${m.content.substring(0, 150)}`).join("\n");
+            const msgs = conv.Message.map((m) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${extractMessageText(m.content).substring(0, 150)}`).join("\n");
             dialogData += `${msgs}\n\n`;
           });
           idx++;
@@ -297,7 +298,7 @@ export async function POST(
         ]);
         dialogData = `学生：${student?.name || "未知"}\n对话数：${conversations.length}\n\n`;
         dialogData += conversations.map((conv, i) => {
-          const msgs = conv.Message.map((m) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${m.content}`).join("\n");
+          const msgs = conv.Message.map((m) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${extractMessageText(m.content)}`).join("\n");
           return `【对话 ${i + 1}】\n${msgs}`;
         }).join("\n\n---\n\n");
       }

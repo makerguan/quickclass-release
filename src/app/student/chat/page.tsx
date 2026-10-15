@@ -1000,6 +1000,14 @@ export default function StudentChatPage() {
         }
       }
 
+      // 语音转写回显（2026-10-15）：纯语音消息发送时，后端已用全媒体模型把语音转成文字入库；
+      // 流式回复结束后重拉本对话详情，把本地占位符"(发送了语音)"替换为转写文字（与刷新等价）。
+      // 仅纯语音触发（文字+语音并存时，用户输入的文字即内容，无需回写）。
+      const detailConvId = newConvId || snapshotConvId;
+      if (audioUrl && text.trim() === "(发送了语音)" && detailConvId) {
+        fetchConversationDetail(detailConvId);
+      }
+
       // 流式回答生成完毕后，若朗读开关为开则自动朗读整段回答（讲完再读）
       if (getSpeechSettings().enabled && assistantContent.trim()) {
         // 安卓平板等设备可能没有任何语音引擎，静默失败会让学生以为"坏了"，给出可见提示

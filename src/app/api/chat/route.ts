@@ -3,6 +3,7 @@ import { streamText } from "ai";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
+import { transcribeAudioWithOmni } from "@/lib/asr";
 import { buildImageInjection, MERMAID_HINT } from "@/lib/image-library";
 import { aiQueue } from "@/lib/ai-queue";
 import { dbWrite } from "@/lib/db-queue";
@@ -85,7 +86,17 @@ export async function POST(req: NextRequest) {
     const { messages, conversationId, classId, presetConversationId } = await req.json();
     const lastMessage: ChatMessage = messages[messages.length - 1];
     const userId = String(payload.userId);
-    const textContent = extractTextContent(lastMessage.content);
+    let textContent = extractTextContent(lastMessage.content);
+
+    // 语音转写（2026-10-15 需求）：纯语音消息（文字为占位符"(发送了语音)"）用全媒体模型
+    // 转写为文字，存库后记录既能看文字又能播音频；分析链路只取文字。
+    // 转写与下方数据库读查询并行，失败降级保留占位符，不阻塞对话。
+    const transcribePromise =
+      typeof lastMessage.content !== "string" &&
+      lastMessage.content.some((p) => p.type === "audio_url") &&
+      textContent.trim() === "(发送了语音)"
+        ? transcribeAudioWithOmni(lastMessage.content)
+        : Promise.resolve(null);
 
     // 如果没有 conversationId，自动创建新的 Conversation（写操作走队列）
     let convId = conversationId;
@@ -117,15 +128,24 @@ export async function POST(req: NextRequest) {
       : Promise.resolve(null);
 
     // 等待读查询完成，再决定写操作
-    const [classData, materials, presetConv, currentUser] = await Promise.all([
+    const [classData, materials, presetConv, currentUser, transcribedText] = await Promise.all([
       classDataPromise,
       materialsPromise,
       presetConvPromise,
       currentUserPromise,
+      transcribePromise,
     ]);
 
     if (!classData) {
       return new Response("班级不存在", { status: 404 });
+    }
+
+    // 转写成功：用转写文字替换占位符（存库 + 发模型的文字都更新；音频 part 保留，AI 仍能"听"原声）
+    if (transcribedText && typeof lastMessage.content !== "string") {
+      lastMessage.content = lastMessage.content.map((p) =>
+        p.type === "text" ? { ...p, text: transcribedText } : p
+      );
+      textContent = transcribedText;
     }
 
     // 写操作 1：创建新对话（如需要）

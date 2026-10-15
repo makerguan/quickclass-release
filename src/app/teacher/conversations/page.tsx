@@ -21,6 +21,8 @@ interface Message {
   role: string;
   content: string;
   createdAt: string;
+  /** 语音消息的播放地址（2026-10-15 起返回，用于记录里播放语音） */
+  audioUrl?: string;
 }
 
 interface PresetConversationInfo {
@@ -758,7 +760,12 @@ export default function TeacherConversationsPage() {
                                     <Markdown>{msg.content}</Markdown>
                                   </div>
                                 ) : (
-                                  <div className="whitespace-pre-wrap break-all w-full">{msg.content}</div>
+                                  <div className="w-full">
+                                    <div className="whitespace-pre-wrap break-all w-full">{msg.content}</div>
+                                    {msg.audioUrl && (
+                                      <audio src={msg.audioUrl} controls className="mt-2 max-w-full h-9" />
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             </div>
