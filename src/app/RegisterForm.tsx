@@ -181,27 +181,21 @@ export default function RegisterForm() {
           <div className="space-y-2.5">
             <div className="grid grid-cols-2 gap-2.5">
               <Input placeholder="* 手机号" size="medium" className={inputCls}
-                inputRef={phoneRef}
                 onChange={(v) => handleChange("phone", v as string)} />
               <Input placeholder="* 邮箱" size="medium" className={inputCls}
-                inputRef={emailRef}
                 onChange={(v) => handleChange("email", v as string)} />
             </div>
             <div className="grid grid-cols-2 gap-2.5">
               <Input placeholder="* 姓名" size="medium" className={inputCls}
-                inputRef={nameRef}
                 onChange={(v) => handleChange("name", v as string)} />
               <Input placeholder="* 学校/机构" size="medium" className={inputCls}
-                inputRef={schoolRef}
                 onChange={(v) => handleChange("school", v as string)} />
             </div>
 
             <div className="grid grid-cols-2 gap-2.5">
               <Input placeholder="* 密码" type="password" size="medium" className={inputCls}
-                inputRef={passwordRef}
                 onChange={(v) => handleChange("password", v as string)} />
               <Input placeholder="* 确认密码" type="password" size="medium" className={inputCls}
-                inputRef={confirmPasswordRef}
                 onChange={(v) => handleChange("confirmPassword", v as string)} />
             </div>
 

@@ -230,7 +230,7 @@ export async function GET(
             id: sp.id,
             title: sp.title,
             analysisPrompt: sp.analysisPrompt,
-            presetConversations: (sp as any).PresetConversation.map((pc: { id: string }) => {
+            presetConversations: (sp as any).PresetConversation.map((pc: { id: string; title: string; analysisPrompt?: string | null }) => {
               const stat = presetConvStats.get(pc.id) || { completedCount: 0, totalMessages: 0 };
               return {
                 id: pc.id,
@@ -709,6 +709,7 @@ async function generateTaskClassInsight(
     subProjects: Array<{
       id: string; title: string; objectives: string; requirements: string; analysisPrompt?: string | null;
       presetConversations: Array<{ id: string; title: string; description?: string | null }>;
+      explorationActivities: Array<{ id: string }>;
     }>;
   },
   classId: string,
@@ -1060,6 +1061,7 @@ async function generateTaskClassInsightWithTemplate(
     subProjects: Array<{
       id: string; title: string; objectives: string; requirements: string;
       presetConversations: Array<{ id: string; title: string }>;
+      explorationActivities: Array<{ id: string }>;
     }>;
   },
   classId: string,
@@ -1370,8 +1372,9 @@ async function checkTaskMissingItems(
   if (!task) return { hasMissing: false, missingItems: { PresetConversation: [] } };
 
   // 获取所有对话活动（扁平化）
+  // 2026-10-15 修复：Prisma include 返回字段名为 PresetConversation（单数模型名），原 presetConversations 运行时恒为 undefined 会 500
   const allPCs = task.subProjects.flatMap((sp) =>
-    sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title }))
+    sp.PresetConversation.map((pc) => ({ id: pc.id, title: pc.title }))
   );
   const presetIds = allPCs.map((pc) => pc.id);
 
@@ -1455,7 +1458,6 @@ function buildDialogContents(
     userId: string;
     Message: Array<{ role: string; content: string }>;
     updatedAt: Date;
-    user: { name: string } | null;
     presetConversationId?: string | null;
   }>,
   students: Array<{ id: string; name: string }>,

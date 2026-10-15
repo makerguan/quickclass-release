@@ -151,7 +151,7 @@ export async function POST(req: NextRequest) {
           knowledgeBaseIds: kbIds.length > 0 ? JSON.stringify(kbIds) : null,
           updatedAt: new Date(),
           subProjects: {
-            create: [subProjectData],
+            create: [subProjectData as any],
           },
         },
         include: {

@@ -265,7 +265,7 @@ export default function QuizStatsPage() {
                     <XAxis dataKey="label" tick={{ fontSize: 12 }} />
                     <YAxis tick={{ fontSize: 12 }} />
                     <Tooltip
-                      formatter={(value: number) => [`${value}人`, "人数"] as any}
+                      formatter={(value: any) => [`${value}人`, "人数"] as any}
                       contentStyle={{ borderRadius: 8, border: "1px solid #e0e0e0" }}
                     />
                     <Bar dataKey="count" fill="#0052D9" radius={[4, 4, 0, 0]} />
@@ -322,7 +322,7 @@ export default function QuizStatsPage() {
                     <XAxis type="number" domain={[0, 100]} tick={{ fontSize: 11 }} />
                     <YAxis type="category" dataKey="index" tick={{ fontSize: 11 }} width={55} />
                     <Tooltip
-                      formatter={(value: number, name: string, props: any) => [
+                      formatter={(value: any, name: any, props: any) => [
                         `${value}%（${props.payload.difficulty}）`,
                         "正确率",
                       ] as [string, string]}
@@ -331,7 +331,7 @@ export default function QuizStatsPage() {
                     <Bar
                       dataKey="correctRate"
                       radius={[0, 4, 4, 0]}
-                      cell={(props: any) => {
+                      {...({ cell: ((props: any) => {
                         const rate = props.payload.correctRate;
                         let fill = "#0052D9";
                         if (rate < 40) fill = "#E34D41";
@@ -339,7 +339,7 @@ export default function QuizStatsPage() {
                         else if (rate < 80) fill = "#FFC72C";
                         else fill = "#00A870";
                         return <Cell fill={fill} />;
-                      }}
+                      }) } as any)}
                     />
                   </BarChart>
                 </ResponsiveContainer>

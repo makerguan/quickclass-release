@@ -496,7 +496,7 @@ export default function ProjectSubmitPanel({
               value={upDesc}
               onChange={(v) => setUpDesc(v as string)}
               placeholder="简单描述你的项目"
-              textarea
+              // tdesign Input 不支持 textarea prop（原本即未生效）；如需多行请改用 Textarea 组件
             />
           </div>
           <div>

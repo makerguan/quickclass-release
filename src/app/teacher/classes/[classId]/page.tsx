@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useParams } from "next/navigation";
+import type { PrimaryTableCol } from "tdesign-react";
 import {
   Button,
   Card,
@@ -234,7 +235,7 @@ export default function ClassDetailPage() {
         </div>
         <Table
           data={classData?.students || []}
-          columns={studentColumns}
+          columns={studentColumns as PrimaryTableCol<StudentInfo>[]}
           rowKey="id"
           selectedRowKeys={selectedRowKeys}
           onSelectChange={(keys: (string | number)[]) => setSelectedRowKeys(keys)}

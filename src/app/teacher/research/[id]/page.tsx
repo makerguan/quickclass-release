@@ -79,7 +79,7 @@ interface ResearchProject {
   dataSnapshot: any;
 }
 
-export default function ProjectDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default function ProjectDetailPage({ params }: { params: { id: string } }) {
   const router = useRouter();
   const [project, setProject] = useState<ResearchProject | null>(null);
   const [loading, setLoading] = useState(true);
