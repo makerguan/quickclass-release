@@ -206,7 +206,7 @@ export default function KnowledgeBasePage() {
     ? list.filter(
         (kb) =>
           kb.name.toLowerCase().includes(search.toLowerCase()) ||
-          (kb.fileName && kb.fileName.toLowerCase().includes(search.toLowerCase()))
+          (kb.filename && kb.filename.toLowerCase().includes(search.toLowerCase()))
       )
     : list;
 
