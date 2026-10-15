@@ -32,6 +32,7 @@ import {
   MIN_VOICE_RATE,
   getSpeechSettings,
 } from "./speech-settings";
+import { replacePinyinWithHanzi } from "./pinyin-to-hanzi";
 
 // ---------- 语音默认语速（倍速） ----------
 export { DEFAULT_VOICE_RATE };
@@ -374,6 +375,10 @@ export function textToSpeechText(markdown: string): string {
     latexToSpeech(block ?? inline ?? "")
   );
   s = replaceUnicodeMath(s);
+  // 语文课注音（"数读 shǔ"）：浏览器内置朗读会把拼音罗马字按字母逐个念（s-h-u），
+  // 这里把带声调的拼音音节转成读音对应的汉字（shǔ→鼠），任何 TTS 按汉字发音必读对。
+  // 服务端 Edge 合成本就能拼读拼音，替换成汉字读音一致，无副作用（见 pinyin-to-hanzi.ts）。
+  s = replacePinyinWithHanzi(s);
   s = s.replace(/\s+/g, " ").trim();
   return s;
 }
