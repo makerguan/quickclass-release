@@ -36,6 +36,9 @@ interface Message {
   images?: MessageImage[];
   audioUrl?: string;
   createdAt?: string;
+  // 本次回复所用线路（后端响应头 X-Model-Route）：text=图文模型（指示点绿）、omni=全媒体模型（指示点黑）。
+  // 历史消息无此字段（未存库），渲染时无指示点；仅新生成的回复显示。
+  modelRoute?: "text" | "omni";
 }
 
 interface PresetConversation {
@@ -363,8 +366,14 @@ export default function StudentChatPage() {
   const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-  const audioInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  // 话筒页内录音（2026-10-15 需求：点击直接调用麦克风，再点停止，录完作为语音附件）
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSec, setRecordingSec] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activePresetRef = useRef<string | null>(null);
   const isSwitchingRef = useRef(false); // 防止 switch 函数重入
   const latestDetailConvRef = useRef<string | null>(null); // 最新一次详情请求的对话 ID（竞态保护：快速切换后丢弃旧响应）
@@ -382,6 +391,18 @@ export default function StudentChatPage() {
 
   useEffect(() => {
     fetchData();
+  }, []);
+
+  // 组件卸载时兜底停止录音并释放麦克风
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      recordingStreamRef.current?.getTracks().forEach((t) => t.stop());
+      recordingStreamRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -625,7 +646,7 @@ export default function StudentChatPage() {
   };
 
   // 图片处理
-  const handleImageSelect = (files: FileList | null) => {
+  const handleImageSelect = (files: FileList | File[] | null) => {
     if (!files) return;
     Array.from(files).forEach((file) => {
       if (!file.type.startsWith("image/")) {
@@ -645,8 +666,66 @@ export default function StudentChatPage() {
     });
   };
 
-  // 音频附件处理：调用系统录音机，录完后以 base64 data URL 形式暂存
-  const handleAudioSelect = (files: FileList | null) => {
+  // ⛔ DO NOT REVERT: 音频统一转码为 WAV。AI SDK（@ai-sdk/openai）的 file part 音频
+  //   只接受 audio/wav、audio/mp3、audio/mpeg，m4a/ogg/webm 会抛 UnsupportedFunctionalityError；
+  //   浏览器 Web Audio 可解码任意格式，故上传前统一转 16kHz 单声道 WAV，保证全格式可用。
+  //   后端 /api/chat 收到 data:audio/wav;base64, 后转 file part 直通（见 route.ts mediaTypeToExt）。
+  const transcodeAudioToWav = async (file: File): Promise<string> => {
+    const arrayBuffer = await file.arrayBuffer();
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new AudioCtx();
+    try {
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      const targetRate = 16000;
+      const length = Math.ceil(audioBuffer.duration * targetRate);
+      const offlineCtx = new OfflineAudioContext(1, length, targetRate);
+      const source = offlineCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(offlineCtx.destination);
+      source.start(0);
+      const rendered = await offlineCtx.startRendering();
+      const pcm = rendered.getChannelData(0);
+
+      // 编码 16bit PCM WAV
+      const buffer = new ArrayBuffer(44 + pcm.length * 2);
+      const view = new DataView(buffer);
+      const writeStr = (offset: number, s: string) => {
+        for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+      };
+      writeStr(0, "RIFF");
+      view.setUint32(4, 36 + pcm.length * 2, true);
+      writeStr(8, "WAVE");
+      writeStr(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, 1, true); // 单声道
+      view.setUint32(24, targetRate, true);
+      view.setUint32(28, targetRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeStr(36, "data");
+      view.setUint32(40, pcm.length * 2, true);
+      for (let i = 0; i < pcm.length; i++) {
+        const s = Math.max(-1, Math.min(1, pcm[i]));
+        view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      }
+
+      const wavBlob = new Blob([buffer], { type: "audio/wav" });
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(wavBlob);
+      });
+    } finally {
+      void ctx.close();
+    }
+  };
+
+  // 音频附件处理：选择录音/音频文件，统一转码为 16kHz 单声道 WAV 后暂存
+  const handleAudioSelect = async (files: FileList | File[] | null) => {
     if (!files || files.length === 0) return;
     const file = files[0];
     if (!file.type.startsWith("audio/")) {
@@ -657,13 +736,96 @@ export default function StudentChatPage() {
       MessagePlugin.error("音频不能超过 20MB");
       return;
     }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const url = e.target?.result as string;
+    try {
+      const url = await transcodeAudioToWav(file);
       setPendingAudio(url);
-    };
-    reader.readAsDataURL(file);
+    } catch {
+      MessagePlugin.error("音频解析失败，请换用常见格式（m4a/mp3/wav）");
+    }
+  };
+
+  // ⛔ 添加文件按钮（2026-10-15 需求）：一个入口同时支持图片（jpg/png/jpeg）与音频（m4a/mp3/wav），按类型分流处理
+  const handleAttachmentSelect = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const images: File[] = [];
+    const audios: File[] = [];
+    Array.from(files).forEach((file) => {
+      if (file.type.startsWith("image/")) images.push(file);
+      else if (file.type.startsWith("audio/")) audios.push(file);
+      else MessagePlugin.error(`不支持的文件：${file.name}（仅支持图片和音频）`);
+    });
+    if (images.length > 0) handleImageSelect(images);
+    if (audios.length > 0) handleAudioSelect(audios);
+  };
+
+  // ⛔ 话筒页内录音（2026-10-15 需求：点击直接调用麦克风开始录音，再点停止，录完作为语音附件）
+  // 录音统一走 transcodeAudioToWav 转 16kHz 单声道 WAV，与"选择音频文件"共用同一条发送链路
+  const MAX_RECORD_SEC = 60;
+  const clearRecordingTimer = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  };
+  const formatRecordSec = (s: number) =>
+    `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+  const toggleRecording = async () => {
+    // 录音中：点击停止
+    if (isRecording) {
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+      return;
+    }
+    if (!activePresetId) return;
+    if (typeof MediaRecorder === "undefined") {
+      MessagePlugin.error("当前浏览器不支持录音，请用 Chrome / Edge");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recordingChunksRef.current = [];
+      mediaRecorderRef.current = recorder;
+      recordingStreamRef.current = stream;
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) recordingChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        clearRecordingTimer();
+        setIsRecording(false);
+        setRecordingSec(0);
+        recordingStreamRef.current?.getTracks().forEach((t) => t.stop());
+        recordingStreamRef.current = null;
+        const blob = new Blob(recordingChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
+        if (blob.size === 0) return;
+        try {
+          const file = new File([blob], `recording-${Date.now()}.webm`, { type: blob.type });
+          const url = await transcodeAudioToWav(file);
+          setPendingAudio(url);
+        } catch {
+          MessagePlugin.error("录音解析失败，请重试");
+        }
+      };
+      recorder.start();
+      setIsRecording(true);
+      setRecordingSec(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSec((s) => {
+          const next = s + 1;
+          if (next >= MAX_RECORD_SEC) {
+            // 到时自动停止录音
+            const rec = mediaRecorderRef.current;
+            if (rec && rec.state !== "inactive") rec.stop();
+          }
+          return next;
+        });
+      }, 1000);
+    } catch {
+      MessagePlugin.error("无法访问麦克风，请检查浏览器权限设置");
+    }
   };
 
   const removePendingAudio = () => {
@@ -757,6 +919,9 @@ export default function StudentChatPage() {
       }
 
       const newConvId = res.headers.get("X-Conversation-Id");
+      // 本次回复所用线路（后端 X-Model-Route 响应头）：text=图文模型、omni=全媒体模型，
+      // 渲染时在回复首个字符前显示指示点（绿=图文、黑=全媒体）
+      const modelRoute = (res.headers.get("X-Model-Route") || "text") as "text" | "omni";
       // 新建对话时立即更新 activeConvId 并追加到列表（避免被后续请求覆盖）
       if (newConvId) {
         setActiveConvId(newConvId);
@@ -815,13 +980,20 @@ export default function StudentChatPage() {
           }
 
           if (!assistantAdded) {
-            // 收到第一个 chunk 时才添加 assistant 气泡（带初始内容）
+            // 收到第一个 chunk 时才添加 assistant 气泡（带初始内容与线路指示点）
             assistantAdded = true;
-            setMessages((prev) => [...prev, { role: "assistant", content: assistantContent }]);
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: assistantContent, modelRoute },
+            ]);
           } else {
             setMessages((prev) => {
               const updated = [...prev];
-              updated[updated.length - 1] = { role: "assistant", content: assistantContent };
+              updated[updated.length - 1] = {
+                role: "assistant",
+                content: assistantContent,
+                modelRoute,
+              };
               return updated;
             });
           }
@@ -1149,22 +1321,46 @@ export default function StudentChatPage() {
                         ))}
                       </div>
                     )}
-                    {msg.audioUrl && (
-                      <div className="mb-2">
-                        <audio src={msg.audioUrl} controls className="max-w-full" />
-                      </div>
-                    )}
                     {msg.role === "assistant" ? (
-                      <div className="prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_pre]:bg-gray-800 [&_pre]:text-gray-100 [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_pre_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-gray-400 [&_blockquote]:pl-3 [&_blockquote]:italic [&_table]:text-xs [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1">
-                        <Markdown>{msg.content}</Markdown>
-                        {msg.content.trim() && (
-                          <div className="mt-2 flex items-center justify-end">
-                            <SpeakButton owner={`msg-${index}`} text={msg.content} />
+                      <div className="relative">
+                        {/* 点 + 喇叭绝对定位浮在正文左上角；正文首行 text-indent 缩进 38px 避开图标（点 8 + gap 6 + 喇叭 24），
+                            第二行起回到行首顶到头，无缩进（2026-10-15 三版迭代后定稿） */}
+                        {(msg.modelRoute || msg.content.trim()) && (
+                          <div className="absolute left-0 top-0 flex h-[22px] items-center gap-1.5">
+                            {msg.modelRoute && (
+                              <span
+                                title={msg.modelRoute === "omni" ? "全媒体模型" : "图文模型"}
+                                className={`h-2 w-2 shrink-0 rounded-full ${
+                                  msg.modelRoute === "omni" ? "bg-black" : "bg-green-500"
+                                }`}
+                              />
+                            )}
+                            {msg.content.trim() && (
+                              <SpeakButton
+                                owner={`msg-${index}`}
+                                text={msg.content}
+                                className="shrink-0"
+                              />
+                            )}
                           </div>
                         )}
+                        <div
+                          className={`prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_pre]:bg-gray-800 [&_pre]:text-gray-100 [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_pre_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-gray-400 [&_blockquote]:pl-3 [&_blockquote]:italic [&_table]:text-xs [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1] ${
+                            msg.modelRoute || msg.content.trim()
+                              ? "[&>*:first-child]:indent-[38px]"
+                              : ""
+                          }`}
+                        >
+                          <Markdown>{msg.content}</Markdown>
+                        </div>
                       </div>
                     ) : (
                       <div className="whitespace-pre-wrap">{msg.content}</div>
+                    )}
+                    {msg.audioUrl && (
+                      <div className="mt-2">
+                        <audio src={msg.audioUrl} controls className="max-w-full" />
+                      </div>
                     )}
                   </div>
                 </div>
@@ -1209,7 +1405,26 @@ export default function StudentChatPage() {
             )}
 
             <div className="border-t border-gray-200 p-4">
-              <div className="flex gap-2 items-end">
+              <div className="flex gap-2 items-center">
+                {/* 1 话筒：点击直接调用麦克风开始录音，再点停止，录完作为语音附件 */}
+                <Button
+                  theme={isRecording ? "danger" : "default"}
+                  variant={isRecording ? "base" : "outline"}
+                  size="large"
+                  icon={<MicrophoneIcon />}
+                  onClick={toggleRecording}
+                  title={isRecording ? "停止录音" : "语音输入（点击开始录音）"}
+                  disabled={!activePresetId}
+                />
+                {isRecording && (
+                  <span
+                    className="text-red-500 text-sm font-medium whitespace-nowrap"
+                    title={`最长录音 ${MAX_RECORD_SEC} 秒`}
+                  >
+                    ● {formatRecordSec(recordingSec)}
+                  </span>
+                )}
+                {/* 2 图片：直接调用相机拍照 */}
                 <Button
                   theme="default"
                   variant="outline"
@@ -1219,22 +1434,14 @@ export default function StudentChatPage() {
                   title="拍照"
                   disabled={!activePresetId}
                 />
+                {/* 3 添加文件：图片 jpg/png/jpeg、音频 m4a/mp3/wav 等 */}
                 <Button
                   theme="default"
                   variant="outline"
                   size="large"
                   icon={<AddIcon />}
                   onClick={() => fileInputRef.current?.click()}
-                  title="选择图片"
-                  disabled={!activePresetId}
-                />
-                <Button
-                  theme="default"
-                  variant="outline"
-                  size="large"
-                  icon={<MicrophoneIcon />}
-                  onClick={() => audioInputRef.current?.click()}
-                  title="语音输入"
+                  title="添加文件"
                   disabled={!activePresetId}
                 />
                 <Input
@@ -1267,18 +1474,10 @@ export default function StudentChatPage() {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,audio/*"
                 multiple
                 className="hidden"
-                onChange={(e) => { handleImageSelect(e.target.files); e.target.value = ""; }}
-              />
-              <input
-                ref={audioInputRef}
-                type="file"
-                accept="audio/*"
-                capture
-                className="hidden"
-                onChange={(e) => { handleAudioSelect(e.target.files); e.target.value = ""; }}
+                onChange={(e) => { handleAttachmentSelect(e.target.files); e.target.value = ""; }}
               />
             </div>
           </>

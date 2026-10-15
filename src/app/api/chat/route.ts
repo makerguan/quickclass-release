@@ -53,6 +53,17 @@ function hasAudioContent(content: MessageContent): boolean {
   return content.some((part) => part.type === "audio_url");
 }
 
+/** mediaType（如 audio/wav）→ 文件扩展名（wav/mp3/m4a/ogg/webm，未知回退 audio） */
+function mediaTypeToExt(mediaType: string): string {
+  const m = mediaType.toLowerCase();
+  if (m.includes("wav")) return "wav";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("m4a") || m.includes("mp4")) return "m4a";
+  if (m.includes("ogg")) return "ogg";
+  if (m.includes("webm")) return "webm";
+  return "audio";
+}
+
 // 判断消息是否为多模态消息（图片 / 音频）
 function isMultimodalContent(content: MessageContent): boolean {
   if (typeof content === "string") return false;
@@ -269,10 +280,15 @@ export async function POST(req: NextRequest) {
     systemPrompt += `\n\n${MATH_OUTPUT_RULES}`;
 
     // 双线路路由：含语音/音频的消息走全媒体线路（omni），否则走图文线路（text）
+    // ⚠️ GOTCHA: 线路只看最新一条消息。第二轮纯文字会切到 text 线路，但历史里第一条
+    //   语音消息仍带 file(音频) part —— provider 会转成 input_audio 发给图文模型，
+    //   实测报 "Failed to deserialize ... unknown variant input_audio"（2026-10-15）。
+    //   因此 text 线路必须在构建消息时剥离历史音频 part（见下方 filter，图片保留）。
+    const isOmniRoute = hasAudioContent(lastMessage.content);
     // 切备事件上报：主失败切备用成功后，向流内注入「正在切换模型」标记
     // （streamController 在流的 start() 中才赋值，onFailover 晚于此时触发，闭包可安全引用）
     const { chatModel } = await createDashScopeClient(
-      hasAudioContent(lastMessage.content) ? "omni" : "text",
+      isOmniRoute ? "omni" : "text",
       {
         onFailover: () => {
           if (!switchNoticeSent && streamController) {
@@ -284,12 +300,18 @@ export async function POST(req: NextRequest) {
     );
 
     // 构建消息格式，支持多模态
+    // ⛔ DO NOT REVERT: text 线路（isOmniRoute=false）剥离历史 audio part。
+    //   历史教训：2026-10-15 语音后第二轮输入文字，带音频的历史消息被原样发给
+    //   图文模型（DeepSeek），其不认识 input_audio，请求整体失败。剥离后纯文字
+    //   轮次正常；语音轮次（omni）仍完整保留音频上下文。
     const formattedMessages = messages.map((m: ChatMessage) => {
       if (typeof m.content === "string") {
         return { role: m.role as "user" | "assistant", content: m.content };
       }
       // 多模态消息：将 image_url / audio_url 转为 ai v6 SDK 的多模态格式
-      const parts = m.content.map((part) => {
+      const parts = m.content
+        .filter((part) => isOmniRoute || part.type !== "audio_url")
+        .map((part) => {
         if (part.type === "image_url") {
           const url = part.image_url.url;
           // 如果是 Base64 data URL，提取编码数据
@@ -314,20 +336,22 @@ export async function POST(req: NextRequest) {
           const url = part.audio_url.url;
           // 如果是 Base64 data URL，提取编码数据
           if (url.startsWith("data:")) {
-            const match = url.match(/^data:(audio\/\w+);base64,(.+)$/);
+            const match = url.match(/^data:(audio\/[\w.+-]+);base64,(.+)$/);
             if (match) {
               return {
-                type: "audio" as const,
-                audio: match[2],
+                type: "file" as const,
+                data: match[2], // 纯 base64 字符串
                 mediaType: match[1],
+                filename: `audio-${Date.now()}.${mediaTypeToExt(match[1])}`,
               };
             }
           }
           // 如果是 URL 音频
           return {
-            type: "audio" as const,
-            audio: url,
+            type: "file" as const,
+            data: url,
             mediaType: "audio/mpeg",
+            filename: "audio.mp3",
           };
         }
         return { type: "text" as const, text: part.text };
@@ -452,6 +476,9 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "X-Conversation-Id": finalConvId,
+        // 本次回复所用线路：前端据此在学生端显示「图文/全媒体模型」指示点（绿=图文 text、黑=全媒体 omni）。
+        // 用响应头而非流内标记：前端 fetch 后读一次即可，避免流解析跨 chunk 剥离的复杂度。
+        "X-Model-Route": isOmniRoute ? "omni" : "text",
       },
     });
   } catch (error) {
