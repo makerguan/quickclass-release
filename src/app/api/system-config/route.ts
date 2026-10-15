@@ -57,6 +57,15 @@ export async function PUT(req: NextRequest) {
       aiBaseUrl,
       aiApiKey,
       aiModel,
+      aiTextBackupBaseUrl,
+      aiTextBackupApiKey,
+      aiTextBackupModel,
+      aiOmniBaseUrl,
+      aiOmniApiKey,
+      aiOmniModel,
+      aiOmniBackupBaseUrl,
+      aiOmniBackupApiKey,
+      aiOmniBackupModel,
       aiMaxConcurrent,
       reasoningEnabled,
       studentWordLimit,
@@ -74,6 +83,16 @@ export async function PUT(req: NextRequest) {
     if (aiBaseUrl !== undefined) updateData.aiBaseUrl = aiBaseUrl;
     if (aiApiKey !== undefined) updateData.aiApiKey = aiApiKey;
     if (aiModel !== undefined) updateData.aiModel = aiModel;
+    // 双线路主备字段（可空：空字符串/null 用于清空备用或全媒体配置）
+    if (aiTextBackupBaseUrl !== undefined) updateData.aiTextBackupBaseUrl = aiTextBackupBaseUrl || null;
+    if (aiTextBackupApiKey !== undefined) updateData.aiTextBackupApiKey = aiTextBackupApiKey || null;
+    if (aiTextBackupModel !== undefined) updateData.aiTextBackupModel = aiTextBackupModel || null;
+    if (aiOmniBaseUrl !== undefined) updateData.aiOmniBaseUrl = aiOmniBaseUrl || null;
+    if (aiOmniApiKey !== undefined) updateData.aiOmniApiKey = aiOmniApiKey || null;
+    if (aiOmniModel !== undefined) updateData.aiOmniModel = aiOmniModel || null;
+    if (aiOmniBackupBaseUrl !== undefined) updateData.aiOmniBackupBaseUrl = aiOmniBackupBaseUrl || null;
+    if (aiOmniBackupApiKey !== undefined) updateData.aiOmniBackupApiKey = aiOmniBackupApiKey || null;
+    if (aiOmniBackupModel !== undefined) updateData.aiOmniBackupModel = aiOmniBackupModel || null;
     if (aiMaxConcurrent !== undefined && aiMaxConcurrent !== null) updateData.aiMaxConcurrent = aiMaxConcurrent;
     if (reasoningEnabled !== undefined) updateData.reasoningEnabled = reasoningEnabled;
     if (studentWordLimit !== undefined && studentWordLimit !== null) updateData.studentWordLimit = studentWordLimit;

@@ -15,6 +15,10 @@ import {
 } from "@/lib/prompts";
 import { MATH_OUTPUT_RULES } from "@/lib/math-format";
 
+// 流内「已切换模型」标记：主模型失败切备用成功后，作为流的首个数据块发给前端；
+// 前端（src/app/student/chat/page.tsx）识别后显示「正在切换模型」提示，并从正文中剥离（不入库）。
+const SWITCH_PREFIX = "\u0000SWITCH\u0000";
+
 // 多模态消息内容类型
 type MessageContentPart =
   | { type: "text"; text: string }
@@ -264,7 +268,20 @@ export async function POST(req: NextRequest) {
     // 否则模型可能输出 \(...\) / \[...\]，前端会当作普通文本，学生看到 LaTeX 源码
     systemPrompt += `\n\n${MATH_OUTPUT_RULES}`;
 
-    const { chatModel } = await createDashScopeClient();
+    // 双线路路由：含语音/音频的消息走全媒体线路（omni），否则走图文线路（text）
+    // 切备事件上报：主失败切备用成功后，向流内注入「正在切换模型」标记
+    // （streamController 在流的 start() 中才赋值，onFailover 晚于此时触发，闭包可安全引用）
+    const { chatModel } = await createDashScopeClient(
+      hasAudioContent(lastMessage.content) ? "omni" : "text",
+      {
+        onFailover: () => {
+          if (!switchNoticeSent && streamController) {
+            switchNoticeSent = true;
+            streamController.enqueue(encoder.encode(SWITCH_PREFIX));
+          }
+        },
+      }
+    );
 
     // 构建消息格式，支持多模态
     const formattedMessages = messages.map((m: ChatMessage) => {
@@ -320,9 +337,13 @@ export async function POST(req: NextRequest) {
 
     const finalConvId = convId;
     const encoder = new TextEncoder();
+    // 切备事件注入「正在切换模型」标记所需：控制器在 start() 中赋值，onFailover 回调晚于此时触发
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let switchNoticeSent = false;
 
     const stream = new ReadableStream({
       async start(controller) {
+        streamController = controller;
         let fullContent = "";
         let chunkCount = 0;
         let streamError: Error | null = null;

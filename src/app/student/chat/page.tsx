@@ -125,6 +125,9 @@ interface Conversation {
   messages: { id: string; role: string; content: string; createdAt: string }[];
 }
 
+// 与服务端 /api/chat 约定的「已切换模型」流内标记：识别后显示切换提示并剥离（不入正文）
+const SWITCH_PREFIX = "\u0000SWITCH\u0000";
+
 /** 将服务端返回的 messages 列表规范化为前端 Message 结构（页面内多处使用，统一收敛）
  * 多模态消息 content 是 JSON 字符串，需要解析出文本、图片、音频。 */
 function normalizeMessages(
@@ -265,6 +268,8 @@ export default function StudentChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
+  // 是否显示「正在切换模型」提示（服务端流内标记触发，正文开始后随 loading 一起消失）
+  const [switchNotice, setSwitchNotice] = useState(false);
 
   // 作业状态
   const [activeType, setActiveType] = useState<"chat" | "quiz" | "exploration" | "project" | null>(null);
@@ -604,6 +609,7 @@ export default function StudentChatPage() {
   const sendMessage = async (text: string, images?: MessageImage[], audioUrl?: string) => {
     if (!text.trim() || loading) return;
     stopSpeaking(); // 发送新消息，停止上一条朗读
+    setSwitchNotice(false); // 新一轮对话重置切换提示
     // 使用 ref 而非 state 检查当前活动，因为 state 在 setTimeout 中可能还是旧值
     const currentPresetId = activePresetRef.current;
     if (!currentPresetId) return;
@@ -707,6 +713,7 @@ export default function StudentChatPage() {
       const decoder = new TextDecoder();
       let assistantContent = "";
       let assistantAdded = false; // 标记是否已添加 assistant 气泡
+      let pendingPrefix = ""; // 跨 chunk 缓冲「已切换模型」标记
 
       if (reader) {
         while (true) {
@@ -715,7 +722,29 @@ export default function StudentChatPage() {
           // 流式读取过程中检查是否被切换
           if (activePresetRef.current !== currentPresetId) return;
           const chunk = decoder.decode(value, { stream: true });
-          assistantContent += chunk;
+
+          // 剥离「已切换模型」标记：标记可能跨 chunk 分割（服务端单独 enqueue，网络分帧不保证一次取全）
+          if (!assistantAdded) {
+            const combined = pendingPrefix + chunk;
+            const swIdx = combined.indexOf(SWITCH_PREFIX);
+            if (swIdx === 0) {
+              setSwitchNotice(true); // 标记在前：剥离后正文为空，切换提示由 loading 区显示
+              pendingPrefix = "";
+              assistantContent = combined.slice(SWITCH_PREFIX.length);
+            } else if (swIdx > 0) {
+              setSwitchNotice(true);
+              pendingPrefix = "";
+              assistantContent = combined.slice(0, swIdx) + combined.slice(swIdx + SWITCH_PREFIX.length);
+            } else if (combined.length > 0 && SWITCH_PREFIX.startsWith(combined)) {
+              pendingPrefix = combined; // 收到的仍是标记的一部分，继续等下一块
+            } else {
+              pendingPrefix = "";
+              assistantContent = combined; // 无标记：全部当正文
+            }
+          } else {
+            assistantContent += chunk;
+          }
+
           if (!assistantAdded) {
             // 收到第一个 chunk 时才添加 assistant 气泡（带初始内容）
             assistantAdded = true;
@@ -1072,7 +1101,7 @@ export default function StudentChatPage() {
               {loading && (messages.length === 0 || messages[messages.length - 1]?.role !== "assistant" || !messages[messages.length - 1]?.content) && (
                 <div className="flex justify-start">
                   <div className="bg-gray-100 rounded-2xl px-4 py-3 text-gray-500">
-                    AI 正在思考中...
+                    {switchNotice ? "正在切换模型，请稍候..." : "AI 正在思考中..."}
                   </div>
                 </div>
               )}

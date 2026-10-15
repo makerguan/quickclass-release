@@ -16,6 +16,16 @@ interface SystemConfig {
   aiBaseUrl: string;
   aiApiKey: string;
   aiModel: string;
+  // 双线路主备：图文线路备用 / 全媒体线路主备
+  aiTextBackupBaseUrl?: string | null;
+  aiTextBackupApiKey?: string | null;
+  aiTextBackupModel?: string | null;
+  aiOmniBaseUrl?: string | null;
+  aiOmniApiKey?: string | null;
+  aiOmniModel?: string | null;
+  aiOmniBackupBaseUrl?: string | null;
+  aiOmniBackupApiKey?: string | null;
+  aiOmniBackupModel?: string | null;
   aiMaxConcurrent?: number;
   reasoningEnabled?: boolean;
   updatedAt?: string;
@@ -37,6 +47,17 @@ interface UserProfile {
   school?: string | null;
 }
 
+/** 一键测试全部线路的结果条目 */
+interface LineTestResult {
+  key: string;
+  label: string;
+  model: string;
+  status: "pending" | "ok" | "fail" | "skipped";
+  durationMs?: number;
+  thinkingEnabled?: boolean;
+  error?: string;
+}
+
 export default function TeacherSettingsPage() {
   const [config, setConfig] = useState<SystemConfig>({
     aiBaseUrl: "",
@@ -46,8 +67,12 @@ export default function TeacherSettingsPage() {
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
+  const [testingAll, setTestingAll] = useState(false);
+  const [testResults, setTestResults] = useState<LineTestResult[] | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showTextBackupKey, setShowTextBackupKey] = useState(false);
+  const [showOmniKey, setShowOmniKey] = useState(false);
+  const [showOmniBackupKey, setShowOmniBackupKey] = useState(false);
   const [showBackupDialog, setShowBackupDialog] = useState(false);
   const [backupFileName, setBackupFileName] = useState("");
   const [versionInfo, setVersionInfo] = useState<{ version: string; buildTime?: string } | null>(null);
@@ -461,6 +486,15 @@ export default function TeacherSettingsPage() {
           aiBaseUrl: config.aiBaseUrl,
           aiApiKey: config.aiApiKey,
           aiModel: config.aiModel,
+          aiTextBackupBaseUrl: config.aiTextBackupBaseUrl,
+          aiTextBackupApiKey: config.aiTextBackupApiKey,
+          aiTextBackupModel: config.aiTextBackupModel,
+          aiOmniBaseUrl: config.aiOmniBaseUrl,
+          aiOmniApiKey: config.aiOmniApiKey,
+          aiOmniModel: config.aiOmniModel,
+          aiOmniBackupBaseUrl: config.aiOmniBackupBaseUrl,
+          aiOmniBackupApiKey: config.aiOmniBackupApiKey,
+          aiOmniBackupModel: config.aiOmniBackupModel,
           aiMaxConcurrent,
           reasoningEnabled: config.reasoningEnabled,
           studentWordLimit,
@@ -486,7 +520,8 @@ export default function TeacherSettingsPage() {
         });
       } else {
         const data = await res.json().catch(() => ({}));
-        MessagePlugin.error(data.error || "保存失败");
+        const detail = data.details ? `：${data.details}` : "";
+        MessagePlugin.error(`${data.error || "保存失败"}${detail}`);
       }
     } catch {
       MessagePlugin.error("网络错误");
@@ -495,43 +530,68 @@ export default function TeacherSettingsPage() {
     }
   };
 
-  const handleTestConnection = async () => {
-    if (!config.aiBaseUrl || !config.aiApiKey) {
-      MessagePlugin.warning("请先填写 API URL 和 API Key");
-      return;
-    }
-    if (!config.aiModel) {
-      MessagePlugin.warning("请输入模型名称");
-      return;
-    }
-
-    setTesting(true);
+  // 单条线路连通性测试（复用 /api/system-config/test 诊断接口）
+  const testOneLine = async (
+    item: { key: string; label: string; model: string; baseURL: string; apiKey: string }
+  ): Promise<LineTestResult> => {
+    const started = Date.now();
     try {
       const res = await fetch("/api/system-config/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          aiBaseUrl: config.aiBaseUrl,
-          aiApiKey: config.aiApiKey,
-          aiModel: config.aiModel,
+          aiBaseUrl: item.baseURL,
+          aiApiKey: item.apiKey,
+          aiModel: item.model,
           reasoningEnabled: config.reasoningEnabled,
         }),
       });
-
       const data = await res.json();
+      const durationMs = Date.now() - started;
       if (data.success) {
-        if (data.thinkingEnabled) {
-          MessagePlugin.success("思考模式，连接成功！");
-        } else {
-          MessagePlugin.success("非思考模式，连接成功");
-        }
-      } else {
-        MessagePlugin.error("连接不成功");
+        return { key: item.key, label: item.label, model: item.model, status: "ok", durationMs, thinkingEnabled: data.thinkingEnabled };
       }
-    } catch {
-      MessagePlugin.error("连接测试失败");
-    } finally {
-      setTesting(false);
+      return { key: item.key, label: item.label, model: item.model, status: "fail", durationMs, error: data.error || `HTTP ${res.status}` };
+    } catch (e) {
+      return {
+        key: item.key,
+        label: item.label,
+        model: item.model,
+        status: "fail",
+        durationMs: Date.now() - started,
+        error: e instanceof Error ? e.message : "请求失败",
+      };
+    }
+  };
+
+  // 一键测试全部线路（图文主/辅 + 全媒体主/辅），未配置的标为跳过
+  const handleTestAll = async () => {
+    const lines = [
+      { key: "textPrimary", label: "图文线路 · 主", model: config.aiModel, baseURL: config.aiBaseUrl, apiKey: config.aiApiKey },
+      { key: "textBackup", label: "图文线路 · 备用", model: config.aiTextBackupModel ?? "", baseURL: config.aiTextBackupBaseUrl ?? "", apiKey: config.aiTextBackupApiKey ?? "" },
+      { key: "omniPrimary", label: "全媒体线路 · 主", model: config.aiOmniModel ?? "", baseURL: config.aiOmniBaseUrl ?? "", apiKey: config.aiOmniApiKey ?? "" },
+      { key: "omniBackup", label: "全媒体线路 · 备用", model: config.aiOmniBackupModel ?? "", baseURL: config.aiOmniBackupBaseUrl ?? "", apiKey: config.aiOmniBackupApiKey ?? "" },
+    ];
+    const configured = lines.filter((l) => l.baseURL && l.apiKey && l.model);
+    const skipped: LineTestResult[] = lines
+      .filter((l) => !(l.baseURL && l.apiKey && l.model))
+      .map((l) => ({ key: l.key, label: l.label, model: l.model || "未填写", status: "skipped" }));
+
+    setTestResults([
+      ...configured.map((l) => ({ key: l.key, label: l.label, model: l.model, status: "pending" as const })),
+      ...skipped,
+    ]);
+    setTestingAll(true);
+    const results = await Promise.all(configured.map((l) => testOneLine(l)));
+    setTestResults([...results, ...skipped]);
+    setTestingAll(false);
+
+    const ok = results.filter((r) => r.status === "ok").length;
+    const fail = results.filter((r) => r.status === "fail").length;
+    if (fail === 0) {
+      MessagePlugin.success(`全部 ${ok} 条线路连接成功`);
+    } else {
+      MessagePlugin.warning(`测试完成：${ok} 条成功，${fail} 条失败${skipped.length ? `，${skipped.length} 条未配置` : ""}`);
     }
   };
 
@@ -553,6 +613,15 @@ export default function TeacherSettingsPage() {
       aiBaseUrl: config.aiBaseUrl,
       aiApiKey: config.aiApiKey,
       aiModel: config.aiModel,
+      aiTextBackupBaseUrl: config.aiTextBackupBaseUrl,
+      aiTextBackupApiKey: config.aiTextBackupApiKey,
+      aiTextBackupModel: config.aiTextBackupModel,
+      aiOmniBaseUrl: config.aiOmniBaseUrl,
+      aiOmniApiKey: config.aiOmniApiKey,
+      aiOmniModel: config.aiOmniModel,
+      aiOmniBackupBaseUrl: config.aiOmniBackupBaseUrl,
+      aiOmniBackupApiKey: config.aiOmniBackupApiKey,
+      aiOmniBackupModel: config.aiOmniBackupModel,
       aiMaxConcurrent,
       reasoningEnabled: config.reasoningEnabled,
     };
@@ -708,6 +777,15 @@ export default function TeacherSettingsPage() {
         if (data.aiBaseUrl !== undefined) updatePayload.aiBaseUrl = data.aiBaseUrl;
         if (data.aiApiKey !== undefined) updatePayload.aiApiKey = data.aiApiKey;
         if (data.aiModel !== undefined) updatePayload.aiModel = data.aiModel;
+        // 双线路主备字段（备份文件里存在才导入）
+        const dualRouteFields = [
+          "aiTextBackupBaseUrl", "aiTextBackupApiKey", "aiTextBackupModel",
+          "aiOmniBaseUrl", "aiOmniApiKey", "aiOmniModel",
+          "aiOmniBackupBaseUrl", "aiOmniBackupApiKey", "aiOmniBackupModel",
+        ] as const;
+        for (const field of dualRouteFields) {
+          if (data[field] !== undefined) updatePayload[field] = data[field];
+        }
         if (data.aiMaxConcurrent !== undefined) updatePayload.aiMaxConcurrent = data.aiMaxConcurrent;
         if (data.reasoningEnabled !== undefined) updatePayload.reasoningEnabled = data.reasoningEnabled;
         if (data.insightDataSource !== undefined) updatePayload.insightDataSource = data.insightDataSource;
@@ -867,6 +945,12 @@ export default function TeacherSettingsPage() {
               ) : (
                 <div className="space-y-5 pt-4">
                   <div>
+                    <p className="text-sm font-medium text-[var(--foreground)]">图文线路（默认）· 主模型</p>
+                    <p className="text-xs text-[var(--muted)] mt-0.5 mb-2">
+                      处理文本与图片请求（对话、分析、批阅等）。该线路为主线路，未配置备用时保持原有单模型行为。
+                    </p>
+                  </div>
+                  <div>
                     <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
                       API Base URL
                     </label>
@@ -918,6 +1002,142 @@ export default function TeacherSettingsPage() {
                     <p className="text-xs text-[var(--muted)] mt-1.5">
                       支持 OpenAI 兼容接口的模型名称，如 qwen-turbo、gpt-4o、deepseek-chat 等
                     </p>
+                  </div>
+
+                  {/* 图文线路 · 备用模型（主模型连接失败/服务故障时自动切换） */}
+                  <div className="p-4 rounded-xl border border-[var(--card-border)] bg-gray-50/60 space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-[var(--foreground)]">图文线路 · 备用模型</p>
+                      <p className="text-xs text-[var(--muted)] mt-0.5">
+                        可选。主模型网络故障 / 超时 / HTTP 错误（key 无效、模型不存在、无权限、限流、服务端故障）时自动切换到备用模型。留空表示不启用主备切换。
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用 Base URL</label>
+                      <Input
+                        value={config.aiTextBackupBaseUrl ?? ""}
+                        onChange={(val) => setConfig({ ...config, aiTextBackupBaseUrl: val })}
+                        placeholder="https://api.deepseek.com/v1"
+                        size="small"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用 API Key</label>
+                      <div className="flex gap-2">
+                        <Input
+                          value={config.aiTextBackupApiKey ?? ""}
+                          onChange={(val) => setConfig({ ...config, aiTextBackupApiKey: val })}
+                          type={showTextBackupKey ? "text" : "password"}
+                          placeholder="sk-xxxxxxxxxxxxxxxx"
+                          size="small"
+                          className="flex-1"
+                        />
+                        <Switch
+                          value={showTextBackupKey}
+                          onChange={(val) => setShowTextBackupKey(val)}
+                          label={["显示", "隐藏"]}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用模型</label>
+                      <Input
+                        value={config.aiTextBackupModel ?? ""}
+                        onChange={(val) => setConfig({ ...config, aiTextBackupModel: val })}
+                        placeholder="如 deepseek-chat、qwen-turbo"
+                        size="small"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 全媒体线路（语音 / 图片 / 视频分析） */}
+                  <div className="p-4 rounded-xl border border-[var(--card-border)] bg-[var(--primary-light)]/40 space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-[var(--foreground)]">全媒体线路（语音 / 图片 / 视频分析）</p>
+                      <p className="text-xs text-[var(--muted)] mt-0.5">
+                        学生对话中带语音/音频的消息走此线路。主模型请填支持多模态的模型（如
+                        <code className="bg-white px-1 py-0.5 rounded">qwen3.8-omni-flash</code>）；填了主模型即启用该线路，未填时语音请求回落到图文线路。注意：图文线路的模型需支持图片，若配纯文本模型（如 deepseek-chat），图片请求会失败。
+                      </p>
+                    </div>
+                    <div className="space-y-3 border-b border-[var(--card-border)] pb-3">
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">主模型 Base URL</label>
+                        <Input
+                          value={config.aiOmniBaseUrl ?? ""}
+                          onChange={(val) => setConfig({ ...config, aiOmniBaseUrl: val })}
+                          placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                          size="small"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">主模型 API Key</label>
+                        <div className="flex gap-2">
+                          <Input
+                            value={config.aiOmniApiKey ?? ""}
+                            onChange={(val) => setConfig({ ...config, aiOmniApiKey: val })}
+                            type={showOmniKey ? "text" : "password"}
+                            placeholder="sk-xxxxxxxxxxxxxxxx"
+                            size="small"
+                            className="flex-1"
+                          />
+                          <Switch
+                            value={showOmniKey}
+                            onChange={(val) => setShowOmniKey(val)}
+                            label={["显示", "隐藏"]}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">主模型</label>
+                        <Input
+                          value={config.aiOmniModel ?? ""}
+                          onChange={(val) => setConfig({ ...config, aiOmniModel: val })}
+                          placeholder="如 qwen3.8-omni-flash"
+                          size="small"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-xs font-medium text-[var(--muted)] mb-1">备用模型（可选，自动切换）</p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用 Base URL</label>
+                        <Input
+                          value={config.aiOmniBackupBaseUrl ?? ""}
+                          onChange={(val) => setConfig({ ...config, aiOmniBackupBaseUrl: val })}
+                          placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                          size="small"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用 API Key</label>
+                        <div className="flex gap-2">
+                          <Input
+                            value={config.aiOmniBackupApiKey ?? ""}
+                            onChange={(val) => setConfig({ ...config, aiOmniBackupApiKey: val })}
+                            type={showOmniBackupKey ? "text" : "password"}
+                            placeholder="sk-xxxxxxxxxxxxxxxx"
+                            size="small"
+                            className="flex-1"
+                          />
+                          <Switch
+                            value={showOmniBackupKey}
+                            onChange={(val) => setShowOmniBackupKey(val)}
+                            label={["显示", "隐藏"]}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用模型</label>
+                        <Input
+                          value={config.aiOmniBackupModel ?? ""}
+                          onChange={(val) => setConfig({ ...config, aiOmniBackupModel: val })}
+                          placeholder="如 qwen3.8-omni-flash"
+                          size="small"
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   {/* 思考模式开关 */}
@@ -982,10 +1202,10 @@ export default function TeacherSettingsPage() {
                     </Button>
                     <Button
                       variant="outline"
-                      onClick={handleTestConnection}
-                      loading={testing}
+                      onClick={handleTestAll}
+                      loading={testingAll}
                     >
-                      测试连接
+                      测试全部线路
                     </Button>
                     <Button
                       variant="outline"
@@ -1000,6 +1220,71 @@ export default function TeacherSettingsPage() {
                       导入配置
                     </Button>
                   </div>
+
+                  {/* 线路连通性测试结果（一键「测试全部线路」后展示） */}
+                  {testResults && testResults.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-[var(--foreground)]">线路连通性测试结果</p>
+                      {testResults.map((r) => (
+                        <div
+                          key={r.key}
+                          className={`flex items-center gap-3 p-3 rounded-lg border ${
+                            r.status === "ok"
+                              ? "border-[var(--success-light)] bg-[var(--success-light)]"
+                              : r.status === "fail"
+                                ? "border-[var(--danger-light)] bg-[var(--danger-light)]"
+                                : "border-[var(--card-border)] bg-gray-50"
+                          }`}
+                        >
+                          {/* 状态圆点：实色底配白字（浅色 --danger-light 等只配深色文字，勿反过来） */}
+                          <span
+                            className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${
+                              r.status === "ok"
+                                ? "bg-[var(--success)]"
+                                : r.status === "fail"
+                                  ? "bg-[var(--danger)]"
+                                  : r.status === "pending"
+                                    ? "bg-[var(--primary)]"
+                                    : "bg-[var(--muted-light)]"
+                            }`}
+                          >
+                            {r.status === "ok" && (
+                              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                              </svg>
+                            )}
+                            {r.status === "fail" && (
+                              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            )}
+                            {r.status === "skipped" && <span className="w-2 h-0.5 bg-white rounded" />}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium text-[var(--foreground)]">{r.label}</span>
+                              <span className="text-xs text-[var(--muted)] truncate">{r.model}</span>
+                              {r.durationMs !== undefined && (
+                                <span className="text-xs text-[var(--muted)]">{(r.durationMs / 1000).toFixed(1)}s</span>
+                              )}
+                              {r.thinkingEnabled === true && (
+                                <span className="text-xs px-1.5 py-0.5 rounded bg-white/80 text-[var(--muted)]">思考模式</span>
+                              )}
+                            </div>
+                            {r.status === "pending" && (
+                              <p className="text-xs text-[var(--muted)] mt-0.5">测试中…</p>
+                            )}
+                            {r.status === "fail" && r.error && (
+                              <p className="text-xs text-[var(--danger)] mt-0.5 truncate">{r.error}</p>
+                            )}
+                            {r.status === "skipped" && (
+                              <p className="text-xs text-[var(--muted)] mt-0.5">未填写完整配置，已跳过（填齐 URL、Key、模型后自动纳入测试）</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
 
                   {/* Status info */}
                   <div className={`p-4 rounded-xl ${config.aiBaseUrl && config.aiApiKey && config.aiModel ? "bg-[var(--success-light)]" : "bg-[var(--warning-light)]"}`}>
