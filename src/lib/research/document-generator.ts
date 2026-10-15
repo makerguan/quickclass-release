@@ -44,7 +44,10 @@ export async function* streamPaperGeneration(
   paperStyle?: "PRACTICE_RESEARCH" | "CASE_ANALYSIS",
   keywords?: string
 ): AsyncGenerator<string, PaperContent, void> {
-  const { chatModel } = await createDashScopeClient();
+  // ⛔ DO NOT REVERT: noFailover = 只用主模型、不限制时间（科研长文 8500-10000 字，
+  //   思考+输出远超对话的 10s 首响应超时，且不希望在主异常时静默切备用降质）。
+  // 🔗 RELATED: src/lib/ai.ts createDashScopeClient 的 noFailover 分支
+  const { chatModel } = await createDashScopeClient("text", undefined, { noFailover: true });
   // 预取真实文献候选，注入 prompt（让 AI 优先引用真实文献），同时传给 parsePaperContent 用于核查
   // 🧪 学科词注入检索（2026-09 实测修复）：不注入时 Crossref 候选偏向通用教育学，文献学科比例不达标
   console.log("=== 预取文献候选 ===");
@@ -83,7 +86,9 @@ export async function* streamProposalGeneration(
   researchMethod?: string,
   keywords?: string
 ): AsyncGenerator<string, ProposalContent, void> {
-  const { chatModel } = await createDashScopeClient();
+  // ⛔ DO NOT REVERT: noFailover = 只用主模型、不限制时间（同 streamPaperGeneration 注释）
+  // 🔗 RELATED: src/lib/ai.ts createDashScopeClient 的 noFailover 分支
+  const { chatModel } = await createDashScopeClient("text", undefined, { noFailover: true });
   // 预取真实文献候选，注入 prompt，同时传给 parseProposalContent 用于核查
   // 🧪 学科词注入检索（与 PAPER 分支同款修复，见 streamPaperGeneration 注释）
   const candidates = await fetchCandidateReferences(title || "", keywords || "", 15, {

@@ -286,9 +286,41 @@ function buildNoThinkingFetch(baseFetch: typeof fetch): typeof fetch {
 
 export async function createDashScopeClient(
   route: AIConfigRoute = "text",
-  hooks?: { onFailover?: () => void }
+  hooks?: { onFailover?: () => void },
+  opts?: { noFailover?: boolean }
 ) {
   const config = await getAIConfig(route);
+
+  // noFailover 模式——教学科研生成专用（论文/课题长文）：
+  // ⛔ DO NOT REVERT: 科研生成 8500-10000 字的思考+输出阶段远超对话的 10s 首响应超时，
+  //   若走 buildFailoverFetch 会在思考未开始时就被判定失败切备用甚至误报超时；
+  //   且主模型异常时静默切备用会降低论文质量。此模式语义 = 只用主模型、不限制时间：
+  //   - 不切备用、不熔断、不重试（主失败由调用方 error-classifier 如实报错）
+  //   - 无 FIRST_RESPONSE_TIMEOUT_MS 首响应超时，长文生成不被掐断
+  //   - reasoningEnabled 关闭时仅保留 thinking={type:"disabled"} 注入（buildNoThinkingFetch），
+  //     不叠加任何超时/failover 包装；开启时直接用 provider 原生 fetch（也不限时）
+  // 🔗 RELATED（调用方，必须与本文档同步）：
+  //   - src/lib/research/document-generator.ts（streamPaperGeneration / streamProposalGeneration）
+  //   - src/lib/research/citation-validator.ts（引用合理性审核）
+  //   - src/lib/research/topic-detector.ts（题目生成）
+  if (opts?.noFailover) {
+    console.log(
+      `[ai] 线路「${config._route}」主=${config._primary.model}@${config._primary.baseURL}（noFailover：仅主模型，不限制时间）`
+    );
+    const fetchImpl: typeof fetch | undefined = config.reasoningEnabled
+      ? undefined // 原生 fetch：无超时、无 failover、不切备用
+      : buildNoThinkingFetch(fetch); // 仅注入 thinking disabled；baseFetch 用全局 fetch（URL/鉴权由 provider 构造）
+    const client = createOpenAI({
+      baseURL: config.baseURL,
+      apiKey: config.apiKey,
+      ...(fetchImpl ? { fetch: fetchImpl } : {}),
+    });
+    return {
+      chatModel: client.chat(config.model),
+      reasoningEnabled: config.reasoningEnabled,
+    };
+  }
+
   // 排查日志：每次对话请求打印当前线路的主备配置，确认备用是否生效
   console.log(
     `[ai] 线路「${config._route}」主=${config._primary.model}@${config._primary.baseURL}，` +
