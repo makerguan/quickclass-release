@@ -45,7 +45,8 @@ export async function* streamPaperGeneration(
   keywords?: string
 ): AsyncGenerator<string, PaperContent, void> {
   // ⛔ DO NOT REVERT: noFailover = 只用主模型、不限制时间（科研长文 8500-10000 字，
-  //   思考+输出远超对话的 10s 首响应超时，且不希望在主异常时静默切备用降质）。
+  //   思考+输出阶段长，且不希望在主异常时静默切备用降质——主失败由 error-classifier 如实报错）。
+  //   🔗 默认路径（buildFailoverFetch）的 10s 只卡「未建立连接/未收到响应头」，不卡输出时长。
   // 🔗 RELATED: src/lib/ai.ts createDashScopeClient 的 noFailover 分支
   const { chatModel } = await createDashScopeClient("text", undefined, { noFailover: true });
   // 预取真实文献候选，注入 prompt（让 AI 优先引用真实文献），同时传给 parsePaperContent 用于核查

@@ -71,8 +71,10 @@ export async function getAIConfig(route: AIConfigRoute = "text") {
  * 设计（2026-10-15，2026-10-15 调优）：
  * - 每条线路可配「主模型 + 备用模型」；主模型 网络失败/超时/HTTP 4xx/5xx（key 无效、模型不存在、
  *   无权限、限流、服务端故障）时自动切备用——测试实测「model 不存在」（400/403/404）也会切备。
- * - 流式对话：首响应超时 10s（FIRST_RESPONSE_TIMEOUT_MS）——主模型 10s 内未开始返回内容即切备用，
- *   避免白等；报告类长任务（chatCompletionsFetch）保留 300s 整体超时——主模型 300s 内未完成才判定失败切备用（120s 太短，会误伤正常的长报告）。
+ * - 流式对话：连接超时 10s（AI_CONNECT_TIMEOUT_MS）——主模型 10s 内未建立连接/未收到响应头即切备用，
+ *   避免白等；连接建立后不限制「等待模型输出」的时长，长思考任务（伴学/探究生成）不被误伤；
+ *   报告类长任务（chatCompletionsFetch）同样不设生成超时——只防「连接不成功」（网络级失败重试+切备），
+ *   连接建立后不限时长（底层 Node undici 仍有默认 headersTimeout/bodyTimeout 兜底，不会无限挂起）。
  * - 熔断：主模型连续失败达到阈值后，临时挂起（直接用备用），避免每次请求都白等主模型超时；
  *   窗口期（60s）结束后自动恢复主模型，成功即重置计数。
  * - 内存态（单进程/每实例独立）：多实例部署下各自熔断，属可接受折衷。
@@ -86,7 +88,7 @@ interface CircuitState {
 }
 const circuitMap = new Map<AIConfigRoute, CircuitState>();
 const CIRCUIT_FAIL_THRESHOLD = 3; // 连续失败 3 次触发熔断
-const CIRCUIT_OPEN_MS = 60 * 1000; // 熔断窗口 60 秒（对话已有 10s 首响应超时，白等成本低，无需 5 分钟）
+const CIRCUIT_OPEN_MS = 60 * 1000; // 熔断窗口 60 秒（对话已有 10s 连接超时，白等成本低，无需 5 分钟）
 
 function isPrimaryOpen(route: AIConfigRoute): boolean {
   const state = circuitMap.get(route);
@@ -139,15 +141,27 @@ function withBodyModel(init: RequestInit | undefined, model: string): RequestIni
   return init;
 }
 
-/** 流式对话首响应超时：主/备模型在此时长内未开始返回内容即判定失败（只卡首字节，不约束总时长） */
-const FIRST_RESPONSE_TIMEOUT_MS = 10_000;
+/**
+ * 连接 AI 服务超时：主/备模型在此时长内未建立连接/未收到响应头即判定失败。
+ * ⛔ DO NOT REVERT: 只卡「连接/响应头」这一段——fetch 一旦返回（响应头到达）立即放开，
+ *   之后的「等待模型输出首个 token」不受本超时限制。伴学提示词/交互探究生成是
+ *   「先思考后输出」的重任务，模型思考 30-60s 才吐首个 token 属正常；若把首字节等待
+ *   也计入 10s 会误杀（🧪 MEASURED 2026-10-20：generate-companion-prompt 连续 4 次
+ *   500 in ~10s，全部报「未开始返回内容」= 卡在首字节，连接本身正常）。
+ *   连接超时抛错后由上层（buildFailoverFetch）切备用重试。
+ * 🔗 RELATED: buildFailoverFetch 失败判定、createDashScopeClient noFailover 注释同步。
+ */
+const AI_CONNECT_TIMEOUT_MS = 10_000;
 
 /**
- * fetch 后等待首个数据块：FIRST_RESPONSE_TIMEOUT_MS 内未收到即 abort 并抛错。
- * 专用于流式对话——只卡「首响应」，长回复（如作文、全班报告）不会被掐断；
- * 超时抛错后由上层（buildFailoverFetch）切备用重试。
+ * 等待「连接建立 + 响应头返回」：AI_CONNECT_TIMEOUT_MS 内 fetch 未返回即 abort 并抛错。
+ * ⛔ DO NOT REVERT: 超时判定只覆盖 fetch 本身（DNS/TCP/TLS/响应头）——响应头一到达立即
+ *   clearTimeout 放开，之后的流式读取（模型输出）时长不受限，长思考任务不被误伤。
+ *   仅当超时定时器自身触发 abort 才报「连接超时」；外层调用方（AI SDK 断开）主动中止时
+ *   原样抛 AbortError，不误报。
+ * 🔗 RELATED: AI_CONNECT_TIMEOUT_MS 定义、buildFailoverFetch 切备判定（网络级失败/连接超时→切备）。
  */
-async function fetchWithFirstByteTimeout(
+async function fetchWithConnectTimeout(
   input: RequestInfo | URL,
   init?: RequestInit
 ): Promise<Response> {
@@ -159,16 +173,20 @@ async function fetchWithFirstByteTimeout(
   } else if (outerSignal) {
     outerSignal.addEventListener("abort", () => controller.abort(), { once: true });
   }
-  const timer = setTimeout(() => controller.abort(), FIRST_RESPONSE_TIMEOUT_MS);
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, AI_CONNECT_TIMEOUT_MS);
   try {
     const res = await fetch(input, { ...init, signal: controller.signal });
+    // 响应头已到达 = 连接建立：立即放开，等模型输出的时长不再受本超时限制
+    clearTimeout(timer);
     if (!res.body) {
-      clearTimeout(timer); // 无 body（HTTP 错误响应等）→ 停掉首响应定时器再原样返回
-      return res;
+      return res; // 无 body（HTTP 错误响应等）→ 原样返回，由上层按状态码处理
     }
     const reader = res.body.getReader();
     const first = await reader.read();
-    clearTimeout(timer);
     // 重组流：把已读出的首个 chunk 放回去，保证内容不丢失
     const stream = new ReadableStream<Uint8Array>({
       async start(c) {
@@ -194,8 +212,8 @@ async function fetchWithFirstByteTimeout(
     });
   } catch (err) {
     clearTimeout(timer);
-    if ((err as Error)?.name === "AbortError") {
-      throw new Error(`AI 服务响应超时（${FIRST_RESPONSE_TIMEOUT_MS / 1000} 秒内未开始返回内容）`);
+    if (timedOut) {
+      throw new Error(`连接 AI 服务超时（${AI_CONNECT_TIMEOUT_MS / 1000} 秒内未建立连接/未收到响应头）`);
     }
     throw err;
   }
@@ -203,7 +221,8 @@ async function fetchWithFirstByteTimeout(
 
 /**
  * 构建带「熔断感知 + 主→备」切换的 fetch 包装。
- * 失败判定：网络错误（fetch reject）、首响应超时（10s）、HTTP 4xx/5xx（key 无效/模型不存在/无权限/限流/服务端）→ 切备用重试一次。
+ * 失败判定：网络错误（fetch reject）、连接超时（10s，未建立连接/未收到响应头）、HTTP 4xx/5xx（key 无效/模型不存在/无权限/限流/服务端）→ 切备用重试一次。
+ * ⛔ DO NOT REVERT: 连接建立后不再判定失败——「等模型输出」的时长不受限，长思考任务（伴学/探究生成）不被误伤。
  * 注意：模型层「空流/内容不支持」在此层不可见（fetch 已 200 返回），由调用方现有逻辑处理。
  */
 function buildFailoverFetch(
@@ -221,7 +240,7 @@ function buildFailoverFetch(
     const firstUrl = rewriteBaseUrl(url, primary.baseURL, first.baseURL);
 
     try {
-      const res = await fetchWithFirstByteTimeout(
+      const res = await fetchWithConnectTimeout(
         firstUrl,
         withBodyModel(withAuth(init, first.apiKey), first.model)
       );
@@ -232,7 +251,7 @@ function buildFailoverFetch(
         console.warn(
           `[ai][failover] 线路「${route}」主模型 HTTP ${res.status}（${first.model}）→ 切备用（${backup.model}）`
         );
-        const backupRes = await fetchWithFirstByteTimeout(
+        const backupRes = await fetchWithConnectTimeout(
           rewriteBaseUrl(url, primary.baseURL, backup.baseURL),
           withBodyModel(withAuth(init, backup.apiKey), backup.model)
         );
@@ -247,10 +266,10 @@ function buildFailoverFetch(
       return res;
     } catch (err) {
       if (!useBackupFirst && backup) {
-        // 网络级失败 / 首响应超时 → 切备用重试
+        // 网络级失败 / 连接超时（未建立连接或未收到响应头）→ 切备用重试
         reportPrimaryFailure(route);
         onFailover?.();
-        return fetchWithFirstByteTimeout(
+        return fetchWithConnectTimeout(
           rewriteBaseUrl(url, primary.baseURL, backup.baseURL),
           withBodyModel(withAuth(init, backup.apiKey), backup.model)
         );
@@ -292,11 +311,10 @@ export async function createDashScopeClient(
   const config = await getAIConfig(route);
 
   // noFailover 模式——教学科研生成专用（论文/课题长文）：
-  // ⛔ DO NOT REVERT: 科研生成 8500-10000 字的思考+输出阶段远超对话的 10s 首响应超时，
-  //   若走 buildFailoverFetch 会在思考未开始时就被判定失败切备用甚至误报超时；
-  //   且主模型异常时静默切备用会降低论文质量。此模式语义 = 只用主模型、不限制时间：
+  // ⛔ DO NOT REVERT: 科研生成 8500-10000 字的思考+输出阶段，走默认 buildFailoverFetch 时
+  //   主模型异常会静默切备用（降质且用户不可见），本模式要如实报错。语义 = 只用主模型、不限制时间：
   //   - 不切备用、不熔断、不重试（主失败由调用方 error-classifier 如实报错）
-  //   - 无 FIRST_RESPONSE_TIMEOUT_MS 首响应超时，长文生成不被掐断
+  //   - 无 AI_CONNECT_TIMEOUT_MS 连接超时与首字节等待限制，长文生成不被掐断
   //   - reasoningEnabled 关闭时仅保留 thinking={type:"disabled"} 注入（buildNoThinkingFetch），
   //     不叠加任何超时/failover 包装；开启时直接用 provider 原生 fetch（也不限时）
   // 🔗 RELATED（调用方，必须与本文档同步）：
@@ -349,10 +367,15 @@ export async function createDashScopeClient(
 }
 
 /**
- * 直连 chat/completions 的统一 fetch：超时上限 + 网络级重试 + 熔断共享 + 友好错误信息。
+ * 直连 chat/completions 的统一 fetch：网络级重试 + 熔断共享 + 友好错误信息。
+ * ⛔ DO NOT REVERT（2026-10-20）：不设生成超时——超时只用于「防连接不成功」：
+ *   - 连接建立后不限制生成时长（报告/长任务不被误伤；底层 Node undici 仍有默认
+ *     headersTimeout/bodyTimeout 兜底，不会无限挂起）；
+ *   - 原 300s 总超时（AbortSignal.timeout）已删除：非流式报告同样属「先思考后输出」长任务，
+ *     与对话/伴学统一语义（只卡连接、不卡生成）。
  * （2026-10-15 调整：熔断状态全局共享——主模型被判故障（对话/报告任一触发）后，
  *  报告生成也直接用备用；未熔断时主优先，HTTP 失败（4xx/5xx：key 无效/模型不存在/限流/服务端）
- *  切备重试（请求未开始生成，零浪费），300s 超时不切备（切换=重新生成，浪费已跑时长）。）
+ *  切备重试（请求未开始生成，零浪费）。）
  *
  * 为什么要有这个函数：
  * 🧪 MEASURED 2026-09-25：老师生成探究 AI 报告时 api.deepseek.com 瞬时不可达，
@@ -362,9 +385,8 @@ export async function createDashScopeClient(
  *
  * ⚠️ GOTCHA：网络级失败（连接被拒/DNS）同端点重试 1 次；
  *   HTTP 4xx/5xx（key 无效/模型不存在/无权限/限流/服务端）→ 切备用重试（请求未开始生成，零浪费；
- *   实测「model 不存在」返回 400/403/404，必须切备才能救活当前请求）；
- *   300s 超时（已开始生成）不切备——避免重新生成浪费。
- *   主模型失败（网络/超时/4xx/5xx）计入熔断（reportPrimaryFailure），对话等应用随之切备用。
+ *   实测「model 不存在」返回 400/403/404，必须切备才能救活当前请求）。
+ *   主模型失败（网络/4xx/5xx）计入熔断（reportPrimaryFailure），对话等应用随之切备用。
  *
  * 🔗 RELATED（新增直连 chat/completions 时必须改用本函数，不要再裸写 fetch）：
  *   - src/lib/ai-grading.ts（gradeByAI / generateTeachingAdvice）
@@ -374,7 +396,6 @@ export async function createDashScopeClient(
  *   - src/app/api/quiz-activities/route.ts
  *   - src/app/api/system-config/test/route.ts 是连通性诊断工具，故意保留裸 fetch（重试会掩盖真实断网）
  */
-const AI_FETCH_TIMEOUT_MS = 300_000; // 报告类长任务单次硬上限：全班报告实测 ~60s，300s 兜底大班/复杂报告；超时不重试不切备
 const AI_FETCH_RETRIES = 1; // 网络级瞬时失败（连接被拒/DNS）自动重试 1 次（共 2 次尝试）
 
 export async function chatCompletionsFetch(
@@ -397,7 +418,7 @@ export async function chatCompletionsFetch(
 
   // 熔断状态全局共享：主被判故障（对话/报告任一触发）→ 直接用备用。
   // 未熔断时主优先；HTTP 失败（401 key 无效/429 限流/5xx 故障）→ 切备重试（请求未开始生成，零浪费）；
-  // 300s 超时（已开始生成）→ 不切备重试（避免重新生成浪费）。
+  // ⛔ 不设生成超时：连接建立后不限时长（只防连接不成功，网络级失败走重试+切备）。
   const useBackup = !!backup && isPrimaryOpen(route);
   const endpoints: Endpoint[] = useBackup
     ? [backup!]
@@ -420,7 +441,6 @@ export async function chatCompletionsFetch(
             Authorization: `Bearer ${ep.apiKey}`,
           },
           body: payload,
-          signal: AbortSignal.timeout(AI_FETCH_TIMEOUT_MS),
         });
         if (res.status >= 400) {
           // HTTP 级失败（4xx：key 无效/模型不存在/无权限/限流；5xx：服务端）→ 计入熔断并换下一端点
@@ -433,14 +453,6 @@ export async function chatCompletionsFetch(
       } catch (err) {
         lastErr = err;
         if (ep === primary) reportPrimaryFailure(route);
-        const isTimeout =
-          (err as Error)?.name === "TimeoutError" || (err as Error)?.name === "AbortError";
-        if (isTimeout) {
-          // 300s 超时：已开始生成，不切备重试（避免重新生成浪费），直接判定失败
-          throw new Error(
-            `AI 服务响应超时（${AI_FETCH_TIMEOUT_MS / 1000} 秒内未完成），请检查主模型状态后重试`
-          );
-        }
         const cause = (err as { cause?: unknown })?.cause;
         console.error(
           `[chatCompletionsFetch] 线路「${route}」${ep === primary ? "主" : "备用"}模型第 ${attempt + 1}/${maxAttempts} 次网络级失败:`,
