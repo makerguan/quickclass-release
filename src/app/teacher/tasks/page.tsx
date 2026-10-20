@@ -1818,8 +1818,10 @@ export default function TeacherTasksPage() {
     }
   };
 
-  // 后台生成AI伴学提示词
-  const generateAiCompanionPromptInBackground = async (expId: string) => {
+  // 后台生成AI伴学提示词。返回 boolean 供调用方据结果提示，失败不抛错（状态已置 error）。
+  // ⛔ DO NOT REVERT: 旧实现失败只 setStatus("error") 不返回值，调用方 await 后无条件弹成功
+  //   ——「AI伴学已就绪」与「✗ 生成失败」同时出现，误导用户（2026-10-20 修复）。
+  const generateAiCompanionPromptInBackground = async (expId: string): Promise<boolean> => {
     setAiCompanionStatus("analyzing");
     try {
       const token = localStorage.getItem("token") || "";
@@ -1831,11 +1833,14 @@ export default function TeacherTasksPage() {
         const data = await res.json();
         setAiCompanionPromptText(data.aiCompanionPrompt || "");
         setAiCompanionStatus("ready");
+        return true;
       } else {
         setAiCompanionStatus("error");
+        return false;
       }
     } catch {
       setAiCompanionStatus("error");
+      return false;
     }
   };
 
@@ -1958,8 +1963,16 @@ export default function TeacherTasksPage() {
           MessagePlugin.success("AI伴学已开启（秒开）");
         } else {
           setAiCompanionStatus("analyzing");
-          await generateAiCompanionPromptInBackground(explorationEditId);
-          MessagePlugin.success("AI伴学已就绪");
+          const ok = await generateAiCompanionPromptInBackground(explorationEditId);
+          if (ok) {
+            setAiCompanionStatus("ready");
+            MessagePlugin.success("AI伴学已就绪");
+          } else {
+            // ⛔ DO NOT REVERT: 失败时开关保持开启（PUT 已成功入库 enableAiCompanion），
+            //   仅提示词未生成，状态显示「✗ 生成失败」，可稍后「重置提示词」重试。
+            setAiCompanionStatus("error");
+            MessagePlugin.error("AI伴学提示词生成失败，可稍后点击「重置提示词」重试");
+          }
         }
       } catch (e: any) {
         setAiCompanionStatus("error");
@@ -2019,8 +2032,15 @@ export default function TeacherTasksPage() {
         if (explorationEnableAiCompanion) {
           // 已启用状态下重置：立即重新生成
           setAiCompanionStatus("analyzing");
-          await generateAiCompanionPromptInBackground(explorationEditId);
-          MessagePlugin.success("提示词已重置并重新生成");
+          const ok = await generateAiCompanionPromptInBackground(explorationEditId);
+          if (ok) {
+            setAiCompanionStatus("ready");
+            MessagePlugin.success("提示词已重置并重新生成");
+          } else {
+            // ⛔ DO NOT REVERT: 同启用分支，失败不弹成功，状态保持 error 便于重试
+            setAiCompanionStatus("error");
+            MessagePlugin.error("提示词重新生成失败，请稍后重试");
+          }
         } else {
           setAiCompanionStatus("idle");
           MessagePlugin.success("提示词已重置，下次启用AI伴学会重新生成");
