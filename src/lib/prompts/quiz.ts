@@ -62,7 +62,8 @@ export function replaceQuizTemplateVars(
     result = result.replace(/\{kbList\}/g, "");
   }
 
-  // 6. quizCount
+  // 6. quizCount（遗留兼容：变量清单已移除 quizCount——题量恒为 5 且无设置入口，新模板一律写死
+  //    "共 5 道题"。此替换仅为存量教师模板兜底，避免 {quizCount} 被下方清理逻辑删成空白。）
   result = result.replace(
     /\{quizCount\}/g,
     String(vars.quizCount || 5)
@@ -295,11 +296,20 @@ export const QUIZ_MATH_JSON_NOTE = `注意：本题目最终以 JSON 文本输�
 
 /**
  * 统一输出格式要求 - 由程序控制，教师模板不包含此内容
+ *（buildQuizGeneratePrompt 在模板不含"输出格式"字样时自动追加，出题 AI 只需按此交卷）
+ *
+ * ⛔ DO NOT ADD FILL_BLANK / SHORT_ANSWER BACK to the type list。
+ * 原因：学生答题界面（src/app/student/chat/QuizPanel.tsx）是纯点选 UI，没有文本输入框，
+ * 主观题学生无法作答 → 提交时该题空答案 → aiGrade 记 0 分；教师端作业预览弹窗
+ * （src/app/teacher/tasks/page.tsx 作业预览）也没有主观题渲染分支，显示为空白。
+ * 实测（2026-10-10）：协议含 FILL_BLANK 时 AI 确实会出填空题，形成"能出不能答"的断头链路。
+ * 若未来要支持主观题，必须三处同步：① 学生端 QuizPanel 加文本输入框；② 此处恢复题型；
+ * ③ 教师端预览弹窗加主观题渲染分支。批阅侧 src/lib/ai-grading.ts 已支持主观题 AI 评分，无需改动。
  */
 export const QUIZ_FORMAT_INSTRUCTIONS = `
 ## 输出格式（必须严格遵守）
 每道题必须包含以下字段的JSON对象，总分数必须等于100：
-- type: SINGLE_CHOICE | MULTIPLE_CHOICE（多选答案用逗号如"A,B"） | TRUE_FALSE（答案 T 或 F） | FILL_BLANK（填空）
+- type: SINGLE_CHOICE | MULTIPLE_CHOICE（多选答案用逗号如"A,B"） | TRUE_FALSE（答案 T 或 F）
 - content: 题目文本
 - options: 选择题和判断题的选项对象，格式如 {"A":"选项A","B":"选项B"}
 - answer: 正确答案（多选用逗号分隔）
@@ -311,8 +321,8 @@ export const QUIZ_FORMAT_INSTRUCTIONS = `
 [
   {"type":"SINGLE_CHOICE","content":"题目","options":{"A":"A"},"answer":"A","score":20,"difficulty":"BASIC","explanation":"解析"},
   {"type":"MULTIPLE_CHOICE","content":"多选","options":{"A":"A"},"answer":"A,B","score":20,"difficulty":"BASIC","explanation":"解析"},
-  {"type":"TRUE_FALSE","content":"判断","answer":"T","score":20,"difficulty":"BASIC"},
-  {"type":"FILL_BLANK","content":"填空","answer":"答案","score":20,"difficulty":"BASIC"}
+  {"type":"TRUE_FALSE","content":"判断","answer":"T","score":20,"difficulty":"BASIC"}
 ]
+只允许出单选题、多选题、判断题三种客观题，不要出填空题、简答题等需要学生输入文字的题型。
 请直接输出JSON数组，不要使用代码块包裹，不要添加任何解释性文字。只需输出纯JSON数组。
 `;

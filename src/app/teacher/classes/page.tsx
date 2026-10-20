@@ -16,7 +16,7 @@ import {
   Tooltip,
 } from "tdesign-react";
 import { copyText } from "@/lib/clipboard";
-import { AddIcon, ShareIcon, CopyIcon, DeleteIcon, CheckCircleIcon, UserIcon, UploadIcon, FileIcon } from "tdesign-icons-react";
+import { AddIcon, ShareIcon, CopyIcon, DeleteIcon, CheckCircleIcon, UserIcon, UploadIcon, FileIcon, EditIcon } from "tdesign-icons-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import * as XLSX from "xlsx";
 
@@ -46,6 +46,10 @@ export default function TeacherClassesPage() {
   const [importText, setImportText] = useState("");
   const [importLoading, setImportLoading] = useState(false);
   const [editOpenInviteCode, setEditOpenInviteCode] = useState(false);
+  const [renameVisible, setRenameVisible] = useState(false);
+  const [renameClass, setRenameClass] = useState<ClassItem | null>(null);
+  const [renameName, setRenameName] = useState("");
+  const [renameLoading, setRenameLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -191,6 +195,57 @@ export default function TeacherClassesPage() {
       }
     } catch {
       MessagePlugin.error("网络错误");
+    }
+  };
+
+  // 📐 CONTRACT: 重命名只提交 { name }，绝不能把整个班级对象一起发。
+  // 为什么：PUT /api/classes/[classId]（src/app/api/classes/[classId]/route.ts）会把 body 中
+  // 出现的字段全部写入 prisma.class.update；Prisma 对 undefined 字段跳过不更新，
+  // 因此只发 name 时邀请码/描述/AI 配置/学生名单均不受影响
+  // （现有 handleToggleOpenInviteCode 只发 { openInviteCode } 已在线上验证此行为）。
+  // ⛔ DO NOT REVERT: 不要改成"先 GET 全量再回传全量"——会把其它配置字段用旧值/空值覆盖回去。
+  const openRename = (cls: ClassItem) => {
+    setRenameClass(cls);
+    setRenameName(cls.name);
+    setRenameVisible(true);
+  };
+
+  const handleRename = async () => {
+    if (!renameClass) return;
+    const name = renameName.trim();
+    if (!name) {
+      MessagePlugin.warning("请输入班级名称");
+      return;
+    }
+    if (name === renameClass.name) {
+      setRenameVisible(false);
+      setRenameClass(null);
+      return;
+    }
+    setRenameLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const res = await fetch(`/api/classes/${renameClass.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name }),
+      });
+      if (res.ok) {
+        MessagePlugin.success("班级名称已更新");
+        setRenameVisible(false);
+        setRenameClass(null);
+        fetchClasses();
+      } else {
+        const data = await res.json();
+        MessagePlugin.error(data.error || "修改失败");
+      }
+    } catch {
+      MessagePlugin.error("网络错误");
+    } finally {
+      setRenameLoading(false);
     }
   };
 
@@ -370,7 +425,7 @@ export default function TeacherClassesPage() {
         <div className="flex items-center gap-2">
           <span>{row.name}</span>
           {row.isCurrent && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[#0052D9]/10 text-[#0052D9] text-xs font-medium">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-[var(--primary-light)] text-[var(--primary)] text-xs font-medium">
               <CheckCircleIcon size="14px" />
             </span>
           )}
@@ -396,7 +451,7 @@ export default function TeacherClassesPage() {
     },
     {
       colKey: "action",
-      width: 420,
+      width: 480,
       title: "操作",
       cell: ({ row }: { row: ClassItem }) => (
         <div className="flex gap-2">
@@ -431,6 +486,17 @@ export default function TeacherClassesPage() {
               onClick={() => router.push(`/teacher/classes/${row.id}`)}
             >
               详情
+            </Button>
+          </Tooltip>
+          <Tooltip content="修改班级名称">
+            <Button
+              theme="default"
+              variant="text"
+              size="small"
+              icon={<EditIcon />}
+              onClick={() => openRename(row)}
+            >
+              改名
             </Button>
           </Tooltip>
           <Tooltip content="复制分享信息给学生">
@@ -474,7 +540,7 @@ export default function TeacherClassesPage() {
 
       <Card>
         {classes.length === 0 ? (
-          <div className="text-center py-12 text-gray-400">
+          <div className="text-center py-12 text-[var(--muted-light)]">
             <p className="text-lg mb-2">🏫</p>
             <p>暂无班级</p>
             <p className="text-sm mt-2">点击「创建班级」开始添加</p>
@@ -534,29 +600,29 @@ export default function TeacherClassesPage() {
       >
         {shareClass && (
           <div className="space-y-4">
-            <p className="text-gray-500 text-sm">将以下信息发给学生，学生即可通过邀请码加入班级并开始AI对话学习。</p>
-            <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+            <p className="text-[var(--muted)] text-sm">将以下信息发给学生，学生即可通过邀请码加入班级并开始AI对话学习。</p>
+            <div className="bg-[var(--hover-bg)] rounded-lg p-4 space-y-3">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-500">班级名称</span>
+                <span className="text-sm text-[var(--muted)]">班级名称</span>
                 <span className="font-medium">{shareClass.name}</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-500">学生入口</span>
-                <span className="font-medium text-[#0052D9]">{window.location.origin}/student</span>
+                <span className="text-sm text-[var(--muted)]">学生入口</span>
+                <span className="font-medium text-[var(--primary)]">{window.location.origin}/student</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-500">邀请码</span>
-                <span className="font-mono text-lg font-bold tracking-widest text-[#00A870]">{shareClass.inviteCode}</span>
+                <span className="text-sm text-[var(--muted)]">邀请码</span>
+                <span className="font-mono text-lg font-bold tracking-widest text-[var(--success)]">{shareClass.inviteCode}</span>
               </div>
               {shareClass.openInviteCode && (
-                <div className="mt-2 p-2 bg-green-50 rounded text-xs text-green-700">
+                <div className="mt-2 p-2 bg-[var(--success-light)] rounded text-xs text-[var(--success)]">
                   ✓ 已开启开放邀请码，学生可直接使用姓名+邀请码登录
                 </div>
               )}
             </div>
-            <div className="bg-blue-50 rounded-lg p-3 text-sm text-blue-700">
+            <div className="bg-[var(--primary-light)] rounded-lg p-3 text-sm text-[var(--primary)]">
               <p className="font-medium mb-1">学生操作步骤：</p>
-              <ol className="list-decimal list-inside space-y-0.5 text-blue-600">
+              <ol className="list-decimal list-inside space-y-0.5 text-[var(--primary)]">
                 <li>打开浏览器，访问上方链接</li>
                 {shareClass.openInviteCode ? (
                   <>
@@ -591,12 +657,12 @@ export default function TeacherClassesPage() {
       >
         {deleteClass && (
           <div className="space-y-4">
-            <p className="text-gray-700">
+            <p className="text-[var(--foreground)]">
               确定要删除班级 <strong>{deleteClass.name}</strong> 吗？
             </p>
-            <div className="bg-red-50 rounded-lg p-3 text-sm text-red-700">
+            <div className="bg-[var(--danger-light)] rounded-lg p-3 text-sm text-[var(--danger)]">
               <p className="font-medium mb-1">此操作将同时删除：</p>
-              <ul className="list-disc list-inside space-y-0.5 text-red-600">
+              <ul className="list-disc list-inside space-y-0.5 text-[var(--danger)]">
                 <li>该班级的所有学生账号</li>
                 <li>所有对话记录和消息</li>
                 <li>所有学习材料和评价标准</li>
@@ -622,14 +688,14 @@ export default function TeacherClassesPage() {
         width="600px"
       >
         <div className="space-y-4">
-          <div className="bg-blue-50 rounded-lg p-3 text-sm text-blue-700">
+          <div className="bg-[var(--primary-light)] rounded-lg p-3 text-sm text-[var(--primary)]">
             <div className="flex items-center justify-between mb-2">
               <p className="font-medium">导入说明：</p>
               <Button size="small" variant="outline" onClick={downloadTemplate}>
                 下载模板
               </Button>
             </div>
-            <ul className="list-disc list-inside space-y-0.5 text-blue-600">
+            <ul className="list-disc list-inside space-y-0.5 text-[var(--primary)]">
               <li>支持上传 Excel/CSV 文件（.xlsx, .xls, .csv）</li>
               <li>姓名中的空格会自动去除</li>
               <li>姓名在本次导入中不能重复</li>
@@ -640,7 +706,7 @@ export default function TeacherClassesPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
               当前班级
             </label>
             <Select
@@ -653,7 +719,7 @@ export default function TeacherClassesPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
               上传文件
             </label>
             <input
@@ -696,7 +762,7 @@ export default function TeacherClassesPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
+            <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
               或粘贴学生信息
             </label>
             <Input
@@ -706,7 +772,7 @@ export default function TeacherClassesPage() {
               style={{ width: "100%" }}
               status="default"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-[var(--muted)] mt-1">
               每行一个学生，格式：姓名,学号,密码（学号和密码可选，密码留空则默认123456）
             </p>
           </div>
@@ -718,6 +784,34 @@ export default function TeacherClassesPage() {
             </Button>
           </div>
         </div>
+      </Dialog>
+
+      <Dialog
+        header="修改班级名称"
+        visible={renameVisible}
+        onClose={() => { setRenameVisible(false); setRenameClass(null); }}
+        footer={null}
+        width={420}
+      >
+        {renameClass && (
+          <div className="space-y-4">
+            <p className="text-[var(--muted)] text-sm">
+              只修改班级名称，邀请码、学生名单及其它配置均不受影响；学生端将同步显示新名称。
+            </p>
+            <Input
+              value={renameName}
+              onChange={(val) => setRenameName(val)}
+              placeholder="请输入新的班级名称"
+              maxlength={30}
+            />
+            <div className="flex gap-2 justify-end">
+              <Button onClick={() => { setRenameVisible(false); setRenameClass(null); }}>取消</Button>
+              <Button theme="primary" loading={renameLoading} onClick={handleRename}>
+                保存
+              </Button>
+            </div>
+          </div>
+        )}
       </Dialog>
     </TeacherLayout>
   );

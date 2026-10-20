@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { getAIConfig, chatCompletionsFetch } from "@/lib/ai";
-import { getReportTime } from "@/lib/prompts/insight";
+import { getReportTime, buildChartPolicySection } from "@/lib/prompts/insight";
 import { cleanInsightContent } from "@/lib/insight-clean";
 
 // 课堂作业分析模板变量替换
@@ -123,16 +123,16 @@ export async function POST(
       ? templateContent
       : (quiz.analysisPrompt || templateContent);
 
-    // 检测提示词是否为 HTML 格式（含 HTML 标签或图表指令）
+    // 检测提示词是否为 HTML 格式（含 HTML 标签或网页型图表库）
     const isHtmlOutput = effectivePrompt ? (
-      // 显式信号：新 chart 协议数据型模板（确定性判定，优先于关键词嗅探）
+      // 显式信号：HTML 结构/标签或网页型图表库（确定性判定，优先于关键词嗅探）
+      // 注意：不再用 includes('chart') 嗅探——文本型模板里的 ```chart 示例块会被误判为网页型。
       effectivePrompt.includes('图表协议') ||
       effectivePrompt.includes('<!DOCTYPE') ||
       effectivePrompt.includes('<html') ||
       effectivePrompt.includes('<div') ||
       effectivePrompt.includes('echarts') ||
       effectivePrompt.includes('ECharts') ||
-      effectivePrompt.includes('chart') ||
       effectivePrompt.toLowerCase().includes('html')
     ) : false;
 
@@ -174,6 +174,7 @@ export async function POST(
     const quizAnalysisVars: Record<string, string> = {
       "quizTitle": quiz.title,
       "quiz.title": quiz.title,
+      "quizCount": String(quiz.Question.length),
       "className": className,
       "totalStudents": String(totalStudents),
       "classSize": String(classSize),
@@ -196,7 +197,15 @@ export async function POST(
     const wordLimitText = wordLimit ? `整篇报告总字数控制在${wordLimit}字以内。` : "";
     const outputFormat = isHtmlOutput
       ? "\n\n## 输出格式\n直接输出完整的HTML内容，所有图表用纯 SVG 内联绘制，禁止引入任何外部 JS 图表库或 CDN 资源，保存为 .html 后离线可完整打开。"
-      : "\n\n## 字数限制\n" + wordLimitText + "\n\n## 输出格式\n直接输出分析内容（Markdown格式），末尾另起一行输出综合评分：\n评分：★★★★★★";
+      // 📐 CONTRACT：text 分支按模板意图分流图表策略——模板含图表意图词（雷达图/饼图等，见
+      // CHART_INTENT_RE）→ 注入 chart 协议，分析 AI 输出 ```chart 块，写库前 cleanInsightContent
+      // 渲染成 SVG，前端 Markdown 组件 qc-chart 白名单直出（2026-10-11 起文本型报告也能插图，
+      // 与学情分析线同口径）；模板未要求 → 注入画图禁令。
+      // ⛔ DO NOT REVERT：不要把协议注入改回纯 Markdown 输出——曾因 text 分支无协议，帮写模板
+      // 又教 AI「数据一律表格化」，文本型报告永远无图，与学情线能力不对齐。
+      // 注意：isHtmlOutput 已不再用 includes('chart') 嗅探，模板正文可含英文 chart
+      // （如 ```chart 示例块）而不影响文本型判定。
+      : "\n\n## 字数限制\n" + wordLimitText + "\n\n" + buildChartPolicySection(effectivePrompt ?? undefined) + "\n\n## 输出格式\n直接输出分析内容（Markdown格式），末尾另起一行输出综合评分：\n评分：★★★★★★";
     const prompt = `${systemFrame}\n\n${dataSection}${templateSection}${outputFormat}`;
 
     const requestBody: any = {

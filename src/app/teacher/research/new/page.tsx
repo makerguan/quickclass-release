@@ -247,11 +247,11 @@ export default function NewProjectPage() {
     <TeacherLayout>
       <div className="p-6 max-w-4xl mx-auto">
         <div className="mb-6">
-          <Link href="/teacher/research" className="text-sm text-gray-500 hover:text-[#0052D9]">
+          <Link href="/teacher/research" className="text-sm text-[var(--muted)] hover:text-[var(--primary)]">
             ← 返回项目列表
           </Link>
           <h1 className="text-2xl font-bold mt-2">新建研究项目</h1>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-[var(--muted)] mt-1">
             从真实课堂数据中提取研究素材，AI 辅助生成课题方案和论文初稿
           </p>
         </div>
@@ -265,10 +265,10 @@ export default function NewProjectPage() {
         />
 
         {step === 0 && (
-          <div className="bg-white rounded-lg border border-gray-200 p-6 mt-6 space-y-6">
+          <div className="bg-white rounded-lg border border-[var(--card-border)] p-6 mt-6 space-y-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                项目名称 <span className="text-red-500">*</span>
+              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                项目名称 <span className="text-[var(--danger)]">*</span>
               </label>
               <Input
                 value={projectName}
@@ -280,21 +280,21 @@ export default function NewProjectPage() {
 
             {/* ① 选择课堂 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                ① 选择课堂（可多选）<span className="text-red-500">*</span>
+              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                ① 选择课堂（可多选）<span className="text-[var(--danger)]">*</span>
               </label>
               {loadingTasks ? (
                 <div className="text-center py-4"><Loading /></div>
               ) : tasks.length === 0 ? (
-                <div className="bg-amber-50 border border-amber-200 rounded p-3 text-sm text-amber-700">
+                <div className="bg-[var(--warning-light)] border border-[var(--warning-light)] rounded p-3 text-sm text-[var(--warning)]">
                   暂无可用的课堂。请先在「课堂管理」创建并启用课堂。
                 </div>
               ) : (
-                <div className="border border-gray-200 rounded-lg p-3 space-y-2 max-h-60 overflow-y-auto">
+                <div className="border border-[var(--card-border)] rounded-lg p-3 space-y-2 max-h-60 overflow-y-auto">
                   {tasks.map((task) => (
                     <label
                       key={task.id}
-                      className="flex items-center gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer"
+                      className="flex items-center gap-2 p-2 hover:bg-[var(--hover-bg)] rounded cursor-pointer"
                     >
                       <Checkbox
                         checked={selectedTaskIds.includes(task.id)}
@@ -305,22 +305,22 @@ export default function NewProjectPage() {
                   ))}
                 </div>
               )}
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-[var(--muted-light)] mt-1">
                 已选 {selectedTaskIds.length} / {tasks.length} 个课堂
               </p>
             </div>
 
             {/* ② 选择数据类型 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                ② 选择数据类型（可多选）<span className="text-red-500">*</span>
+              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                ② 选择数据类型（可多选）<span className="text-[var(--danger)]">*</span>
               </label>
-              <div className="border border-gray-200 rounded-lg p-3 space-y-2">
+              <div className="border border-[var(--card-border)] rounded-lg p-3 space-y-2">
                 {DATA_TYPES.map((dt) => {
                   const isChecked = selectedDataTypes.includes(dt.value);
                   return (
                     <div key={dt.value} className="space-y-1">
-                      <label className="flex items-start gap-2 p-2 hover:bg-gray-50 rounded cursor-pointer">
+                      <label className="flex items-start gap-2 p-2 hover:bg-[var(--hover-bg)] rounded cursor-pointer">
                         <Checkbox
                           checked={isChecked}
                           onChange={(v) => handleDataTypeToggle(dt.value, !!v)}
@@ -335,18 +335,18 @@ export default function NewProjectPage() {
                               </Tag>
                             )}
                           </div>
-                          <p className="text-xs text-gray-500 mt-1 ml-6">
+                          <p className="text-xs text-[var(--muted)] mt-1 ml-6">
                             {dt.description}
                           </p>
                         </div>
                       </label>
                       {/* 报告类数据勾选时的提示 */}
                       {isChecked && dt.requiresGeneration && (
-                        <div className="ml-8 bg-amber-50 border-l-4 border-amber-400 p-2 rounded text-xs">
-                          <div className="text-amber-800">
+                        <div className="ml-8 bg-[var(--warning-light)] border-l-4 border-[var(--warning)] p-2 rounded text-xs">
+                          <div className="text-[var(--warning)]">
                             ⚠️ {dt.label}需要先生成才能使用
                           </div>
-                          <div className="text-amber-700 mt-0.5">
+                          <div className="text-[var(--warning)] mt-0.5">
                             💡 {dt.linkHint}
                           </div>
                         </div>
@@ -355,15 +355,15 @@ export default function NewProjectPage() {
                   );
                 })}
               </div>
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-[var(--muted-light)] mt-1">
                 已选 {selectedDataTypes.length} / {DATA_TYPES.length} 类数据
               </p>
             </div>
 
             {/* 生成类型 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                生成类型 <span className="text-red-500">*</span>
+              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                生成类型 <span className="text-[var(--danger)]">*</span>
               </label>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {(["PAPER", "PROPOSAL"] as const).map((type) => (
@@ -373,15 +373,15 @@ export default function NewProjectPage() {
                     onClick={() => setProjectType(type)}
                     className={`p-4 rounded-lg border-2 text-left transition-all ${
                       projectType === type
-                        ? "border-[#0052D9] bg-blue-50"
-                        : "border-gray-200 hover:border-gray-300"
+                        ? "border-[var(--primary)] bg-[var(--primary-light)]"
+                        : "border-[var(--card-border)] hover:border-[var(--card-border)]"
                     }`}
                   >
                     <div className="text-2xl mb-2">{type === "PAPER" ? "📄" : "📋"}</div>
                     <div className="font-medium text-lg">
                       {type === "PAPER" ? "论文" : "课题方案"}
                     </div>
-                    <div className="text-xs text-gray-500 mt-1">{typeDesc(type)}</div>
+                    <div className="text-xs text-[var(--muted)] mt-1">{typeDesc(type)}</div>
                   </button>
                 ))}
               </div>
@@ -389,24 +389,24 @@ export default function NewProjectPage() {
 
             {/* 关键字 */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                关键字 <span className="text-gray-400 text-xs">（可选）</span>
+              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                关键字 <span className="text-[var(--muted-light)] text-xs">（可选）</span>
               </label>
               <Input
                 value={keywords}
                 onChange={(v) => setKeywords(v)}
                 placeholder="例如：探究深度 学习效果 互动（用空格分隔）"
               />
-              <p className="text-xs text-gray-400 mt-1">
+              <p className="text-xs text-[var(--muted-light)] mt-1">
                 AI 会根据关键字生成更相关的题目，留空则自由发挥
               </p>
             </div>
 
             {/* 警告 */}
             {dataWarnings.length > 0 && (
-              <div className="bg-amber-50 border border-amber-200 rounded p-3">
+              <div className="bg-[var(--warning-light)] border border-[var(--warning-light)] rounded p-3">
                 {dataWarnings.map((w, i) => (
-                  <div key={i} className="text-sm text-amber-700">
+                  <div key={i} className="text-sm text-[var(--warning)]">
                     ⚠ {w}
                   </div>
                 ))}
@@ -417,12 +417,12 @@ export default function NewProjectPage() {
             {((missingReports.quizzesWithoutReport?.length ?? 0) > 0 ||
               (missingReports.conversationsWithoutReport?.length ?? 0) > 0 ||
               (missingReports.explorationsWithoutReport?.length ?? 0) > 0) && (
-              <div className="bg-orange-50 border border-orange-200 rounded p-3 space-y-2">
-                <div className="text-sm font-medium text-orange-800">
+              <div className="bg-[var(--warning-light)] border border-[var(--warning-light)] rounded p-3 space-y-2">
+                <div className="text-sm font-medium text-[var(--warning)]">
                   📋 以下作业/活动尚未生成 AI 报告：
                 </div>
                 {missingReports.quizzesWithoutReport && missingReports.quizzesWithoutReport.length > 0 && (
-                  <div className="text-xs text-orange-700">
+                  <div className="text-xs text-[var(--warning)]">
                     <div className="font-medium mt-1">作业：</div>
                     <ul className="ml-4">
                       {missingReports.quizzesWithoutReport.map((t, i) => (
@@ -433,7 +433,7 @@ export default function NewProjectPage() {
                 )}
                 {missingReports.conversationsWithoutReport &&
                   missingReports.conversationsWithoutReport.length > 0 && (
-                    <div className="text-xs text-orange-700">
+                    <div className="text-xs text-[var(--warning)]">
                       <div className="font-medium mt-1">对话活动：</div>
                       <ul className="ml-4">
                         {missingReports.conversationsWithoutReport.map((t, i) => (
@@ -444,7 +444,7 @@ export default function NewProjectPage() {
                   )}
                 {missingReports.explorationsWithoutReport &&
                   missingReports.explorationsWithoutReport.length > 0 && (
-                    <div className="text-xs text-orange-700">
+                    <div className="text-xs text-[var(--warning)]">
                       <div className="font-medium mt-1">交互探究：</div>
                       <ul className="ml-4">
                         {missingReports.explorationsWithoutReport.map((t, i) => (
@@ -456,7 +456,7 @@ export default function NewProjectPage() {
               </div>
             )}
 
-            <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+            <div className="flex justify-end gap-3 pt-4 border-t border-[var(--card-border)]">
               <Link href="/teacher/research">
                 <Button>取消</Button>
               </Link>
@@ -477,20 +477,20 @@ export default function NewProjectPage() {
         )}
 
         {step === 1 && (
-          <div className="bg-white rounded-lg border border-gray-200 p-6 mt-6">
+          <div className="bg-white rounded-lg border border-[var(--card-border)] p-6 mt-6">
             <h2 className="font-semibold text-lg mb-4">
               💡 已生成 {generatedTitles.length} 个研究题目，请选择 1 个
             </h2>
-            <p className="text-sm text-gray-500 mb-4">
+            <p className="text-sm text-[var(--muted)] mb-4">
               数据来源：{selectedTaskIds.length} 个课堂 · {selectedDataTypes.length} 类数据
               {projectType === "PAPER" && generatedTitles.some((t: any) => t.paperStyle) && (
-                <span className="ml-2 text-[#0052D9]">
+                <span className="ml-2 text-[var(--primary)]">
                   · 分布：🔬 实践研究 {generatedTitles.filter((t: any) => t.paperStyle === "PRACTICE_RESEARCH").length} 个 +
                   📖 案例分析 {generatedTitles.filter((t: any) => t.paperStyle === "CASE_ANALYSIS").length} 个
                 </span>
               )}
               {projectType === "PROPOSAL" && generatedTitles.some((t: any) => t.researchMethod) && (
-                <span className="ml-2 text-[#0052D9]">
+                <span className="ml-2 text-[var(--primary)]">
                   · 方法覆盖：{[...new Set(generatedTitles.map((t: any) => t.researchMethod).filter(Boolean))].length} 种研究方法
                 </span>
               )}
@@ -501,7 +501,7 @@ export default function NewProjectPage() {
                 <label
                   key={i}
                   className={`flex items-start gap-3 p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                    selectedIndex === i ? "border-[#0052D9] bg-blue-50" : "border-gray-200 hover:border-gray-300"
+                    selectedIndex === i ? "border-[var(--primary)] bg-[var(--primary-light)]" : "border-[var(--card-border)] hover:border-[var(--card-border)]"
                   }`}
                 >
                   <input
@@ -513,7 +513,7 @@ export default function NewProjectPage() {
                   />
                   <div className="flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <span className="font-medium text-[#1A1A1A]">{t.title}</span>
+                      <span className="font-medium text-[var(--foreground)]">{t.title}</span>
                       <Tag theme="primary" variant="light" size="small">⭐ {t.score}</Tag>
                       <Tag variant="light" size="small">{t.category}</Tag>
                       {/* 论文类型标签（仅 PAPER） */}
@@ -543,9 +543,9 @@ export default function NewProjectPage() {
                         </Tag>
                       )}
                     </div>
-                    <p className="text-sm text-gray-500 mt-1">{t.description}</p>
+                    <p className="text-sm text-[var(--muted)] mt-1">{t.description}</p>
                     {t.evidence?.length > 0 && (
-                      <p className="text-xs text-gray-400 mt-2">
+                      <p className="text-xs text-[var(--muted-light)] mt-2">
                         📊 {t.evidence.join("；")}
                       </p>
                     )}
@@ -554,7 +554,7 @@ export default function NewProjectPage() {
               ))}
             </div>
 
-            <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-gray-100">
+            <div className="flex justify-end gap-3 mt-6 pt-4 border-t border-[var(--card-border)]">
               <Button theme="default" variant="outline" onClick={() => setStep(0)}>
                 上一步
               </Button>

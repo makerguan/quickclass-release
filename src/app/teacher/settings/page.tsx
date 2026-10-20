@@ -3,6 +3,12 @@
 import { useEffect, useState } from "react";
 import { Button, Input, MessagePlugin, Switch, Radio } from "tdesign-react";
 import TeacherLayout from "@/components/layout/TeacherLayout";
+import {
+  TeacherThemeKey,
+  TEACHER_THEMES,
+  getSavedTeacherTheme,
+  saveTeacherTheme,
+} from "@/lib/teacher-theme";
 
 // SystemConfig 类型定义
 interface SystemConfig {
@@ -10,6 +16,16 @@ interface SystemConfig {
   aiBaseUrl: string;
   aiApiKey: string;
   aiModel: string;
+  // 双线路主备：图文线路备用 / 全媒体线路主备
+  aiTextBackupBaseUrl?: string | null;
+  aiTextBackupApiKey?: string | null;
+  aiTextBackupModel?: string | null;
+  aiOmniBaseUrl?: string | null;
+  aiOmniApiKey?: string | null;
+  aiOmniModel?: string | null;
+  aiOmniBackupBaseUrl?: string | null;
+  aiOmniBackupApiKey?: string | null;
+  aiOmniBackupModel?: string | null;
   aiMaxConcurrent?: number;
   reasoningEnabled?: boolean;
   updatedAt?: string;
@@ -31,6 +47,17 @@ interface UserProfile {
   school?: string | null;
 }
 
+/** 一键测试全部线路的结果条目 */
+interface LineTestResult {
+  key: string;
+  label: string;
+  model: string;
+  status: "pending" | "ok" | "fail" | "skipped";
+  durationMs?: number;
+  thinkingEnabled?: boolean;
+  error?: string;
+}
+
 export default function TeacherSettingsPage() {
   const [config, setConfig] = useState<SystemConfig>({
     aiBaseUrl: "",
@@ -40,8 +67,12 @@ export default function TeacherSettingsPage() {
   });
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [testing, setTesting] = useState(false);
+  const [testingAll, setTestingAll] = useState(false);
+  const [testResults, setTestResults] = useState<LineTestResult[] | null>(null);
   const [showApiKey, setShowApiKey] = useState(false);
+  const [showTextBackupKey, setShowTextBackupKey] = useState(false);
+  const [showOmniKey, setShowOmniKey] = useState(false);
+  const [showOmniBackupKey, setShowOmniBackupKey] = useState(false);
   const [showBackupDialog, setShowBackupDialog] = useState(false);
   const [backupFileName, setBackupFileName] = useState("");
   const [versionInfo, setVersionInfo] = useState<{ version: string; buildTime?: string } | null>(null);
@@ -79,11 +110,19 @@ export default function TeacherSettingsPage() {
   const [conversationCount, setConversationCount] = useState(0);
   const [conversationWarningThreshold, setConversationWarningThreshold] = useState(20000);
 
+  // 界面主题
+  const [teacherTheme, setTeacherTheme] = useState<TeacherThemeKey>("default");
+
+  useEffect(() => {
+    setTeacherTheme(getSavedTeacherTheme());
+  }, []);
+
   // 卡片展开状态
   const [expandedCards, setExpandedCards] = useState<Record<string, boolean>>({
     aiConfig: false,
     userProfile: false,
     insightConfig: false,
+    theme: false,
     systemInfo: false,
   });
 
@@ -447,6 +486,15 @@ export default function TeacherSettingsPage() {
           aiBaseUrl: config.aiBaseUrl,
           aiApiKey: config.aiApiKey,
           aiModel: config.aiModel,
+          aiTextBackupBaseUrl: config.aiTextBackupBaseUrl,
+          aiTextBackupApiKey: config.aiTextBackupApiKey,
+          aiTextBackupModel: config.aiTextBackupModel,
+          aiOmniBaseUrl: config.aiOmniBaseUrl,
+          aiOmniApiKey: config.aiOmniApiKey,
+          aiOmniModel: config.aiOmniModel,
+          aiOmniBackupBaseUrl: config.aiOmniBackupBaseUrl,
+          aiOmniBackupApiKey: config.aiOmniBackupApiKey,
+          aiOmniBackupModel: config.aiOmniBackupModel,
           aiMaxConcurrent,
           reasoningEnabled: config.reasoningEnabled,
           studentWordLimit,
@@ -472,7 +520,8 @@ export default function TeacherSettingsPage() {
         });
       } else {
         const data = await res.json().catch(() => ({}));
-        MessagePlugin.error(data.error || "保存失败");
+        const detail = data.details ? `：${data.details}` : "";
+        MessagePlugin.error(`${data.error || "保存失败"}${detail}`);
       }
     } catch {
       MessagePlugin.error("网络错误");
@@ -481,43 +530,68 @@ export default function TeacherSettingsPage() {
     }
   };
 
-  const handleTestConnection = async () => {
-    if (!config.aiBaseUrl || !config.aiApiKey) {
-      MessagePlugin.warning("请先填写 API URL 和 API Key");
-      return;
-    }
-    if (!config.aiModel) {
-      MessagePlugin.warning("请输入模型名称");
-      return;
-    }
-
-    setTesting(true);
+  // 单条线路连通性测试（复用 /api/system-config/test 诊断接口）
+  const testOneLine = async (
+    item: { key: string; label: string; model: string; baseURL: string; apiKey: string }
+  ): Promise<LineTestResult> => {
+    const started = Date.now();
     try {
       const res = await fetch("/api/system-config/test", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          aiBaseUrl: config.aiBaseUrl,
-          aiApiKey: config.aiApiKey,
-          aiModel: config.aiModel,
+          aiBaseUrl: item.baseURL,
+          aiApiKey: item.apiKey,
+          aiModel: item.model,
           reasoningEnabled: config.reasoningEnabled,
         }),
       });
-
       const data = await res.json();
+      const durationMs = Date.now() - started;
       if (data.success) {
-        if (data.thinkingEnabled) {
-          MessagePlugin.success("思考模式，连接成功！");
-        } else {
-          MessagePlugin.success("非思考模式，连接成功");
-        }
-      } else {
-        MessagePlugin.error("连接不成功");
+        return { key: item.key, label: item.label, model: item.model, status: "ok", durationMs, thinkingEnabled: data.thinkingEnabled };
       }
-    } catch {
-      MessagePlugin.error("连接测试失败");
-    } finally {
-      setTesting(false);
+      return { key: item.key, label: item.label, model: item.model, status: "fail", durationMs, error: data.error || `HTTP ${res.status}` };
+    } catch (e) {
+      return {
+        key: item.key,
+        label: item.label,
+        model: item.model,
+        status: "fail",
+        durationMs: Date.now() - started,
+        error: e instanceof Error ? e.message : "请求失败",
+      };
+    }
+  };
+
+  // 一键测试全部线路（图文主/辅 + 全媒体主/辅），未配置的标为跳过
+  const handleTestAll = async () => {
+    const lines = [
+      { key: "textPrimary", label: "图文线路 · 主", model: config.aiModel, baseURL: config.aiBaseUrl, apiKey: config.aiApiKey },
+      { key: "textBackup", label: "图文线路 · 备用", model: config.aiTextBackupModel ?? "", baseURL: config.aiTextBackupBaseUrl ?? "", apiKey: config.aiTextBackupApiKey ?? "" },
+      { key: "omniPrimary", label: "全媒体线路 · 主", model: config.aiOmniModel ?? "", baseURL: config.aiOmniBaseUrl ?? "", apiKey: config.aiOmniApiKey ?? "" },
+      { key: "omniBackup", label: "全媒体线路 · 备用", model: config.aiOmniBackupModel ?? "", baseURL: config.aiOmniBackupBaseUrl ?? "", apiKey: config.aiOmniBackupApiKey ?? "" },
+    ];
+    const configured = lines.filter((l) => l.baseURL && l.apiKey && l.model);
+    const skipped: LineTestResult[] = lines
+      .filter((l) => !(l.baseURL && l.apiKey && l.model))
+      .map((l) => ({ key: l.key, label: l.label, model: l.model || "未填写", status: "skipped" }));
+
+    setTestResults([
+      ...configured.map((l) => ({ key: l.key, label: l.label, model: l.model, status: "pending" as const })),
+      ...skipped,
+    ]);
+    setTestingAll(true);
+    const results = await Promise.all(configured.map((l) => testOneLine(l)));
+    setTestResults([...results, ...skipped]);
+    setTestingAll(false);
+
+    const ok = results.filter((r) => r.status === "ok").length;
+    const fail = results.filter((r) => r.status === "fail").length;
+    if (fail === 0) {
+      MessagePlugin.success(`全部 ${ok} 条线路连接成功`);
+    } else {
+      MessagePlugin.warning(`测试完成：${ok} 条成功，${fail} 条失败${skipped.length ? `，${skipped.length} 条未配置` : ""}`);
     }
   };
 
@@ -539,6 +613,15 @@ export default function TeacherSettingsPage() {
       aiBaseUrl: config.aiBaseUrl,
       aiApiKey: config.aiApiKey,
       aiModel: config.aiModel,
+      aiTextBackupBaseUrl: config.aiTextBackupBaseUrl,
+      aiTextBackupApiKey: config.aiTextBackupApiKey,
+      aiTextBackupModel: config.aiTextBackupModel,
+      aiOmniBaseUrl: config.aiOmniBaseUrl,
+      aiOmniApiKey: config.aiOmniApiKey,
+      aiOmniModel: config.aiOmniModel,
+      aiOmniBackupBaseUrl: config.aiOmniBackupBaseUrl,
+      aiOmniBackupApiKey: config.aiOmniBackupApiKey,
+      aiOmniBackupModel: config.aiOmniBackupModel,
       aiMaxConcurrent,
       reasoningEnabled: config.reasoningEnabled,
     };
@@ -694,6 +777,15 @@ export default function TeacherSettingsPage() {
         if (data.aiBaseUrl !== undefined) updatePayload.aiBaseUrl = data.aiBaseUrl;
         if (data.aiApiKey !== undefined) updatePayload.aiApiKey = data.aiApiKey;
         if (data.aiModel !== undefined) updatePayload.aiModel = data.aiModel;
+        // 双线路主备字段（备份文件里存在才导入）
+        const dualRouteFields = [
+          "aiTextBackupBaseUrl", "aiTextBackupApiKey", "aiTextBackupModel",
+          "aiOmniBaseUrl", "aiOmniApiKey", "aiOmniModel",
+          "aiOmniBackupBaseUrl", "aiOmniBackupApiKey", "aiOmniBackupModel",
+        ] as const;
+        for (const field of dualRouteFields) {
+          if (data[field] !== undefined) updatePayload[field] = data[field];
+        }
         if (data.aiMaxConcurrent !== undefined) updatePayload.aiMaxConcurrent = data.aiMaxConcurrent;
         if (data.reasoningEnabled !== undefined) updatePayload.reasoningEnabled = data.reasoningEnabled;
         if (data.insightDataSource !== undefined) updatePayload.insightDataSource = data.insightDataSource;
@@ -760,21 +852,24 @@ export default function TeacherSettingsPage() {
         <div>
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-2xl font-bold text-[#1A1A1A]">系统设置</h1>
-              <p className="text-[#63666F] mt-1">配置 AI 服务和管理系统参数</p>
+              <h1 className="text-2xl font-bold text-[var(--title)]">系统设置</h1>
+              <p className="text-[var(--muted)] mt-1">配置 AI 服务和管理系统参数</p>
             </div>
             {versionInfo && (
               <div className="text-right">
                 <div className="flex items-center gap-2 justify-end">
-                  <div className="text-sm font-medium text-[#0052D9]">{versionInfo.version}</div>
+                  <div className="text-sm font-medium text-[var(--primary)]">{versionInfo.version}</div>
                   {updateAvailable && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-red-50 text-red-600 rounded-full border border-red-200 animate-pulse">
-                      <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-[var(--danger-light)] text-[var(--danger)] rounded-full border border-[var(--danger-light)] animate-pulse">
+                      {/* ⛔ DO NOT REVERT（2026-10-14 修复）：曾写成 bg-[var(--danger-light)]0（尾部多余 0，类失效）。
+                          圆点外层 badge 本身就是 --danger-light 浅红底，圆点再用浅色会同色隐形，必须用实色 --danger。
+                          同文件 807-811 行警示图标容器同根因。 */}
+                      <span className="w-1.5 h-1.5 rounded-full bg-[var(--danger)]" />
                       新版本 {latestVersion}
                     </span>
                   )}
                 </div>
-                <div className="text-xs text-[#63666F]">
+                <div className="text-xs text-[var(--muted)]">
                   {versionInfo.buildTime ? new Date(versionInfo.buildTime).toLocaleDateString("zh-CN") : ""}
                 </div>
               </div>
@@ -786,14 +881,17 @@ export default function TeacherSettingsPage() {
         {configLoaded && conversationCount > 0 && (
           <div className={`p-4 rounded-xl border ${
             conversationCount >= conversationWarningThreshold
-              ? "bg-red-50 border-red-200"
-              : "bg-amber-50 border-amber-200"
+              ? "bg-[var(--danger-light)] border-[var(--danger-light)]"
+              : "bg-[var(--warning-light)] border-[var(--warning-light)]"
           }`}>
             <div className="flex items-start gap-3">
+              {/* ⛔ DO NOT REVERT（2026-10-14 修复）：图标容器内是白色 svg，必须实色底——--danger/warning-light 浅色底配白图标看不清。
+                  曾写成 bg-[var(--danger-light)]0 / bg-[var(--warning-light)]0（尾部多余 0，类失效变透明）。
+                  同文件「新版本」badge 圆点同根因。 */}
               <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${
                 conversationCount >= conversationWarningThreshold
-                  ? "bg-red-500"
-                  : "bg-amber-500"
+                  ? "bg-[var(--danger)]"
+                  : "bg-[var(--warning)]"
               }`}>
                 <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z" />
@@ -802,8 +900,8 @@ export default function TeacherSettingsPage() {
               <div className="flex-1">
                 <p className={`text-sm font-medium ${
                   conversationCount >= conversationWarningThreshold
-                    ? "text-red-700"
-                    : "text-amber-700"
+                    ? "text-[var(--danger)]"
+                    : "text-[var(--warning)]"
                 }`}>
                   当前对话记录: {conversationCount.toLocaleString()} 条
                   {conversationCount >= conversationWarningThreshold
@@ -811,7 +909,7 @@ export default function TeacherSettingsPage() {
                     : `（预警阈值: ${conversationWarningThreshold.toLocaleString()} 条）`
                   }
                 </p>
-                <p className="text-xs text-amber-600 mt-1">
+                <p className="text-xs text-[var(--warning)] mt-1">
                   对话记录过多会影响系统性能，建议定期归档历史对话
                 </p>
               </div>
@@ -820,21 +918,19 @@ export default function TeacherSettingsPage() {
         )}
 
         {/* AI 服务配置 - 可折叠卡片 */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm border border-[var(--card-border)] overflow-hidden">
           <div
-            className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors"
+            className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[var(--hover-bg)] transition-colors"
             onClick={() => toggleCard("aiConfig")}
           >
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-gradient-to-br from-[#0052D9] to-[#00A870] rounded-lg flex items-center justify-center">
-                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5 text-[var(--primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19.8 15.3M14.25 3.104c.251.023.501.05.75.082M19.8 15.3l-1.57.393A9.065 9.065 0 0112 15a9.065 9.065 0 00-6.23.693L5 14.5m14.8.8l1.402 1.402c1.232 1.232.65 3.318-1.067 3.611A48.309 48.309 0 0112 21c-2.773 0-5.491-.235-8.135-.687-1.718-.293-2.3-2.379-1.067-3.61L5 14.5" />
                 </svg>
-              </div>
-              <span className="font-medium text-[#1A1A1A]">AI 服务配置</span>
+              <span className="font-medium text-[var(--foreground)]">AI 服务配置</span>
             </div>
             <svg
-              className={`w-5 h-5 text-gray-400 transition-transform ${expandedCards.aiConfig ? "rotate-180" : ""}`}
+              className={`w-5 h-5 text-[var(--muted-light)] transition-transform ${expandedCards.aiConfig ? "rotate-180" : ""}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -843,13 +939,19 @@ export default function TeacherSettingsPage() {
             </svg>
           </div>
           {expandedCards.aiConfig && (
-            <div className="px-6 pb-6 border-t border-gray-100">
+            <div className="px-6 pb-6 border-t border-[var(--card-border)]">
               {loading ? (
-                <div className="py-8 text-center text-gray-400">加载中...</div>
+                <div className="py-8 text-center text-[var(--muted-light)]">加载中...</div>
               ) : (
                 <div className="space-y-5 pt-4">
                   <div>
-                    <label className="block text-sm font-medium text-[#1A1A1A] mb-2">
+                    <p className="text-sm font-medium text-[var(--foreground)]">图文线路（默认）· 主模型</p>
+                    <p className="text-xs text-[var(--muted)] mt-0.5 mb-2">
+                      处理文本与图片请求（对话、分析、批阅等）。该线路为主线路，未配置备用时保持原有单模型行为。
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
                       API Base URL
                     </label>
                     <Input
@@ -858,13 +960,13 @@ export default function TeacherSettingsPage() {
                       placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
                       size="large"
                     />
-                    <p className="text-xs text-[#63666F] mt-1.5">
+                    <p className="text-xs text-[var(--muted)] mt-1.5">
                       支持 OpenAI 兼容接口的 AI 服务地址（如通义千问 DashScope、DeepSeek、智谱等）
                     </p>
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-[#1A1A1A] mb-2">
+                    <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
                       API Key
                     </label>
                     <div className="flex gap-2">
@@ -882,13 +984,13 @@ export default function TeacherSettingsPage() {
                         label={["显示", "隐藏"]}
                       />
                     </div>
-                    <p className="text-xs text-[#63666F] mt-1.5">
+                    <p className="text-xs text-[var(--muted)] mt-1.5">
                       API Key 仅存储在本地数据库中，不会上传到任何第三方服务
                     </p>
                   </div>
 
                   <div>
-                    <label className="block text-sm font-medium text-[#1A1A1A] mb-2">
+                    <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
                       AI 模型
                     </label>
                     <Input
@@ -897,28 +999,164 @@ export default function TeacherSettingsPage() {
                       placeholder="输入模型名称，如 qwen-turbo、gpt-4o"
                       size="large"
                     />
-                    <p className="text-xs text-[#63666F] mt-1.5">
+                    <p className="text-xs text-[var(--muted)] mt-1.5">
                       支持 OpenAI 兼容接口的模型名称，如 qwen-turbo、gpt-4o、deepseek-chat 等
                     </p>
                   </div>
 
+                  {/* 图文线路 · 备用模型（主模型连接失败/服务故障时自动切换） */}
+                  <div className="p-4 rounded-xl border border-[var(--card-border)] bg-gray-50/60 space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-[var(--foreground)]">图文线路 · 备用模型</p>
+                      <p className="text-xs text-[var(--muted)] mt-0.5">
+                        可选。主模型网络故障 / 超时 / HTTP 错误（key 无效、模型不存在、无权限、限流、服务端故障）时自动切换到备用模型。留空表示不启用主备切换。
+                      </p>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用 Base URL</label>
+                      <Input
+                        value={config.aiTextBackupBaseUrl ?? ""}
+                        onChange={(val) => setConfig({ ...config, aiTextBackupBaseUrl: val })}
+                        placeholder="https://api.deepseek.com/v1"
+                        size="small"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用 API Key</label>
+                      <div className="flex gap-2">
+                        <Input
+                          value={config.aiTextBackupApiKey ?? ""}
+                          onChange={(val) => setConfig({ ...config, aiTextBackupApiKey: val })}
+                          type={showTextBackupKey ? "text" : "password"}
+                          placeholder="sk-xxxxxxxxxxxxxxxx"
+                          size="small"
+                          className="flex-1"
+                        />
+                        <Switch
+                          value={showTextBackupKey}
+                          onChange={(val) => setShowTextBackupKey(val)}
+                          label={["显示", "隐藏"]}
+                        />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用模型</label>
+                      <Input
+                        value={config.aiTextBackupModel ?? ""}
+                        onChange={(val) => setConfig({ ...config, aiTextBackupModel: val })}
+                        placeholder="如 deepseek-chat、qwen-turbo"
+                        size="small"
+                      />
+                    </div>
+                  </div>
+
+                  {/* 全媒体线路（语音 / 图片 / 视频分析） */}
+                  <div className="p-4 rounded-xl border border-[var(--card-border)] bg-[var(--primary-light)]/40 space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-[var(--foreground)]">全媒体线路（语音 / 图片 / 视频分析）</p>
+                      <p className="text-xs text-[var(--muted)] mt-0.5">
+                        学生对话中带语音/音频的消息走此线路。主模型请填支持多模态的模型（如
+                        <code className="bg-white px-1 py-0.5 rounded">qwen3.8-omni-flash</code>）；填了主模型即启用该线路，未填时语音请求回落到图文线路。注意：图文线路的模型需支持图片，若配纯文本模型（如 deepseek-chat），图片请求会失败。
+                      </p>
+                    </div>
+                    <div className="space-y-3 border-b border-[var(--card-border)] pb-3">
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">主模型 Base URL</label>
+                        <Input
+                          value={config.aiOmniBaseUrl ?? ""}
+                          onChange={(val) => setConfig({ ...config, aiOmniBaseUrl: val })}
+                          placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                          size="small"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">主模型 API Key</label>
+                        <div className="flex gap-2">
+                          <Input
+                            value={config.aiOmniApiKey ?? ""}
+                            onChange={(val) => setConfig({ ...config, aiOmniApiKey: val })}
+                            type={showOmniKey ? "text" : "password"}
+                            placeholder="sk-xxxxxxxxxxxxxxxx"
+                            size="small"
+                            className="flex-1"
+                          />
+                          <Switch
+                            value={showOmniKey}
+                            onChange={(val) => setShowOmniKey(val)}
+                            label={["显示", "隐藏"]}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">主模型</label>
+                        <Input
+                          value={config.aiOmniModel ?? ""}
+                          onChange={(val) => setConfig({ ...config, aiOmniModel: val })}
+                          placeholder="如 qwen3.8-omni-flash"
+                          size="small"
+                        />
+                      </div>
+                    </div>
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-xs font-medium text-[var(--muted)] mb-1">备用模型（可选，自动切换）</p>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用 Base URL</label>
+                        <Input
+                          value={config.aiOmniBackupBaseUrl ?? ""}
+                          onChange={(val) => setConfig({ ...config, aiOmniBackupBaseUrl: val })}
+                          placeholder="https://dashscope.aliyuncs.com/compatible-mode/v1"
+                          size="small"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用 API Key</label>
+                        <div className="flex gap-2">
+                          <Input
+                            value={config.aiOmniBackupApiKey ?? ""}
+                            onChange={(val) => setConfig({ ...config, aiOmniBackupApiKey: val })}
+                            type={showOmniBackupKey ? "text" : "password"}
+                            placeholder="sk-xxxxxxxxxxxxxxxx"
+                            size="small"
+                            className="flex-1"
+                          />
+                          <Switch
+                            value={showOmniBackupKey}
+                            onChange={(val) => setShowOmniBackupKey(val)}
+                            label={["显示", "隐藏"]}
+                          />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-[var(--muted)] mb-1">备用模型</label>
+                        <Input
+                          value={config.aiOmniBackupModel ?? ""}
+                          onChange={(val) => setConfig({ ...config, aiOmniBackupModel: val })}
+                          placeholder="如 qwen3.8-omni-flash"
+                          size="small"
+                        />
+                      </div>
+                    </div>
+                  </div>
+
                   {/* 思考模式开关 */}
-                  <div className="flex items-start gap-3 p-4 rounded-xl bg-[#F0F7FF] border border-[#D0E4FF]">
+                  <div className="flex items-start gap-3 p-4 rounded-xl bg-[var(--primary-light)] border border-[var(--primary-light)]">
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
-                        <div className="w-5 h-5 rounded-full bg-[#0052D9] flex items-center justify-center flex-shrink-0 mt-0.5">
+                        <div className="w-5 h-5 rounded-full bg-[var(--primary)] flex items-center justify-center flex-shrink-0 mt-0.5">
                           <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 11-18 0 9 9 0 0118 0z" />
                           </svg>
                         </div>
                         <div>
-                          <p className="text-sm font-medium text-[#1A1A1A]">推理思考模式</p>
-                          <p className="text-xs text-[#63666F] mt-0.5">
+                          <p className="text-sm font-medium text-[var(--foreground)]">推理思考模式</p>
+                          <p className="text-xs text-[var(--muted)] mt-0.5">
                             启用后，DeepSeek 模型会返回 <code className="bg-white px-1 py-0.5 rounded">reasoning_content</code>（内部思考过程），消耗更多 token，但回答质量更高
                           </p>
                         </div>
                       </div>
-                      <p className="text-xs text-[#0052D9] mt-2 ml-7">
+                      <p className="text-xs text-[var(--primary)] mt-2 ml-7">
                         注意：仅 DeepSeek V4 系列模型（如 deepseek-v4-flash、deepseek-v4-pro）支持此功能，开启后对话响应可能变慢
                       </p>
                     </div>
@@ -929,15 +1167,15 @@ export default function TeacherSettingsPage() {
                   </div>
 
                   {/* AI 并发限制 */}
-                  <div className="flex items-center justify-between py-3 border-b border-gray-100">
+                  <div className="flex items-center justify-between py-3 border-b border-[var(--card-border)]">
                     <div className="flex-1">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium text-[#1A1A1A]">AI 并发限制</span>
+                        <span className="text-sm font-medium text-[var(--foreground)]">AI 并发限制</span>
                       </div>
-                      <p className="text-xs text-gray-500 mt-1">
+                      <p className="text-xs text-[var(--muted)] mt-1">
                         同时处理的 AI 请求数量。数值越大响应越快，但可能触发 API 限流
                       </p>
-                      <p className="text-xs text-[#0052D9] mt-1">
+                      <p className="text-xs text-[var(--primary)] mt-1">
                         建议：小班课(≤30人)设 10-20，中班课(30-60人)设 20-40，大班课(60+人)设 40-100
                       </p>
                     </div>
@@ -948,26 +1186,26 @@ export default function TeacherSettingsPage() {
                         onChange={(val) => setAiMaxConcurrent(Number(val) || 20)}
                         style={{ width: "120px" }}
                       />
-                      <span className="text-xs text-gray-400">个</span>
+                      <span className="text-xs text-[var(--muted-light)]">个</span>
                     </div>
                   </div>
 
                   {/* Action buttons */}
-                  <div className="flex items-center gap-3 pt-3 border-t border-gray-100">
+                  <div className="flex items-center gap-3 pt-3 border-t border-[var(--card-border)]">
                     <Button
                       theme="primary"
                       onClick={handleSave}
                       loading={saving}
-                      className="bg-gradient-to-r from-[#0052D9] to-[#0066e0]"
+                      className="bg-gradient-to-r from-[var(--primary)] to-[var(--primary-dark)]"
                     >
                       保存配置
                     </Button>
                     <Button
                       variant="outline"
-                      onClick={handleTestConnection}
-                      loading={testing}
+                      onClick={handleTestAll}
+                      loading={testingAll}
                     >
-                      测试连接
+                      测试全部线路
                     </Button>
                     <Button
                       variant="outline"
@@ -983,10 +1221,75 @@ export default function TeacherSettingsPage() {
                     </Button>
                   </div>
 
+                  {/* 线路连通性测试结果（一键「测试全部线路」后展示） */}
+                  {testResults && testResults.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-sm font-medium text-[var(--foreground)]">线路连通性测试结果</p>
+                      {testResults.map((r) => (
+                        <div
+                          key={r.key}
+                          className={`flex items-center gap-3 p-3 rounded-lg border ${
+                            r.status === "ok"
+                              ? "border-[var(--success-light)] bg-[var(--success-light)]"
+                              : r.status === "fail"
+                                ? "border-[var(--danger-light)] bg-[var(--danger-light)]"
+                                : "border-[var(--card-border)] bg-gray-50"
+                          }`}
+                        >
+                          {/* 状态圆点：实色底配白字（浅色 --danger-light 等只配深色文字，勿反过来） */}
+                          <span
+                            className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 ${
+                              r.status === "ok"
+                                ? "bg-[var(--success)]"
+                                : r.status === "fail"
+                                  ? "bg-[var(--danger)]"
+                                  : r.status === "pending"
+                                    ? "bg-[var(--primary)]"
+                                    : "bg-[var(--muted-light)]"
+                            }`}
+                          >
+                            {r.status === "ok" && (
+                              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+                              </svg>
+                            )}
+                            {r.status === "fail" && (
+                              <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                              </svg>
+                            )}
+                            {r.status === "skipped" && <span className="w-2 h-0.5 bg-white rounded" />}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="text-sm font-medium text-[var(--foreground)]">{r.label}</span>
+                              <span className="text-xs text-[var(--muted)] truncate">{r.model}</span>
+                              {r.durationMs !== undefined && (
+                                <span className="text-xs text-[var(--muted)]">{(r.durationMs / 1000).toFixed(1)}s</span>
+                              )}
+                              {r.thinkingEnabled === true && (
+                                <span className="text-xs px-1.5 py-0.5 rounded bg-white/80 text-[var(--muted)]">思考模式</span>
+                              )}
+                            </div>
+                            {r.status === "pending" && (
+                              <p className="text-xs text-[var(--muted)] mt-0.5">测试中…</p>
+                            )}
+                            {r.status === "fail" && r.error && (
+                              <p className="text-xs text-[var(--danger)] mt-0.5 truncate">{r.error}</p>
+                            )}
+                            {r.status === "skipped" && (
+                              <p className="text-xs text-[var(--muted)] mt-0.5">未填写完整配置，已跳过（填齐 URL、Key、模型后自动纳入测试）</p>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Status info */}
-                  <div className={`p-4 rounded-xl ${config.aiBaseUrl && config.aiApiKey && config.aiModel ? "bg-[#ECFDF5]" : "bg-[#FFF7ED]"}`}>
+                  <div className={`p-4 rounded-xl ${config.aiBaseUrl && config.aiApiKey && config.aiModel ? "bg-[var(--success-light)]" : "bg-[var(--warning-light)]"}`}>
                     <div className="flex items-start gap-3">
-                      <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${config.aiBaseUrl && config.aiApiKey && config.aiModel ? "bg-[#00A870]" : "bg-[#ED7B2F]"}`}>
+                      <div className={`w-5 h-5 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5 ${config.aiBaseUrl && config.aiApiKey && config.aiModel ? "bg-[var(--success)]" : "bg-[var(--warning)]"}`}>
                         {config.aiBaseUrl && config.aiApiKey && config.aiModel ? (
                           <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
@@ -998,12 +1301,12 @@ export default function TeacherSettingsPage() {
                         )}
                       </div>
                       <div>
-                        <p className={`text-sm font-medium ${config.aiBaseUrl && config.aiApiKey && config.aiModel ? "text-[#00A870]" : "text-[#ED7B2F]"}`}>
+                        <p className={`text-sm font-medium ${config.aiBaseUrl && config.aiApiKey && config.aiModel ? "text-[var(--success)]" : "text-[var(--warning)]"}`}>
                           {config.aiBaseUrl && config.aiApiKey && config.aiModel
                             ? `AI 服务已配置（${config.aiModel}）`
                             : "AI 服务未配置"}
                         </p>
-                        <p className="text-xs text-[#63666F] mt-0.5">
+                        <p className="text-xs text-[var(--muted)] mt-0.5">
                           {config.aiBaseUrl && config.aiApiKey && config.aiModel
                             ? "学生可以正常与 AI 智能体对话"
                             : "请填写完整的 AI 服务配置，否则学生无法使用对话功能"}
@@ -1018,21 +1321,19 @@ export default function TeacherSettingsPage() {
         </div>
 
         {/* 用户信息设置 - 可折叠卡片 */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm border border-[var(--card-border)] overflow-hidden">
           <div
-            className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors"
+            className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[var(--hover-bg)] transition-colors"
             onClick={() => toggleCard("userProfile")}
           >
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-gradient-to-br from-[#ED7B2F] to-[#0052D9] rounded-lg flex items-center justify-center">
-                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5 text-[var(--primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.501 20.118a7.5 7.5 0 0114.998 0A17.933 17.933 0 0112 21.75c-2.676 0-5.216-.584-7.499-1.632z" />
                 </svg>
-              </div>
-              <span className="font-medium text-[#1A1A1A]">用户信息设置</span>
+              <span className="font-medium text-[var(--foreground)]">用户信息设置</span>
             </div>
             <svg
-              className={`w-5 h-5 text-gray-400 transition-transform ${expandedCards.userProfile ? "rotate-180" : ""}`}
+              className={`w-5 h-5 text-[var(--muted-light)] transition-transform ${expandedCards.userProfile ? "rotate-180" : ""}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -1041,10 +1342,10 @@ export default function TeacherSettingsPage() {
             </svg>
           </div>
           {expandedCards.userProfile && (
-            <div className="px-6 pb-6 border-t border-gray-100">
+            <div className="px-6 pb-6 border-t border-[var(--card-border)]">
           {isProfileIncomplete() && (
-            <div className="mb-4 p-3 rounded-lg bg-[#FFF7ED] border border-[#ED7B2F]/20">
-              <p className="text-sm text-[#ED7B2F]">
+            <div className="mb-4 p-3 rounded-lg bg-[var(--warning-light)] border border-[var(--warning-light)]">
+              <p className="text-sm text-[var(--warning)]">
                 您的用户信息不完整，请完善以下信息
               </p>
             </div>
@@ -1052,8 +1353,8 @@ export default function TeacherSettingsPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-[#1A1A1A] mb-2">
-                  姓名 <span className="text-red-500">*</span>
+                <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                  姓名 <span className="text-[var(--danger)]">*</span>
                 </label>
                 <Input
                   value={profileForm.name}
@@ -1063,7 +1364,7 @@ export default function TeacherSettingsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-[#1A1A1A] mb-2">
+                <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
                   性别
                 </label>
                 <div className="flex gap-4">
@@ -1075,9 +1376,9 @@ export default function TeacherSettingsPage() {
                         value={g}
                         checked={profileForm.gender === g}
                         onChange={() => setProfileForm({ ...profileForm, gender: g })}
-                        className="w-4 h-4 text-[#0052D9]"
+                        className="w-4 h-4 text-[var(--primary)]"
                       />
-                      <span className="text-sm text-[#1A1A1A]">{g}</span>
+                      <span className="text-sm text-[var(--foreground)]">{g}</span>
                     </label>
                   ))}
                 </div>
@@ -1086,8 +1387,8 @@ export default function TeacherSettingsPage() {
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm font-medium text-[#1A1A1A] mb-2">
-                  手机号 <span className="text-red-500">*</span>
+                <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+                  手机号 <span className="text-[var(--danger)]">*</span>
                 </label>
                 <Input
                   value={profileForm.phone}
@@ -1097,7 +1398,7 @@ export default function TeacherSettingsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-[#1A1A1A] mb-2">
+                <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
                   单位（学校）名称
                 </label>
                 <Input
@@ -1109,8 +1410,8 @@ export default function TeacherSettingsPage() {
               </div>
             </div>
 
-            <div className="pt-4 border-t border-gray-200">
-              <label className="block text-sm font-medium text-[#63666F] mb-2">
+            <div className="pt-4 border-t border-[var(--card-border)]">
+              <label className="block text-sm font-medium text-[var(--muted)] mb-2">
                 邮箱（已绑定，不可修改）
               </label>
               <Input
@@ -1121,8 +1422,8 @@ export default function TeacherSettingsPage() {
               />
             </div>
 
-            <div className="pt-4 border-t border-gray-200">
-              <label className="block text-sm font-medium text-[#1A1A1A] mb-2">
+            <div className="pt-4 border-t border-[var(--card-border)]">
+              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
                 老师座右铭
               </label>
               <Input
@@ -1133,8 +1434,8 @@ export default function TeacherSettingsPage() {
               />
             </div>
 
-            <div className="pt-4 border-t border-gray-200">
-              <label className="block text-sm font-medium text-[#1A1A1A] mb-2">
+            <div className="pt-4 border-t border-[var(--card-border)]">
+              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
                 学生座右铭
               </label>
               <Input
@@ -1145,11 +1446,11 @@ export default function TeacherSettingsPage() {
               />
             </div>
 
-            <div className="pt-4 border-t border-gray-200">
-              <h4 className="text-sm font-medium text-[#1A1A1A] mb-3">修改密码（选填）</h4>
+            <div className="pt-4 border-t border-[var(--card-border)]">
+              <h4 className="text-sm font-medium text-[var(--foreground)] mb-3">修改密码（选填）</h4>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-[#1A1A1A] mb-2">
+                  <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
                     当前密码
                   </label>
                   <Input
@@ -1161,7 +1462,7 @@ export default function TeacherSettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-[#1A1A1A] mb-2">
+                  <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
                     新密码
                   </label>
                   <Input
@@ -1173,12 +1474,12 @@ export default function TeacherSettingsPage() {
                   />
                 </div>
               </div>
-              <p className="text-xs text-[#63666F] mt-2">
+              <p className="text-xs text-[var(--muted)] mt-2">
                 如需修改密码，请同时填写当前密码和新密码
               </p>
             </div>
 
-            <div className="pt-4 border-t border-gray-200">
+            <div className="pt-4 border-t border-[var(--card-border)]">
               <Button
                 theme="primary"
                 onClick={handleSaveProfile}
@@ -1193,21 +1494,19 @@ export default function TeacherSettingsPage() {
         </div>
 
         {/* 学情洞察配置 - 可折叠卡片 */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm border border-[var(--card-border)] overflow-hidden">
           <div
-            className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors"
+            className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[var(--hover-bg)] transition-colors"
             onClick={() => toggleCard("insightConfig")}
           >
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-gradient-to-br from-[#00A870] to-[#0052D9] rounded-lg flex items-center justify-center">
-                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5 text-[var(--primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V4.125z" />
                 </svg>
-              </div>
-              <span className="font-medium text-[#1A1A1A]">学情洞察配置</span>
+              <span className="font-medium text-[var(--foreground)]">学情洞察配置</span>
             </div>
             <svg
-              className={`w-5 h-5 text-gray-400 transition-transform ${expandedCards.insightConfig ? "rotate-180" : ""}`}
+              className={`w-5 h-5 text-[var(--muted-light)] transition-transform ${expandedCards.insightConfig ? "rotate-180" : ""}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -1216,12 +1515,12 @@ export default function TeacherSettingsPage() {
             </svg>
           </div>
           {expandedCards.insightConfig && (
-            <div className="px-6 pb-6 border-t border-gray-100">
+            <div className="px-6 pb-6 border-t border-[var(--card-border)]">
               <div className="space-y-4 pt-4">
 
                 {/* 输出约束配置 */}
-                <div className="mt-6 pt-6 border-t border-gray-200">
-                  <h3 className="text-sm font-medium text-[#1A1A1A] mb-4">学情分析约束</h3>
+                <div className="mt-6 pt-6 border-t border-[var(--card-border)]">
+                  <h3 className="text-sm font-medium text-[var(--foreground)] mb-4">学情分析约束</h3>
 
                   <div className="space-y-4">
                     {/* 星星评分开关 */}
@@ -1231,17 +1530,17 @@ export default function TeacherSettingsPage() {
                       onChange={(val) => setRequireStarRating(val)}
                     />
                       <div>
-                        <span className="text-sm font-medium text-[#1A1A1A]">启动指数评价（限对学生的对话活动）</span>
-                        <p className="text-xs text-[#63666F]">开启后，学生分析只输出 6-10 个★评分，不显示任何文字</p>
+                        <span className="text-sm font-medium text-[var(--foreground)]">启动指数评价（限对学生的对话活动）</span>
+                        <p className="text-xs text-[var(--muted)]">开启后，学生分析只输出 6-10 个★评分，不显示任何文字</p>
                       </div>
                     </div>
 
                     {/* 字数限制 */}
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-sm text-[#63666F] mb-2">
+                        <label className="block text-sm text-[var(--muted)] mb-2">
                           个人分析字数上限
-                          <span className="text-xs text-[#0052D9] ml-1">
+                          <span className="text-xs text-[var(--primary)] ml-1">
                             （当前: {studentWordLimit ?? "不限"} 字）
                           </span>
                         </label>
@@ -1261,12 +1560,12 @@ export default function TeacherSettingsPage() {
                           placeholder="留空则不限"
                           size="large"
                         />
-                        <p className="text-xs text-[#63666F] mt-1">建议范围: 100-5000 字，留空则不限制</p>
+                        <p className="text-xs text-[var(--muted)] mt-1">建议范围: 100-5000 字，留空则不限制</p>
                       </div>
                       <div>
-                        <label className="block text-sm text-[#63666F] mb-2">
+                        <label className="block text-sm text-[var(--muted)] mb-2">
                           班级分析字数上限
-                          <span className="text-xs text-[#0052D9] ml-1">
+                          <span className="text-xs text-[var(--primary)] ml-1">
                             （当前: {classWordLimit ?? "不限"} 字）
                           </span>
                         </label>
@@ -1286,13 +1585,13 @@ export default function TeacherSettingsPage() {
                           placeholder="留空则不限"
                           size="large"
                         />
-                        <p className="text-xs text-[#63666F] mt-1">建议范围: 200-10000 字，留空则不限制</p>
+                        <p className="text-xs text-[var(--muted)] mt-1">建议范围: 200-10000 字，留空则不限制</p>
                       </div>
                     </div>
                   </div>
 
                   {/* 统一的保存按钮 */}
-                  <div className="mt-4 pt-4 border-t border-gray-200">
+                  <div className="mt-4 pt-4 border-t border-[var(--card-border)]">
                     <Button
                       theme="primary"
                       size="small"
@@ -1308,22 +1607,97 @@ export default function TeacherSettingsPage() {
           )}
         </div>
 
-        {/* 系统信息 - 可折叠卡片 */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        {/* 界面主题 - 可折叠卡片 */}
+        <div className="bg-white rounded-xl shadow-sm border border-[var(--card-border)] overflow-hidden">
           <div
-            className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-gray-50 transition-colors"
+            className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[var(--hover-bg)] transition-colors"
+            onClick={() => toggleCard("theme")}
+          >
+            <div className="flex items-center gap-3">
+              <svg className="w-5 h-5 text-[var(--primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9.53 16.122a3 3 0 00-5.78 1.128 2.25 2.25 0 01-2.4 2.245 4.5 4.5 0 008.4-2.245c0-.399-.078-.78-.22-1.128zm0 0a15.998 15.998 0 003.388-1.62m-5.048 4.025a3 3 0 01-4.293 0l-.828-.828a3 3 0 010-4.293l8.486-8.485a3 3 0 014.293 0l.828.828a3 3 0 010 4.293l-8.485 8.485z" />
+                </svg>
+              <span className="font-medium text-[var(--foreground)]">界面主题</span>
+            </div>
+            <svg
+              className={`w-5 h-5 text-[var(--muted-light)] transition-transform ${expandedCards.theme ? "rotate-180" : ""}`}
+              fill="none"
+              viewBox="0 0 24 24"
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+          {expandedCards.theme && (
+            <div className="px-6 pb-6 border-t border-[var(--card-border)]">
+              <div className="space-y-4 pt-4">
+                <p className="text-sm text-[var(--muted)]">选择喜欢的配色方案，切换后立即生效。</p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {TEACHER_THEMES.map((t) => {
+                    const selected = teacherTheme === t.key;
+                    return (
+                      <button
+                        key={t.key}
+                        onClick={() => {
+                          setTeacherTheme(t.key);
+                          saveTeacherTheme(t.key);
+                        }}
+                        className={`text-left rounded-xl border p-4 transition-all hover:shadow-md ${
+                          selected
+                            ? "border-[var(--primary)] bg-[var(--primary-lighter)] shadow-[var(--card-shadow)]"
+                            : "border-[var(--card-border)] bg-[var(--card-bg)] hover:bg-[var(--hover-bg)]"
+                        }`}
+                      >
+                        <div className="flex items-center gap-3 mb-3">
+                          <span
+                            className="w-8 h-8 rounded-full border-2 border-white shadow-sm"
+                            style={{ background: `linear-gradient(135deg, ${t.colors.primary} 0%, ${t.colors.accent} 100%)` }}
+                          />
+                          <span className="text-sm font-semibold text-[var(--foreground)]">{t.label}</span>
+                          {selected && (
+                            <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-[var(--primary)] text-white">
+                              使用中
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex gap-2">
+                          {[
+                            t.colors.primary,
+                            t.colors.secondary,
+                            t.colors.accent,
+                            t.colors.success,
+                            t.colors.warning,
+                          ].map((c, i) => (
+                            <span
+                              key={i}
+                              className="w-5 h-5 rounded border border-black/5"
+                              style={{ backgroundColor: c }}
+                            />
+                          ))}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 系统信息 - 可折叠卡片 */}
+        <div className="bg-white rounded-xl shadow-sm border border-[var(--card-border)] overflow-hidden">
+          <div
+            className="flex items-center justify-between px-6 py-4 cursor-pointer hover:bg-[var(--hover-bg)] transition-colors"
             onClick={() => toggleCard("systemInfo")}
           >
             <div className="flex items-center gap-3">
-              <div className="w-8 h-8 bg-[#EDF1F7] rounded-lg flex items-center justify-center">
-                <svg className="w-4 h-4 text-[#63666F]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5 text-[var(--muted)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z" />
                 </svg>
-              </div>
-              <span className="font-medium text-[#1A1A1A]">系统信息</span>
+              <span className="font-medium text-[var(--foreground)]">系统信息</span>
             </div>
             <svg
-              className={`w-5 h-5 text-gray-400 transition-transform ${expandedCards.systemInfo ? "rotate-180" : ""}`}
+              className={`w-5 h-5 text-[var(--muted-light)] transition-transform ${expandedCards.systemInfo ? "rotate-180" : ""}`}
               fill="none"
               viewBox="0 0 24 24"
               stroke="currentColor"
@@ -1332,7 +1706,7 @@ export default function TeacherSettingsPage() {
             </svg>
           </div>
           {expandedCards.systemInfo && (
-            <div className="px-6 pb-6 border-t border-gray-100">
+            <div className="px-6 pb-6 border-t border-[var(--card-border)]">
               <div className="space-y-3 pt-4">
                 {[
                   { label: "版本", value: "QuickClass 开源版本" },
@@ -1343,17 +1717,17 @@ export default function TeacherSettingsPage() {
                   { label: "访问地址", value: typeof window !== "undefined" ? `${window.location.host}` : "localhost:3000" },
                 ].map((item, index) => (
                   <div key={index} className="flex items-center justify-between py-2">
-                    <span className="text-sm text-[#63666F]">{item.label}</span>
-                    <span className="text-sm font-medium text-[#1A1A1A] font-mono">{item.value}</span>
+                    <span className="text-sm text-[var(--muted)]">{item.label}</span>
+                    <span className="text-sm font-medium text-[var(--foreground)] font-mono">{item.value}</span>
                   </div>
                 ))}
 
                 {/* 对话预警阈值设置 */}
-                <div className="pt-3 border-t border-gray-100">
+                <div className="pt-3 border-t border-[var(--card-border)]">
                   <div className="flex items-center justify-between">
                     <div>
-                      <span className="text-sm text-[#63666F]">对话预警阈值</span>
-                      <p className="text-xs text-amber-600 mt-0.5">超过此数量时显示预警提示</p>
+                      <span className="text-sm text-[var(--muted)]">对话预警阈值</span>
+                      <p className="text-xs text-[var(--warning)] mt-0.5">超过此数量时显示预警提示</p>
                     </div>
                     <div className="flex items-center gap-2">
                       <Input
@@ -1368,7 +1742,7 @@ export default function TeacherSettingsPage() {
                         style={{ width: "120px" }}
                         size="small"
                       />
-                      <span className="text-xs text-gray-400">条</span>
+                      <span className="text-xs text-[var(--muted-light)]">条</span>
                       <Button
                         size="small"
                         variant="outline"
@@ -1406,18 +1780,16 @@ export default function TeacherSettingsPage() {
         </div>
 
         {/* 系统升级 */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl shadow-sm border border-[var(--card-border)] overflow-hidden">
           <div className="px-6 py-4">
             <div className="flex items-center gap-3 mb-4">
-              <div className="w-8 h-8 bg-gradient-to-br from-[#0052D9] to-[#00A870] rounded-lg flex items-center justify-center">
-                <svg className="w-4 h-4 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="w-5 h-5 text-[var(--primary)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                   <path strokeLinecap="round" strokeLinejoin="round" d="M3 15c0 2.828 0 4.243.879 5.121C4.757 21 6.172 21 9 21h6c2.828 0 4.243 0 5.121-.879C21 19.243 21 17.828 21 15M12 3v12m0 0l-3-3m3 3l3-3" />
                 </svg>
-              </div>
               <div>
-                <span className="font-medium text-[#1A1A1A]">系统升级</span>
+                <span className="font-medium text-[var(--foreground)]">系统升级</span>
                 {versionInfo && (
-                  <span className="text-xs text-[#63666F] ml-2">当前 {versionInfo.version}</span>
+                  <span className="text-xs text-[var(--muted)] ml-2">当前 {versionInfo.version}</span>
                 )}
               </div>
               <Button
@@ -1434,18 +1806,18 @@ export default function TeacherSettingsPage() {
             {versionCheckResult && !upgradeResult && (
               <div className={`mb-4 p-3 rounded-lg border ${
                 versionCheckResult.type === "new"
-                  ? "bg-[#EDF5FF] border-[#0052D9]/20"
+                  ? "bg-[var(--primary-light)] border-[var(--primary-light)]"
                   : versionCheckResult.type === "error"
-                  ? "bg-[#FFF7ED] border-[#ED7B2F]/20"
-                  : "bg-[#F5F7FA] border-[#E3E5E7]"
+                  ? "bg-[var(--warning-light)] border-[var(--warning-light)]"
+                  : "bg-[var(--hover-bg)] border-[var(--card-border)]"
               }`}>
                 <div className="flex items-start gap-3">
                   <div className={`w-5 h-5 rounded-full flex items-center justify-center shrink-0 mt-0.5 ${
                     versionCheckResult.type === "new"
-                      ? "bg-[#0052D9]"
+                      ? "bg-[var(--primary)]"
                       : versionCheckResult.type === "error"
-                      ? "bg-[#ED7B2F]"
-                      : "bg-[#63666F]"
+                      ? "bg-[var(--warning)]"
+                      : "bg-[var(--muted)]"
                   }`}>
                     {versionCheckResult.type === "new" ? (
                       <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -1460,15 +1832,15 @@ export default function TeacherSettingsPage() {
                   <div className="flex-1">
                     <p className={`text-sm font-medium ${
                       versionCheckResult.type === "new"
-                        ? "text-[#0052D9]"
+                        ? "text-[var(--primary)]"
                         : versionCheckResult.type === "error"
-                        ? "text-[#ED7B2F]"
-                        : "text-[#63666F]"
+                        ? "text-[var(--warning)]"
+                        : "text-[var(--muted)]"
                     }`}>
                       {versionCheckResult.message}
                     </p>
                     {versionCheckResult.type === "new" && updateChangelog && (
-                      <p className="text-xs text-[#63666F] mt-0.5">{updateChangelog}</p>
+                      <p className="text-xs text-[var(--muted)] mt-0.5">{updateChangelog}</p>
                     )}
                     {versionCheckResult.type === "new" && (
                       <div className="mt-2 flex items-center gap-2">
@@ -1481,7 +1853,7 @@ export default function TeacherSettingsPage() {
                             去下载升级包
                           </Button>
                         ) : (
-                          <p className="text-xs text-[#63666F]">请下载最新升级包，回到此处上传安装</p>
+                          <p className="text-xs text-[var(--muted)]">请下载最新升级包，回到此处上传安装</p>
                         )}
                       </div>
                     )}
@@ -1492,49 +1864,49 @@ export default function TeacherSettingsPage() {
 
             {upgradeResult ? (
               upgradeResult.success ? (
-                <div className="p-4 rounded-xl bg-[#ECFDF5] border border-[#00A870]/20">
+                <div className="p-4 rounded-xl bg-[var(--success-light)] border border-[var(--success-light)]">
                   <div className="flex items-start gap-3">
-                    <div className="w-5 h-5 rounded-full bg-[#00A870] flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <div className="w-5 h-5 rounded-full bg-[var(--success)] flex items-center justify-center flex-shrink-0 mt-0.5">
                       <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M4.5 12.75l6 6 9-13.5" />
                       </svg>
                     </div>
                     <div className="flex-1">
-                      <p className="text-sm font-medium text-[#00A870]">升级包准备完成</p>
+                      <p className="text-sm font-medium text-[var(--success)]">升级包准备完成</p>
                       {upgradeResult.newVersion && (
                         <div className="flex items-center gap-2 mt-1.5">
-                          <span className="text-xs px-2 py-0.5 bg-gray-100 rounded text-[#63666F] font-mono">
+                          <span className="text-xs px-2 py-0.5 bg-[var(--primary-lighter)] rounded text-[var(--muted)] font-mono">
                             {versionInfo?.version || "当前"}
                           </span>
-                          <svg className="w-4 h-4 text-[#00A870]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                          <svg className="w-4 h-4 text-[var(--success)]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                             <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 4.5L21 12m0 0l-7.5 7.5M21 12H3" />
                           </svg>
-                          <span className="text-xs px-2 py-0.5 bg-[#00A870]/10 rounded text-[#00A870] font-mono font-semibold">
+                          <span className="text-xs px-2 py-0.5 bg-[var(--success-light)] rounded text-[var(--success)] font-mono font-semibold">
                             {upgradeResult.newVersion}
                           </span>
                         </div>
                       )}
-                      <p className="text-xs text-[#63666F] mt-1.5">{upgradeResult.message}</p>
-                      <div className="mt-3 bg-[#F5F7FA] rounded-lg p-3 border border-[#E3E5E7]">
-                        <p className="text-xs font-medium text-[#2C2D30] mb-2">重启服务步骤</p>
-                        <div className="space-y-2 text-xs text-[#63666F]">
+                      <p className="text-xs text-[var(--muted)] mt-1.5">{upgradeResult.message}</p>
+                      <div className="mt-3 bg-[var(--hover-bg)] rounded-lg p-3 border border-[var(--card-border)]">
+                        <p className="text-xs font-medium text-[var(--foreground)] mb-2">重启服务步骤</p>
+                        <div className="space-y-2 text-xs text-[var(--muted)]">
                           <div className="flex items-start gap-2">
-                            <span className="w-5 h-5 rounded bg-[#0052D9] text-white flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">M</span>
+                            <span className="w-5 h-5 rounded bg-[var(--primary)] text-white flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">M</span>
                             <div>
-                              <span className="font-medium text-[#2C2D30]">macOS 用户：</span>
+                              <span className="font-medium text-[var(--foreground)]">macOS 用户：</span>
                               <div className="mt-1 space-y-1">
-                                <p><span className="font-medium">方法一（如果黑色命令行窗口还在运行）：</span>切换到运行 QuickClass 的黑色命令行窗口，按 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">Ctrl + C</code> 停止服务，然后输入 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">bash start.sh</code> 按回车重新启动</p>
-                                <p><span className="font-medium">方法二（如果黑色命令行窗口已关闭）：</span>打开「终端」应用，输入 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">cd </code>（注意后面有空格），将 QuickClass 文件夹拖入终端窗口，按回车，然后输入 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">bash start.sh</code> 按回车</p>
+                                <p><span className="font-medium">方法一（如果黑色命令行窗口还在运行）：</span>切换到运行 QuickClass 的黑色命令行窗口，按 <code className="px-1 bg-[var(--primary-lighter)] rounded font-mono text-[var(--primary)]">Ctrl + C</code> 停止服务，然后输入 <code className="px-1 bg-[var(--primary-lighter)] rounded font-mono text-[var(--primary)]">bash start.sh</code> 按回车重新启动</p>
+                                <p><span className="font-medium">方法二（如果黑色命令行窗口已关闭）：</span>打开「终端」应用，输入 <code className="px-1 bg-[var(--primary-lighter)] rounded font-mono text-[var(--primary)]">cd </code>（注意后面有空格），将 QuickClass 文件夹拖入终端窗口，按回车，然后输入 <code className="px-1 bg-[var(--primary-lighter)] rounded font-mono text-[var(--primary)]">bash start.sh</code> 按回车</p>
                               </div>
                             </div>
                           </div>
                           <div className="flex items-start gap-2">
-                            <span className="w-5 h-5 rounded bg-[#0052D9] text-white flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">W</span>
+                            <span className="w-5 h-5 rounded bg-[var(--primary)] text-white flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">W</span>
                             <div>
-                              <span className="font-medium text-[#2C2D30]">Windows 用户：</span>
+                              <span className="font-medium text-[var(--foreground)]">Windows 用户：</span>
                               <div className="mt-1 space-y-1">
-                                <p><span className="font-medium">方法一（如果黑色命令行窗口还在运行）：</span>切换到运行 QuickClass 的黑色命令行窗口，按 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">Ctrl + C</code>，再按 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">Y</code> 确认停止服务，然后输入 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">start.bat</code> 按回车重新启动</p>
-                                <p><span className="font-medium">方法二（如果黑色命令行窗口已关闭）：</span>打开 QuickClass 文件夹，双击 <code className="px-1 bg-gray-100 rounded font-mono text-[#0052D9]">start.bat</code></p>
+                                <p><span className="font-medium">方法一（如果黑色命令行窗口还在运行）：</span>切换到运行 QuickClass 的黑色命令行窗口，按 <code className="px-1 bg-[var(--primary-lighter)] rounded font-mono text-[var(--primary)]">Ctrl + C</code>，再按 <code className="px-1 bg-[var(--primary-lighter)] rounded font-mono text-[var(--primary)]">Y</code> 确认停止服务，然后输入 <code className="px-1 bg-[var(--primary-lighter)] rounded font-mono text-[var(--primary)]">start.bat</code> 按回车重新启动</p>
+                                <p><span className="font-medium">方法二（如果黑色命令行窗口已关闭）：</span>打开 QuickClass 文件夹，双击 <code className="px-1 bg-[var(--primary-lighter)] rounded font-mono text-[var(--primary)]">start.bat</code></p>
                               </div>
                             </div>
                           </div>
@@ -1556,16 +1928,16 @@ export default function TeacherSettingsPage() {
                   </div>
                 </div>
               ) : (
-                <div className="p-4 rounded-xl bg-[#FFF7ED] border border-[#ED7B2F]/20">
+                <div className="p-4 rounded-xl bg-[var(--warning-light)] border border-[var(--warning-light)]">
                   <div className="flex items-start gap-3">
-                    <div className="w-5 h-5 rounded-full bg-[#ED7B2F] flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <div className="w-5 h-5 rounded-full bg-[var(--warning)] flex items-center justify-center flex-shrink-0 mt-0.5">
                       <svg className="w-3 h-3 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                         <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
                       </svg>
                     </div>
                     <div>
-                      <p className="text-sm font-medium text-[#ED7B2F]">升级失败</p>
-                      <p className="text-xs text-[#63666F] mt-0.5">{upgradeResult.message}</p>
+                      <p className="text-sm font-medium text-[var(--warning)]">升级失败</p>
+                      <p className="text-xs text-[var(--muted)] mt-0.5">{upgradeResult.message}</p>
                       <Button
                         size="small"
                         variant="outline"
@@ -1583,19 +1955,19 @@ export default function TeacherSettingsPage() {
               )
             ) : (
               <div>
-                <p className="text-sm text-[#63666F] mb-4">
+                <p className="text-sm text-[var(--muted)] mb-4">
                   可一键从官方仓库获取最新版本，或手动下载升级包后在此上传安装。重启服务后自动完成升级，数据库和配置会自动保留。
                 </p>
 
                 {(upgradeUploading || autoUpdating) && (
                   <div className="mb-4">
                     <div className="flex items-center justify-between mb-1">
-                      <span className="text-xs text-[#63666F]">{autoUpdating ? "正在从官方仓库下载更新包..." : "正在上传并处理升级包..."}</span>
-                      <span className="text-xs font-medium text-[#0052D9]">{upgradeProgress}%</span>
+                      <span className="text-xs text-[var(--muted)]">{autoUpdating ? "正在从官方仓库下载更新包..." : "正在上传并处理升级包..."}</span>
+                      <span className="text-xs font-medium text-[var(--primary)]">{upgradeProgress}%</span>
                     </div>
-                    <div className="w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <div className="w-full h-2 bg-[var(--primary-lighter)] rounded-full overflow-hidden">
                       <div
-                        className="h-full bg-gradient-to-r from-[#0052D9] to-[#00A870] rounded-full transition-all duration-300"
+                        className="h-full bg-gradient-to-r from-[var(--primary)] to-[var(--accent)] rounded-full transition-all duration-300"
                         style={{ width: `${upgradeProgress}%` }}
                       />
                     </div>
@@ -1631,9 +2003,9 @@ export default function TeacherSettingsPage() {
       {showBackupDialog && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div className="bg-white rounded-xl shadow-xl p-6 w-96">
-            <h3 className="text-lg font-semibold text-[#1A1A1A] mb-4">备份 AI 配置</h3>
+            <h3 className="text-lg font-semibold text-[var(--foreground)] mb-4">备份 AI 配置</h3>
             <div className="mb-4">
-              <label className="block text-sm font-medium text-[#1A1A1A] mb-2">文件名</label>
+              <label className="block text-sm font-medium text-[var(--foreground)] mb-2">文件名</label>
               <div className="flex items-center gap-0">
                 <Input
                   value={backupFileName}
@@ -1643,9 +2015,9 @@ export default function TeacherSettingsPage() {
                   className="flex-1"
                   onKeydown={(_, { e }) => { if (e.key === "Enter") confirmBackup(); }}
                 />
-                <span className="ml-2 text-sm text-[#63666F] font-mono">.json</span>
+                <span className="ml-2 text-sm text-[var(--muted)] font-mono">.json</span>
               </div>
-              <p className="text-xs text-[#63666F] mt-1.5">扩展名固定为 .json，不可更改</p>
+              <p className="text-xs text-[var(--muted)] mt-1.5">扩展名固定为 .json，不可更改</p>
             </div>
             <div className="flex justify-end gap-3">
               <Button variant="outline" onClick={() => setShowBackupDialog(false)}>取消</Button>

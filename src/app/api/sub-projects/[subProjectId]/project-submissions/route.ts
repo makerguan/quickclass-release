@@ -3,6 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { dbWrite } from "@/lib/db-queue";
 import { validateFile, saveUploadedFile } from "@/lib/project-submit";
+// 📐 CONTRACT: 跨 4 表统一排序数值空间（对话/探究/项目/作业），详见 src/lib/activities/unified-order.ts
+import { getNextUnifiedSortOrder } from "@/lib/activities/unified-order";
 
 // GET: 教师获取某学习活动下的所有项目提交任务
 export async function GET(
@@ -89,6 +91,8 @@ export async function POST(
     const allowLike = allowLikeRaw;
     const visible = allowLike ? true : visibleToClass;
 
+    // 📐 CONTRACT: 跨 4 表统一数值空间取 max+1（⛔ DO NOT REVERT 到不写 sortOrder / 本表 max）
+    const nextOrder = await getNextUnifiedSortOrder(prisma, subProjectId);
     const created = await dbWrite(() =>
       prisma.projectSubmission.create({
         data: {
@@ -99,6 +103,7 @@ export async function POST(
           visibleToClass: visible,
           allowLike,
           fileSizeLimit,
+          sortOrder: nextOrder,
         },
       })
     );

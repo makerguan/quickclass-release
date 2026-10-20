@@ -1,7 +1,8 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Markdown from "@/components/Markdown";
+import ExportPdfButton from "@/components/ExportPdfButton";
 import {
   RadarChart, PolarGrid, PolarAngleAxis, PolarRadiusAxis, Radar,
   BarChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
@@ -38,9 +39,10 @@ export default function QuizReportPage() {
   const [activeTab, setActiveTab] = useState<"overview" | "ai" | "details">("overview");
   const [aiReport, setAiReport] = useState("");
   const [generatingReport, setGeneratingReport] = useState(false);
-  // AI 报告版本管理
-  const [aiReportVersions, setAiReportVersions] = useState<{ id: string; content: string; version: number; createdAt: string }[]>([]);
+  // AI 报告版本管理（仅元数据；历史版正文按需拉取，见 handleSwitchVersion）
+  const [aiReportVersions, setAiReportVersions] = useState<{ id: string; version: number; createdAt: string }[]>([]);
   const [aiReportVersionIndex, setAiReportVersionIndex] = useState(0);
+  const latestAiContentRef = useRef(""); // 缓存最新版正文，切回最新版时免再请求
   const [deleteVersionDialogVisible, setDeleteVersionDialogVisible] = useState(false);
   const [deleteVersionInfo, setDeleteVersionInfo] = useState<{ id: string; version: number } | null>(null);
   const [deletingVersion, setDeletingVersion] = useState(false);
@@ -154,14 +156,15 @@ export default function QuizReportPage() {
     // 设置未参加和未完成学生名单
     setNotAttemptedStudents(data.notAttemptedStudents || []);
     setIncompleteStudents(data.incompleteStudents || []);
-    // 加载已保存的 AI 报告
+    // 加载已保存的 AI 报告（初始 GET 只回版本元数据，最新版正文由 aiContent 下发）
     if (data.aiReportVersions && data.aiReportVersions.length > 0) {
-      console.log("[handleViewReport] Setting AI report versions:", data.aiReportVersions.length);
       setAiReportVersions(data.aiReportVersions);
       setAiReportVersionIndex(0);
-      setAiReport(data.aiReportVersions[0].content);
+      latestAiContentRef.current = data.aiContent || "";
+      setAiReport(latestAiContentRef.current);
     } else {
       setAiReportVersions([]);
+      latestAiContentRef.current = "";
       setAiReport("");
     }
   };
@@ -187,16 +190,10 @@ export default function QuizReportPage() {
       if (data.content || data.aiContent) {
         const newContent = data.content || data.aiContent;
         
-        // 生成报告后，刷新获取所有版本
+        // 生成报告后，刷新获取所有版本（handleViewReport 已写入最新正文并 setAiReport）
         await handleViewReport();
-        
-        // 自动切换到最新版本（索引为0）
-        if (aiReportVersions.length > 0) {
-          setAiReportVersionIndex(0);
-          setAiReport(aiReportVersions[0].content);
-        } else {
-          setAiReport(newContent);
-        }
+        setAiReportVersionIndex(0);
+        setAiReport(latestAiContentRef.current || newContent);
         setActiveTab("ai");
         MessagePlugin.success("报告生成成功");
       } else {
@@ -210,12 +207,26 @@ export default function QuizReportPage() {
     }
   };
 
-  // 切换到指定版本
-  const handleSwitchVersion = (index: number) => {
-    if (aiReportVersions[index]) {
-      setAiReportVersionIndex(index);
-      setAiReport(aiReportVersions[index].content);
+  // 切换到指定版本：历史版正文按需拉取（初始 GET 只回元数据）
+  const handleSwitchVersion = async (index: number) => {
+    const v = aiReportVersions[index];
+    if (!v) return;
+    setAiReportVersionIndex(index);
+    // 最新版（index 0）正文已缓存，直接显示，免一次请求
+    if (index === 0 && latestAiContentRef.current) {
+      setAiReport(latestAiContentRef.current);
+      return;
     }
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/quiz-activities/${quizId}/report/versions/${v.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setAiReport(d.content || "");
+      }
+    } catch { /* 静默失败：保持当前显示 */ }
   };
 
   // 删除指定版本
@@ -232,10 +243,10 @@ export default function QuizReportPage() {
         setDeleteVersionDialogVisible(false);
         // 刷新数据
         await handleViewReport();
-        // 如果还有版本，切换到最新版本
+        // 如果还有版本，切换到最新版本（正文由 latestAiContentRef 缓存）
         if (aiReportVersions.length > 1) {
           setAiReportVersionIndex(0);
-          setAiReport(aiReportVersions[0].content);
+          setAiReport(latestAiContentRef.current);
         }
       } else {
         MessagePlugin.error("删除失败");
@@ -283,8 +294,8 @@ export default function QuizReportPage() {
   if (error) return (
     <TeacherLayout>
       <div className="p-6 text-center">
-        <div className="text-red-500 mb-4">{error}</div>
-        <button onClick={() => router.back()} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">返回</button>
+        <div className="text-[var(--danger)] mb-4">{error}</div>
+        <button onClick={() => router.back()} className="px-4 py-2 bg-[var(--hover-bg)] rounded hover:brightness-95">返回</button>
       </div>
     </TeacherLayout>
   );
@@ -296,9 +307,9 @@ export default function QuizReportPage() {
         {/* 头部 */}
         <div className="flex items-center justify-between mb-6">
           <div>
-            <button onClick={() => router.push("/teacher/tasks")} className="text-sm text-gray-400 hover:text-gray-600 mb-1">← 返回课堂列表</button>
-            <h1 className="text-xl font-semibold text-gray-800">{quiz.title} · 课堂作业报告</h1>
-            <div className="text-sm text-gray-400">{quiz.description || "无说明"}</div>
+            <button onClick={() => router.push("/teacher/tasks")} className="text-sm text-[var(--muted-light)] hover:text-[var(--muted)] mb-1">← 返回课堂列表</button>
+            <h1 className="text-xl font-semibold text-[var(--title)]">{quiz.title} · 课堂作业报告</h1>
+            <div className="text-sm text-[var(--muted-light)]">{quiz.description || "无说明"}</div>
           </div>
           <div className="flex gap-2 items-center">
             {classes.length > 0 && (
@@ -316,7 +327,7 @@ export default function QuizReportPage() {
             )}
             <button 
               onClick={() => window.print()} 
-              className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50"
+              className="px-3 py-1.5 text-sm text-[var(--primary)] border border-[var(--primary-light)] rounded-lg hover:bg-[var(--primary-light)]"
             >
               📄 打印
             </button>
@@ -342,7 +353,7 @@ export default function QuizReportPage() {
                 }
               }}
               className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px ${
-                activeTab === t.key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-400 hover:text-gray-600"
+                activeTab === t.key ? "border-[var(--primary)] text-[var(--primary)]" : "border-transparent text-[var(--muted-light)] hover:text-[var(--muted)]"
               }`}
             >
               {t.label}
@@ -358,18 +369,18 @@ export default function QuizReportPage() {
                 {/* 顶部综合指标卡 */}
                 <div className="grid grid-cols-3 md:grid-cols-7 gap-3">
                   {[
-                    { label: "已完成人数", value: reportData.totalStudents, color: "text-blue-600", bg: "bg-blue-50" },
-                    { label: "班级均分", value: reportData.classAvgScore, color: "text-green-600", bg: "bg-green-50" },
-                    { label: "最高分", value: reportData.stats?.maxScore, color: "text-purple-600", bg: "bg-purple-50" },
-                    { label: "最低分", value: reportData.stats?.minScore, color: "text-orange-600", bg: "bg-orange-50" },
-                    { label: "中位数", value: reportData.stats?.median, color: "text-teal-600", bg: "bg-teal-50" },
-                    { label: "合格率", value: `${reportData.stats?.passRate ?? 0}%`, color: "text-rose-600", bg: "bg-rose-50", sub: `合格线${reportData.passScore ?? 60}分` },
-                    { label: "标准差", value: reportData.stats?.stdDev, color: "text-indigo-600", bg: "bg-indigo-50" },
+                    { label: "已完成人数", value: reportData.totalStudents, color: "text-[var(--primary)]", bg: "bg-[var(--primary-light)]" },
+                    { label: "班级均分", value: reportData.classAvgScore, color: "text-[var(--success)]", bg: "bg-[var(--success-light)]" },
+                    { label: "最高分", value: reportData.stats?.maxScore, color: "text-[var(--accent)]", bg: "bg-[var(--primary-lighter)]" },
+                    { label: "最低分", value: reportData.stats?.minScore, color: "text-[var(--warning)]", bg: "bg-[var(--warning-light)]" },
+                    { label: "中位数", value: reportData.stats?.median, color: "text-[var(--success)]", bg: "bg-[var(--success-light)]" },
+                    { label: "合格率", value: `${reportData.stats?.passRate ?? 0}%`, color: "text-[var(--danger)]", bg: "bg-[var(--danger-light)]", sub: `合格线${reportData.passScore ?? 60}分` },
+                    { label: "标准差", value: reportData.stats?.stdDev, color: "text-[var(--accent)]", bg: "bg-[var(--primary-lighter)]" },
                   ].map((stat) => (
                     <div key={stat.label} className={`${stat.bg} rounded-xl p-3 text-center`}>
                       <div className={`text-2xl font-bold ${stat.color}`}>{stat.value}</div>
-                      <div className="text-xs text-gray-400 mt-0.5">{stat.label}</div>
-                      {stat.sub && <div className="text-xs text-gray-300 mt-0.5">{stat.sub}</div>}
+                      <div className="text-xs text-[var(--muted-light)] mt-0.5">{stat.label}</div>
+                      {stat.sub && <div className="text-xs text-[var(--muted-light)] mt-0.5">{stat.sub}</div>}
                     </div>
                   ))}
                 </div>
@@ -377,8 +388,8 @@ export default function QuizReportPage() {
                 {/* 图表区：左雷达图 + 右分数分布 */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                   {reportData.difficultyStats && reportData.difficultyStats.length > 0 && (
-                    <div className="bg-white rounded-xl shadow-sm p-5">
-                      <div className="font-medium text-gray-700 mb-3 text-sm">知识点掌握雷达图</div>
+                    <div className="bg-[var(--card-bg)] rounded-xl shadow-sm p-5">
+                      <div className="font-medium text-[var(--foreground)] mb-3 text-sm">知识点掌握雷达图</div>
                       <ResponsiveContainer width="100%" height={220}>
                         <RadarChart data={reportData.difficultyStats}>
                           <PolarGrid stroke="#e5e7eb" />
@@ -391,8 +402,8 @@ export default function QuizReportPage() {
                   )}
 
                   {reportData.scoreBuckets && reportData.scoreBuckets.some((b: any) => b.count > 0) && (
-                    <div className="bg-white rounded-xl shadow-sm p-5">
-                      <div className="font-medium text-gray-700 mb-3 text-sm">分数段分布</div>
+                    <div className="bg-[var(--card-bg)] rounded-xl shadow-sm p-5">
+                      <div className="font-medium text-[var(--foreground)] mb-3 text-sm">分数段分布</div>
                       <ResponsiveContainer width="100%" height={220}>
                         <BarChart data={reportData.scoreBuckets.filter((b: any) => b.count > 0)} layout="vertical">
                           <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f3f4f6" />
@@ -412,12 +423,12 @@ export default function QuizReportPage() {
 
                 {/* 班级认知负荷指数 */}
                 {reportData.cognitiveLoadIndex !== undefined && (
-                  <div className="bg-white rounded-xl shadow-sm p-5">
-                    <div className="font-medium text-gray-700 mb-3 text-sm">班级认知负荷指数</div>
+                  <div className="bg-[var(--card-bg)] rounded-xl shadow-sm p-5">
+                    <div className="font-medium text-[var(--foreground)] mb-3 text-sm">班级认知负荷指数</div>
                     <div className="flex items-center gap-4">
-                      <div className="text-4xl font-bold text-indigo-600">{reportData.cognitiveLoadIndex}</div>
-                      <div className="text-sm text-gray-500">
-                        综合反映班级应对<strong className="text-gray-700">基础→提升→拓展</strong>各难度题目的整体表现。
+                      <div className="text-4xl font-bold text-[var(--accent)]">{reportData.cognitiveLoadIndex}</div>
+                      <div className="text-sm text-[var(--muted)]">
+                        综合反映班级应对<strong className="text-[var(--foreground)]">基础→提升→拓展</strong>各难度题目的整体表现。
                         {reportData.cognitiveLoadIndex >= 70
                           ? " 班级整体掌握较好，建议适当引入挑战性题目。"
                           : reportData.cognitiveLoadIndex >= 50
@@ -430,27 +441,27 @@ export default function QuizReportPage() {
 
                 {/* 题目区分度 */}
                 {reportData.questionDiscrimination && reportData.questionDiscrimination.length > 0 && (
-                  <div className="bg-white rounded-xl shadow-sm p-5">
-                    <div className="font-medium text-gray-700 mb-3 text-sm">题目区分度（-1~1，相关系数）</div>
+                  <div className="bg-[var(--card-bg)] rounded-xl shadow-sm p-5">
+                    <div className="font-medium text-[var(--foreground)] mb-3 text-sm">题目区分度（-1~1，相关系数）</div>
                     <div className="space-y-2">
                       {reportData.questionDiscrimination.map((d: any, idx: number) => (
                         <div key={d.questionId} className="flex items-center gap-3 text-sm">
-                          <span className="w-8 text-gray-400 text-right shrink-0">题{idx + 1}</span>
-                          <div className="w-24 text-gray-600 truncate shrink-0"><Markdown inline>{d.content}</Markdown>...</div>
-                          <div className="flex-1 bg-gray-100 rounded-full h-2 relative overflow-hidden">
+                          <span className="w-8 text-[var(--muted-light)] text-right shrink-0">题{idx + 1}</span>
+                          <div className="w-24 text-[var(--muted)] truncate shrink-0"><Markdown inline>{d.content}</Markdown>...</div>
+                          <div className="flex-1 bg-[var(--primary-lighter)] rounded-full h-2 relative overflow-hidden">
                             <div
                               className={`h-2 rounded-full transition-all duration-500 ${
-                                d.discrimination >= 0.3 ? "bg-green-400" : d.discrimination >= 0.1 ? "bg-yellow-400" : "bg-red-400"
+                                d.discrimination >= 0.3 ? "bg-[var(--success)]" : d.discrimination >= 0.1 ? "bg-[var(--warning)]" : "bg-[var(--danger)]"
                               }`}
                               style={{ width: `${Math.abs(d.discrimination) * 100}%` }}
                             />
                           </div>
                           <span className={`text-xs font-semibold w-14 text-right shrink-0 ${
-                            d.discrimination >= 0.3 ? "text-green-600" : d.discrimination >= 0.1 ? "text-yellow-600" : "text-red-500"
+                            d.discrimination >= 0.3 ? "text-[var(--success)]" : d.discrimination >= 0.1 ? "text-[var(--warning)]" : "text-[var(--danger)]"
                           }`}>
                             {d.discrimination >= 0 ? "+" : ""}{d.discrimination}
                           </span>
-                          <span className="text-xs text-gray-400 w-32 shrink-0">
+                          <span className="text-xs text-[var(--muted-light)] w-32 shrink-0">
                             {d.discrimination >= 0.3 ? "区分度好" : d.discrimination >= 0.1 ? "区分度一般" : "无区分度"}
                           </span>
                         </div>
@@ -461,15 +472,15 @@ export default function QuizReportPage() {
 
                 {/* 高频错选项 */}
                 {reportData.questionWrongOptions && reportData.questionWrongOptions.some((o: any) => o.topWrongOption) && (
-                  <div className="bg-white rounded-xl shadow-sm p-5">
-                    <div className="font-medium text-gray-700 mb-3 text-sm">各题高频错选答案</div>
+                  <div className="bg-[var(--card-bg)] rounded-xl shadow-sm p-5">
+                    <div className="font-medium text-[var(--foreground)] mb-3 text-sm">各题高频错选答案</div>
                     <div className="space-y-2">
                       {reportData.questionWrongOptions.filter((o: any) => o.topWrongOption).map((o: any, idx: number) => (
                         <div key={o.questionId} className="flex items-center gap-3 text-sm">
-                          <span className="w-8 text-gray-400 text-right shrink-0">题{idx + 1}</span>
-                          <span className="w-20 text-center font-bold text-red-500 bg-red-50 rounded px-1.5 py-0.5">{o.topWrongOption}</span>
-                          <span className="text-xs text-gray-400">{o.topWrongCount}人错选</span>
-                          <span className="text-gray-500 truncate flex-1"><Markdown inline>{o.content}</Markdown>...</span>
+                          <span className="w-8 text-[var(--muted-light)] text-right shrink-0">题{idx + 1}</span>
+                          <span className="w-20 text-center font-bold text-[var(--danger)] bg-[var(--danger-light)] rounded px-1.5 py-0.5">{o.topWrongOption}</span>
+                          <span className="text-xs text-[var(--muted-light)]">{o.topWrongCount}人错选</span>
+                          <span className="text-[var(--muted)] truncate flex-1"><Markdown inline>{o.content}</Markdown>...</span>
                         </div>
                       ))}
                     </div>
@@ -485,33 +496,33 @@ export default function QuizReportPage() {
                       const bottom5 = sorted.slice(-5).reverse();
                       return (
                         <>
-                          <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl p-5">
-                            <div className="font-medium text-green-700 mb-3 flex items-center gap-2 text-sm">
-                              <span className="w-2 h-2 bg-green-400 rounded-full" />
+                          <div className="bg-gradient-to-br from-[var(--success-light)] to-[var(--success-light)] border border-[var(--success-light)] rounded-xl p-5">
+                            <div className="font-medium text-[var(--success)] mb-3 flex items-center gap-2 text-sm">
+                              <span className="w-2 h-2 bg-[var(--success)] rounded-full" />
                               排名前 5
                             </div>
                             <div className="space-y-2">
                               {top5.map((s: any, i: number) => (
-                                <div key={s.userId} className="flex items-center gap-3 bg-white/60 rounded-lg px-3 py-2">
-                                  <span className="text-green-600 font-bold text-sm w-6 text-center">#{i + 1}</span>
-                                  <span className="text-sm font-medium text-gray-700 flex-1">{s.name}</span>
-                                  <span className="text-sm font-bold text-green-600">{s.score}分</span>
+                                <div key={s.userId} className="flex items-center gap-3 bg-[var(--card-bg)]/60 rounded-lg px-3 py-2">
+                                  <span className="text-[var(--success)] font-bold text-sm w-6 text-center">#{i + 1}</span>
+                                  <span className="text-sm font-medium text-[var(--foreground)] flex-1">{s.name}</span>
+                                  <span className="text-sm font-bold text-[var(--success)]">{s.score}分</span>
                                 </div>
                               ))}
                             </div>
                           </div>
 
-                          <div className="bg-gradient-to-br from-yellow-50 to-amber-50 border border-yellow-200 rounded-xl p-5">
-                            <div className="font-medium text-yellow-700 mb-3 flex items-center gap-2 text-sm">
-                              <span className="w-2 h-2 bg-yellow-400 rounded-full" />
+                          <div className="bg-gradient-to-br from-[var(--warning-light)] to-[var(--warning-light)] border border-[var(--warning-light)] rounded-xl p-5">
+                            <div className="font-medium text-[var(--warning)] mb-3 flex items-center gap-2 text-sm">
+                              <span className="w-2 h-2 bg-[var(--warning)] rounded-full" />
                               需关注（排名后 5）
                             </div>
                             <div className="space-y-2">
                               {bottom5.map((s: any, i: number) => (
-                                <div key={s.userId} className="flex items-center gap-3 bg-white/60 rounded-lg px-3 py-2">
-                                  <span className="text-yellow-600 font-bold text-sm w-6 text-center">#{sorted.length - 4 + i}</span>
-                                  <span className="text-sm font-medium text-gray-700 flex-1">{s.name}</span>
-                                  <span className="text-sm font-bold text-yellow-600">{s.score}分</span>
+                                <div key={s.userId} className="flex items-center gap-3 bg-[var(--card-bg)]/60 rounded-lg px-3 py-2">
+                                  <span className="text-[var(--warning)] font-bold text-sm w-6 text-center">#{sorted.length - 4 + i}</span>
+                                  <span className="text-sm font-medium text-[var(--foreground)] flex-1">{s.name}</span>
+                                  <span className="text-sm font-bold text-[var(--warning)]">{s.score}分</span>
                                 </div>
                               ))}
                             </div>
@@ -524,17 +535,17 @@ export default function QuizReportPage() {
 
                 {/* 未完成/未参加作业的学生 */}
                 {((reportData.incompleteStudents && reportData.incompleteStudents.length > 0) || (reportData.notAttemptedStudents && reportData.notAttemptedStudents.length > 0)) && (
-                  <div className="bg-white rounded-xl shadow-sm p-5">
-                    <div className="font-medium text-gray-700 mb-3 text-sm">未完成 / 未参加作业的学生</div>
+                  <div className="bg-[var(--card-bg)] rounded-xl shadow-sm p-5">
+                    <div className="font-medium text-[var(--foreground)] mb-3 text-sm">未完成 / 未参加作业的学生</div>
                     <div className="space-y-3">
                       {reportData.incompleteStudents && reportData.incompleteStudents.length > 0 && (
                         <div>
-                          <div className="text-xs text-orange-600 mb-2">⚠ 未完成（已答部分题目）· {reportData.incompleteStudents.length}人</div>
+                          <div className="text-xs text-[var(--warning)] mb-2">⚠ 未完成（已答部分题目）· {reportData.incompleteStudents.length}人</div>
                           <div className="flex flex-wrap gap-2">
                             {reportData.incompleteStudents.map((s: any) => (
-                              <div key={s.userId || s.name} className="px-3 py-1.5 bg-orange-50 rounded-lg flex items-center gap-2 text-xs">
-                                <span className="font-medium text-orange-700">{s.name}</span>
-                                <span className="text-orange-400">已答{s.answered}/{s.total}</span>
+                              <div key={s.userId || s.name} className="px-3 py-1.5 bg-[var(--warning-light)] rounded-lg flex items-center gap-2 text-xs">
+                                <span className="font-medium text-[var(--warning)]">{s.name}</span>
+                                <span className="text-[var(--warning)]">已答{s.answered}/{s.total}</span>
                               </div>
                             ))}
                           </div>
@@ -542,10 +553,10 @@ export default function QuizReportPage() {
                       )}
                       {reportData.notAttemptedStudents && reportData.notAttemptedStudents.length > 0 && (
                         <div>
-                          <div className="text-xs text-gray-500 mb-2">未参加 · {reportData.notAttemptedStudents.length}人</div>
+                          <div className="text-xs text-[var(--muted)] mb-2">未参加 · {reportData.notAttemptedStudents.length}人</div>
                           <div className="flex flex-wrap gap-2">
                             {reportData.notAttemptedStudents.map((s: any) => (
-                              <div key={s.userId} className="px-3 py-1.5 bg-gray-50 rounded-lg text-xs text-gray-500">
+                              <div key={s.userId} className="px-3 py-1.5 bg-[var(--hover-bg)] rounded-lg text-xs text-[var(--muted)]">
                                 {s.name}
                               </div>
                             ))}
@@ -557,7 +568,7 @@ export default function QuizReportPage() {
                 )}
               </>
             ) : (
-              <div className="text-center py-12 text-gray-400">
+              <div className="text-center py-12 text-[var(--muted-light)]">
                 请选择班级查看报告数据
               </div>
             )}
@@ -566,26 +577,26 @@ export default function QuizReportPage() {
 
         {/* AI 分析报告 */}
         {activeTab === "ai" && (
-          <div className="bg-white rounded-xl shadow-sm">
+          <div className="bg-[var(--card-bg)] rounded-xl shadow-sm">
             {/* 头部：标题 + 版本切换 + 操作按钮 */}
             <div className="flex items-center justify-between px-4 py-3 border-b">
               <div className="flex items-center gap-2">
-                <div className="font-medium text-gray-700 text-sm">✨ AI 学情分析报告</div>
+                <div className="font-medium text-[var(--foreground)] text-sm">✨ AI 学情分析报告</div>
                 {/* 版本切换 + 删除 */}
                 {aiReportVersions.length > 1 && (
                   <div className="flex items-center ml-3 gap-2">
-                    <span className="text-xs text-gray-400">版本：</span>
+                    <span className="text-xs text-[var(--muted-light)]">版本：</span>
                     {aiReportVersions.map((v, i) => (
                       <div key={v.id} className="flex items-center gap-3">
                         <button
                           onClick={() => handleSwitchVersion(i)}
-                          className={`px-2 py-0.5 text-xs rounded ${i === aiReportVersionIndex ? 'bg-[#0052D9] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                          className={`px-2 py-0.5 text-xs rounded ${i === aiReportVersionIndex ? 'bg-[var(--primary)] text-white' : 'bg-[var(--primary-lighter)] text-[var(--muted)] hover:bg-[var(--hover-bg)]'}`}
                         >
                           v{v.version}
                         </button>
                         {v.id && (
                           <button
-                            className="text-xs text-red-400 hover:text-red-600 px-0.5"
+                            className="text-xs text-[var(--primary)] hover:text-[var(--primary-dark)] px-0.5"
                             onClick={() => {
                               setDeleteVersionInfo({ id: v.id, version: v.version });
                               setDeleteVersionDialogVisible(true);
@@ -631,7 +642,7 @@ export default function QuizReportPage() {
                 <button
                   onClick={handleGenerateAiReport}
                   disabled={generatingReport || !selectedTemplateId}
-                  className="px-3 py-1.5 text-xs bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-3 py-1.5 text-xs bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {generatingReport ? "生成中..." : aiReport ? "重新生成" : "生成报告"}
                 </button>
@@ -643,14 +654,27 @@ export default function QuizReportPage() {
               {aiReport ? (() => {
                   // 先剥离可能的 markdown 代码块标记
                   const cleanReport = stripMarkdownCodeBlock(aiReport);
+                  // ⛔ DO NOT ADD `<div` BACK to this HTML sniff. Why removed (2026-10-11):
+                  // text-format reports now legitimately contain `<div class="qc-chart">` chart
+                  // blocks (chart protocol → processChartBlocks → wrap() in report-charts.ts).
+                  // Matching '<div' misrouted those mixed reports into the iframe branch
+                  // (srcDoc renders Markdown source as raw HTML) → every Markdown line break /
+                  // heading collapsed into one blob; only the radar chart showed.
+                  // HTML-style reports always start with <!DOCTYPE / <html — guaranteed by
+                  // cleanInsightContent, which slices saved HTML docs to those markers.
+                  // Mixed Markdown + qc-chart content MUST go through the shared <Markdown>
+                  // component below, which natively renders qc-chart segments (with XSS blacklist).
+                  // 🔗 RELATED: src/components/Markdown.tsx (qc-chart contract + splitChartSegments),
+                  // src/lib/insight-clean.ts (HTML doc slicing), src/lib/report-charts.ts (wrap).
+                  // 🧪 MEASURED (DB 2026-10-11): all 5 quiz HTML-style reports have DOCTYPE/<html;
+                  // the 2 bare-'<div' reports are qc-chart mixed Markdown — this fix's exact targets.
                   const isHtml = cleanReport.includes('<!DOCTYPE') ||
-                    cleanReport.includes('<html') ||
-                    (cleanReport.includes('<div') && cleanReport.includes('</div>'));
+                    cleanReport.includes('<html');
 
                   return isHtml ? (
                     <div className="relative group">
                       <button
-                        className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-white/80 hover:bg-white text-gray-600 rounded border border-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-[var(--card-bg)]/80 hover:bg-[var(--card-bg)] text-[var(--muted)] rounded border border-[var(--card-border)] opacity-0 group-hover:opacity-100 transition-opacity"
                         onClick={() => {
                           const w = window.open('', '_blank');
                           if (w) {
@@ -671,12 +695,15 @@ export default function QuizReportPage() {
                       />
                     </div>
                   ) : (
-                    <div className="prose prose-sm max-w-none">
+                    // 文本型分支：data-insight-body 是 ExportPdfButton 的定位锚点，
+                    // 丢了该属性导出按钮静默失效。🔗 RELATED：src/components/ExportPdfButton.tsx
+                    <div data-insight-body className="prose prose-sm max-w-none">
                       <Markdown>{cleanReport}</Markdown>
+                      <ExportPdfButton title="作业 AI 分析报告" />
                     </div>
                   );
                 })() : (
-                <div className="text-center py-12 text-gray-400">
+                <div className="text-center py-12 text-[var(--muted-light)]">
                   点击「生成报告」按钮生成 AI 学情分析报告
                 </div>
               )}
@@ -686,69 +713,74 @@ export default function QuizReportPage() {
 
         {/* 学生详情 */}
         {activeTab === "details" && (
-          <div className="bg-white rounded-xl shadow-sm overflow-hidden">
+          <div className="bg-[var(--card-bg)] rounded-xl shadow-sm overflow-hidden">
             {reportData?.studentQuestionMatrix && reportData.studentQuestionMatrix.length > 0 ? (
               <>
-                <div className="px-5 py-3 border-b bg-gray-50">
+                <div className="px-5 py-3 border-b bg-[var(--hover-bg)]">
                   <div className="flex items-center gap-3 text-xs">
-                    <span className="text-gray-400">图例：</span>
+                    <span className="text-[var(--muted-light)]">图例：</span>
                     <span className="flex items-center gap-1">
-                      <span className="w-4 h-4 rounded bg-green-100 text-green-600 flex items-center justify-center text-xs font-bold">A</span>
-                      <span className="text-green-600">正确</span>
+                      <span className="w-4 h-4 rounded bg-[var(--success-light)] text-[var(--success)] flex items-center justify-center text-xs font-bold">A</span>
+                      <span className="text-[var(--success)]">正确</span>
                     </span>
                     <span className="flex items-center gap-1">
-                      <span className="w-4 h-4 rounded bg-red-100 text-red-500 flex items-center justify-center text-xs font-bold">B</span>
-                      <span className="text-red-500">错误</span>
+                      <span className="w-4 h-4 rounded bg-[var(--danger-light)] text-[var(--danger)] flex items-center justify-center text-xs font-bold">B</span>
+                      <span className="text-[var(--danger)]">错误</span>
                     </span>
-                    <span className="text-gray-400 ml-2">| 点击表头排序</span>
-                  </div>
-                </div>
-                <div className="px-5 py-2 border-b">
-                  <div className="flex items-center gap-3 text-xs">
-                    <button 
-                      onClick={() => handleSort("name")}
-                      className={`${sortBy === "name" ? "text-gray-800 font-medium" : "text-gray-400 hover:text-gray-600"}`}
-                    >
-                      {sortLabel("姓名")}
-                    </button>
-                    <button 
-                      onClick={() => handleSort("score")}
-                      className={`${sortBy === "score" ? "text-gray-800 font-medium" : "text-gray-400 hover:text-gray-600"}`}
-                    >
-                      {sortLabel("得分")}
-                    </button>
-                    <span className="text-gray-400">对比</span>
-                    {reportData.questionStats?.map((_: any, i: number) => (
-                      <button 
-                        key={i} 
-                        onClick={() => handleSort(`q${i}`)}
-                        className={`${sortBy === `q${i}` ? "text-gray-800 font-medium" : "text-gray-400 hover:text-gray-600"}`}
-                      >
-                        {sortLabel(`题${i + 1}`)}
-                      </button>
-                    ))}
+                    <span className="text-[var(--muted-light)] ml-2">| 点击表头排序</span>
                   </div>
                 </div>
                 <div className="px-5 overflow-x-auto">
                   <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b bg-[var(--hover-bg)] text-xs">
+                        <th className="py-2 pr-3 text-left">
+                          <button
+                            onClick={() => handleSort("name")}
+                            className={`${sortBy === "name" ? "text-[var(--foreground)] font-medium" : "text-[var(--muted-light)] hover:text-[var(--muted)]"}`}
+                          >
+                            {sortLabel("姓名")}
+                          </button>
+                        </th>
+                        <th className="py-2 pr-3 text-center">
+                          <button
+                            onClick={() => handleSort("score")}
+                            className={`${sortBy === "score" ? "text-[var(--foreground)] font-medium" : "text-[var(--muted-light)] hover:text-[var(--muted)]"}`}
+                          >
+                            {sortLabel("得分")}
+                          </button>
+                        </th>
+                        <th className="py-2 px-2 text-center text-[var(--muted-light)]">对比</th>
+                        {reportData.questionStats?.map((_: any, i: number) => (
+                          <th key={i} className="py-2 px-1 text-center">
+                            <button
+                              onClick={() => handleSort(`q${i}`)}
+                              className={`${sortBy === `q${i}` ? "text-[var(--foreground)] font-medium" : "text-[var(--muted-light)] hover:text-[var(--muted)]"}`}
+                            >
+                              {sortLabel(`题${i + 1}`)}
+                            </button>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
                     <tbody>
                       {/* 已完成作业的学生（参与排序） */}
                       {getSortedRows(reportData.studentQuestionMatrix.filter((row: any) => !row.notAttempted && !row.incomplete)).map((row: any) => (
-                        <tr key={row.userId} className="border-b border-gray-50 hover:bg-gray-50">
-                          <td className="py-2.5 pr-3 font-medium text-gray-700">{row.name}</td>
+                        <tr key={row.userId} className="border-b border-[var(--card-border)] hover:bg-[var(--hover-bg)]">
+                          <td className="py-2.5 pr-3 font-medium text-[var(--foreground)]">{row.name}</td>
                           <td className="py-2.5 pr-3 text-center">
-                            <span className={`font-bold ${row.score >= 90 ? "text-green-600" : row.score >= (reportData.passScore ?? 60) ? "text-blue-600" : "text-red-500"}`}>{row.score}</span>
+                            <span className={`font-bold ${row.score >= 90 ? "text-[var(--success)]" : row.score >= (reportData.passScore ?? 60) ? "text-[var(--primary)]" : "text-[var(--danger)]"}`}>{row.score}</span>
                           </td>
                           <td className="py-2.5 px-2 text-center">
-                            <div className="w-16 h-2 bg-gray-100 rounded-full overflow-hidden mx-auto">
-                              <div className={`h-2 rounded-full ${row.score >= 90 ? "bg-green-400" : row.score >= (reportData.passScore ?? 60) ? "bg-blue-400" : "bg-red-400"}`} style={{ width: (row.score || 0) + "%" }} />
+                            <div className="w-16 h-2 bg-[var(--primary-lighter)] rounded-full overflow-hidden mx-auto">
+                              <div className={`h-2 rounded-full ${row.score >= 90 ? "bg-[var(--success)]" : row.score >= (reportData.passScore ?? 60) ? "bg-[var(--primary)]" : "bg-[var(--danger)]"}`} style={{ width: (row.score || 0) + "%" }} />
                             </div>
                           </td>
                           {row.answers.map((ans: any, qi: number) => {
                             const isCorrect = ans.isCorrect;
                             return (
                               <td key={qi} className="py-2.5 px-1 text-center">
-                                <div className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${ans.selectedAnswer ? (isCorrect ? "bg-green-100 text-green-600" : "bg-red-100 text-red-500") : "bg-gray-100 text-gray-400"}`}>
+                                <div className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${ans.selectedAnswer ? (isCorrect ? "bg-[var(--success-light)] text-[var(--success)]" : "bg-[var(--danger-light)] text-[var(--danger)]") : "bg-[var(--primary-lighter)] text-[var(--muted-light)]"}`}>
                                   {ans.selectedAnswer || "-"}
                                 </div>
                               </td>
@@ -759,20 +791,20 @@ export default function QuizReportPage() {
                       
                       {/* 未完成作业的学生（不参与排序，标灰） */}
                       {reportData.studentQuestionMatrix.filter((row: any) => row.incomplete).map((row: any) => (
-                        <tr key={row.userId} className="border-b border-gray-50 bg-orange-50/40">
-                          <td className="py-2.5 pr-3 font-medium text-orange-700">
+                        <tr key={row.userId} className="border-b border-[var(--card-border)] bg-[var(--warning-light)]">
+                          <td className="py-2.5 pr-3 font-medium text-[var(--warning)]">
                             {row.name}
-                            <span className="ml-2 px-1.5 py-0.5 rounded text-xs bg-orange-100 text-orange-700">未完成 {row.answered}/{row.total}</span>
+                            <span className="ml-2 px-1.5 py-0.5 rounded text-xs bg-[var(--warning-light)] text-[var(--warning)]">未完成 {row.answered}/{row.total}</span>
                           </td>
-                          <td className="py-2.5 pr-3 text-center text-orange-500">{row.score ?? "-"}</td>
+                          <td className="py-2.5 pr-3 text-center text-[var(--warning)]">{row.score ?? "-"}</td>
                           <td className="py-2.5 px-2 text-center">
-                            <div className="w-16 h-2 bg-gray-100 rounded-full overflow-hidden mx-auto">
-                              <div className="h-2 rounded-full bg-orange-300" style={{ width: (row.score || 0) + "%" }} />
+                            <div className="w-16 h-2 bg-[var(--primary-lighter)] rounded-full overflow-hidden mx-auto">
+                              <div className="h-2 rounded-full bg-[var(--warning)]" style={{ width: (row.score || 0) + "%" }} />
                             </div>
                           </td>
                           {row.answers.map((ans: any, qi: number) => (
                             <td key={qi} className="py-2.5 px-1 text-center">
-                              <div className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${ans.selectedAnswer ? "bg-orange-100 text-orange-600" : "bg-gray-100 text-gray-300"}`}>
+                              <div className={`inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold ${ans.selectedAnswer ? "bg-[var(--warning-light)] text-[var(--warning)]" : "bg-[var(--primary-lighter)] text-[var(--muted-light)]"}`}>
                                 {ans.selectedAnswer || "-"}
                               </div>
                             </td>
@@ -782,17 +814,17 @@ export default function QuizReportPage() {
 
                       {/* 未参加作业的学生（不参与排序，放在最后） */}
                       {reportData.studentQuestionMatrix.filter((row: any) => row.notAttempted).map((row: any) => (
-                        <tr key={row.userId} className="border-b border-gray-50 bg-gray-50">
-                          <td className="py-2.5 pr-3 font-medium text-gray-400">{row.name}（未参加）</td>
-                          <td className="py-2.5 pr-3 text-center text-gray-400">-</td>
+                        <tr key={row.userId} className="border-b border-[var(--card-border)] bg-[var(--hover-bg)]">
+                          <td className="py-2.5 pr-3 font-medium text-[var(--muted-light)]">{row.name}（未参加）</td>
+                          <td className="py-2.5 pr-3 text-center text-[var(--muted-light)]">-</td>
                           <td className="py-2.5 px-2 text-center">
-                            <div className="w-16 h-2 bg-gray-100 rounded-full overflow-hidden mx-auto">
-                              <div className="h-2 rounded-full bg-gray-300" style={{ width: "0%" }} />
+                            <div className="w-16 h-2 bg-[var(--primary-lighter)] rounded-full overflow-hidden mx-auto">
+                              <div className="h-2 rounded-full bg-[var(--hover-bg)]" style={{ width: "0%" }} />
                             </div>
                           </td>
                           {row.answers.map((ans: any, qi: number) => (
                             <td key={qi} className="py-2.5 px-1 text-center">
-                              <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold bg-gray-100 text-gray-400">-</span>
+                              <span className="inline-flex items-center justify-center w-7 h-7 rounded-full text-xs font-bold bg-[var(--primary-lighter)] text-[var(--muted-light)]">-</span>
                             </td>
                           ))}
                         </tr>
@@ -803,11 +835,11 @@ export default function QuizReportPage() {
                 
                 {/* 未完成作业的学生名单 */}
                 {incompleteStudents.length > 0 && (
-                  <div className="px-5 py-3 border-t bg-yellow-50">
-                    <div className="text-sm font-medium text-yellow-700 mb-2">未完成作业的学生（已参加但题目未做完）：</div>
+                  <div className="px-5 py-3 border-t bg-[var(--warning-light)]">
+                    <div className="text-sm font-medium text-[var(--warning)] mb-2">未完成作业的学生（已参加但题目未做完）：</div>
                     <div className="flex flex-wrap gap-2">
                       {incompleteStudents.map((s: any, i: number) => (
-                        <span key={i} className="inline-block px-2 py-1 bg-yellow-100 text-yellow-700 rounded text-xs">
+                        <span key={i} className="inline-block px-2 py-1 bg-[var(--warning-light)] text-[var(--warning)] rounded text-xs">
                           {s.name}（完成{s.answered}/{s.total}题）
                         </span>
                       ))}
@@ -817,11 +849,11 @@ export default function QuizReportPage() {
                 
                 {/* 未参加作业的学生名单 */}
                 {notAttemptedStudents.length > 0 && (
-                  <div className="px-5 py-3 border-t bg-gray-50">
-                    <div className="text-sm font-medium text-gray-500 mb-2">未参加作业的学生：</div>
+                  <div className="px-5 py-3 border-t bg-[var(--hover-bg)]">
+                    <div className="text-sm font-medium text-[var(--muted)] mb-2">未参加作业的学生：</div>
                     <div className="flex flex-wrap gap-2">
                       {notAttemptedStudents.map((s: any, i: number) => (
-                        <span key={i} className="inline-block px-2 py-1 bg-gray-100 text-gray-500 rounded text-xs">
+                        <span key={i} className="inline-block px-2 py-1 bg-[var(--primary-lighter)] text-[var(--muted)] rounded text-xs">
                           {s.name}
                         </span>
                       ))}
@@ -830,7 +862,7 @@ export default function QuizReportPage() {
                 )}
               </>
             ) : (
-              <div className="p-6 text-center text-gray-400">
+              <div className="p-6 text-center text-[var(--muted-light)]">
                 请选择班级查看学生详情
               </div>
             )}
@@ -847,8 +879,8 @@ export default function QuizReportPage() {
           cancelBtn="取消"
         >
           <div className="text-center py-4">
-            <p className="text-gray-600">确定要删除 <strong>v{deleteVersionInfo?.version}</strong> 版本吗？</p>
-            <p className="text-gray-400 text-sm mt-2">删除后无法恢复</p>
+            <p className="text-[var(--muted)]">确定要删除 <strong>v{deleteVersionInfo?.version}</strong> 版本吗？</p>
+            <p className="text-[var(--muted-light)] text-sm mt-2">删除后无法恢复</p>
           </div>
         </Dialog>
       </div>

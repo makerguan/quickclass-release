@@ -236,8 +236,8 @@ export default function TeacherQuizQuestionsPage() {
   if (error) {
     const content = (
       <div className="p-6 text-center">
-        <div className="text-red-500 mb-4">{error}</div>
-        <button onClick={() => router.push("/teacher/tasks")} className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300">返回</button>
+        <div className="text-[var(--danger)] mb-4">{error}</div>
+        <button onClick={() => router.push("/teacher/tasks")} className="px-4 py-2 bg-[var(--hover-bg)] rounded hover:brightness-95">返回</button>
       </div>
     );
     return <TeacherLayout>{content}</TeacherLayout>;
@@ -249,20 +249,20 @@ export default function TeacherQuizQuestionsPage() {
       {/* 头部 */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <button onClick={() => router.push("/teacher/tasks")} className="text-sm text-gray-400 hover:text-gray-600 mb-1">← 返回课堂管理</button>
-          <h1 className="text-xl font-semibold text-gray-800">{quiz.title} - 题目管理</h1>
-          <div className="text-sm text-gray-400">{quiz.description || "无说明"}</div>
+          <button onClick={() => router.push("/teacher/tasks")} className="text-sm text-[var(--muted-light)] hover:text-[var(--muted)] mb-1">← 返回课堂管理</button>
+          <h1 className="text-xl font-semibold text-[var(--title)]">{quiz.title} - 题目管理</h1>
+          <div className="text-sm text-[var(--muted-light)]">{quiz.description || "无说明"}</div>
         </div>
         <div className="flex gap-2">
           {quiz.status === "INACTIVE" && questions.length > 0 && (
-            <button onClick={handlePublish} className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 text-sm">
+            <button onClick={handlePublish} className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] text-sm">
               快速生效
             </button>
           )}
-          <button onClick={handleExportQuestions} className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm">
+          <button onClick={handleExportQuestions} className="px-4 py-2 text-[var(--primary)] border border-[var(--primary-light)] rounded-lg hover:bg-[var(--primary-light)] text-sm">
             导出作业
           </button>
-          <label className="px-4 py-2 border rounded-lg hover:bg-gray-50 text-sm cursor-pointer">
+          <label className="px-4 py-2 text-[var(--primary)] border border-[var(--primary-light)] rounded-lg hover:bg-[var(--primary-light)] text-sm cursor-pointer">
             {importing ? "导入中..." : "导入作业"}
             <input type="file" accept=".json" onChange={handleImportQuestions} className="hidden" />
           </label>
@@ -271,21 +271,21 @@ export default function TeacherQuizQuestionsPage() {
 
       {/* 状态标签 + 只读提示 */}
       <div className="mb-4 flex items-center gap-3">
-        {quiz.status === "INACTIVE" && <span className="px-3 py-1 rounded-full text-sm bg-orange-100 text-orange-700">失效中</span>}
-        {quiz.status === "ACTIVE" && <span className="px-3 py-1 rounded-full text-sm bg-green-100 text-green-700">生效中</span>}
-        {hasSubmissions && <span className="text-sm text-red-500">已有学生提交，无法修改题目。请先清空答题记录。</span>}
-        {!hasSubmissions && quiz.status === "ACTIVE" && <span className="text-sm text-gray-400">作业生效中，请先失效再编辑</span>}
-        {error && <div className="text-red-500 text-sm">{error}</div>}
+        {quiz.status === "INACTIVE" && <span className="px-3 py-1 rounded-full text-sm bg-[var(--warning-light)] text-[var(--warning)]">失效中</span>}
+        {quiz.status === "ACTIVE" && <span className="px-3 py-1 rounded-full text-sm bg-[var(--success-light)] text-[var(--success)]">生效中</span>}
+        {hasSubmissions && <span className="text-sm text-[var(--danger)]">已有学生提交，无法修改题目。请先清空答题记录。</span>}
+        {!hasSubmissions && quiz.status === "ACTIVE" && <span className="text-sm text-[var(--muted-light)]">作业生效中，请先失效再编辑</span>}
+        {error && <div className="text-[var(--danger)] text-sm">{error}</div>}
       </div>
 
       {/* 题目列表 */}
       <div className="mb-4 flex justify-between items-center">
-        <div className="text-sm text-gray-500">共 {questions.length} 题</div>
+        <div className="text-sm text-[var(--muted)]">共 {questions.length} 题</div>
         <div className="flex gap-2">
           <button 
             onClick={() => setQuestions((p) => [...p, { type: "SINGLE_CHOICE", content: "", options: { A: "", B: "", C: "", D: "" }, answer: "A", difficulty: "BASIC" }])}
             disabled={hasSubmissions || quiz?.status === "ACTIVE"}
-            className="px-3 py-1.5 text-sm border rounded-lg hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 text-sm text-[var(--primary)] border border-[var(--primary-light)] rounded-lg hover:bg-[var(--primary-light)] disabled:opacity-50 disabled:cursor-not-allowed"
           >
             + 添加题目
           </button>
@@ -293,7 +293,7 @@ export default function TeacherQuizQuestionsPage() {
             <button 
               onClick={handleSaveQuestions} 
               disabled={saving || hasSubmissions || quiz?.status === "ACTIVE"}
-              className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              className="px-3 py-1.5 text-sm bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] disabled:opacity-50"
             >
               {saving ? "保存中..." : "保存题目"}
             </button>
@@ -302,7 +302,7 @@ export default function TeacherQuizQuestionsPage() {
       </div>
 
       {questions.length === 0 ? (
-        <div className="text-center py-12 text-gray-400 bg-white rounded-xl border">暂无题目，点击"+ 添加题目"创建</div>
+        <div className="text-center py-12 text-[var(--muted-light)] bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)]">暂无题目，点击"+ 添加题目"创建</div>
       ) : (
         <div className="space-y-4">
           {questions.map((q, idx) => (
@@ -335,26 +335,26 @@ export default function TeacherQuizQuestionsPage() {
 function QuestionCard({ q, idx, total, onUpdate, onDelete, onMoveUp, onMoveDown, onPreview, disabled = false }: any) {
   const opts = typeof q.options === "string" ? JSON.parse(q.options || "{}") : (q.options || {});
   return (
-    <div className="bg-white rounded-xl shadow-sm p-5 border border-gray-100">
+    <div className="bg-[var(--card-bg)] rounded-xl shadow-sm p-5 border border-[var(--card-border)]">
       <div className="flex gap-2 mb-3">
-        {/* 上下移动按钮 */}
+        {/* 上下移动按钮：跟随主题主色（用户 2026-10-13） */}
         <div className="flex flex-col gap-0.5">
-          <button type="button" onClick={onMoveUp} disabled={disabled || idx === 0} className="w-5 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-xs">▲</button>
-          <button type="button" onClick={onMoveDown} disabled={disabled || idx === total - 1} className="w-5 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600 disabled:opacity-30 disabled:cursor-not-allowed text-xs">▼</button>
+          <button type="button" onClick={onMoveUp} disabled={disabled || idx === 0} className="w-5 h-4 flex items-center justify-center text-[var(--primary)] hover:text-[var(--primary-dark)] disabled:opacity-30 disabled:cursor-not-allowed text-xs">▲</button>
+          <button type="button" onClick={onMoveDown} disabled={disabled || idx === total - 1} className="w-5 h-4 flex items-center justify-center text-[var(--primary)] hover:text-[var(--primary-dark)] disabled:opacity-30 disabled:cursor-not-allowed text-xs">▼</button>
         </div>
-        <span className="text-xs text-gray-400 mt-1 w-6 text-right">{idx + 1}.</span>
+        <span className="text-xs text-[var(--muted-light)] mt-1 w-6 text-right">{idx + 1}.</span>
         {q.type === "MULTIPLE_CHOICE" && (
-          <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">[多选]</span>
+          <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--warning-light)] text-[var(--warning)] font-medium">[多选]</span>
         )}
-        <select value={q.difficulty} onChange={(e) => onUpdate("difficulty", e.target.value)} disabled={disabled} className="text-xs border rounded px-2 py-1 disabled:bg-gray-100">
+        <select value={q.difficulty} onChange={(e) => onUpdate("difficulty", e.target.value)} disabled={disabled} className="text-xs border rounded px-2 py-1 disabled:bg-[var(--primary-lighter)]">
           <option value="BASIC">基础</option><option value="INTERMEDIATE">提升</option><option value="ADVANCED">拓展</option>
         </select>
-        <select value={q.type || "SINGLE_CHOICE"} onChange={(e) => onUpdate("type", e.target.value)} disabled={disabled} className="text-xs border rounded px-2 py-1 disabled:bg-gray-100">
+        <select value={q.type || "SINGLE_CHOICE"} onChange={(e) => onUpdate("type", e.target.value)} disabled={disabled} className="text-xs border rounded px-2 py-1 disabled:bg-[var(--primary-lighter)]">
           <option value="SINGLE_CHOICE">单选</option><option value="MULTIPLE_CHOICE">多选</option><option value="TRUE_FALSE">判断</option>
         </select>
         {/* 答案设置 */}
         {q.type === "TRUE_FALSE" ? (
-          <select value={q.answer || "T"} onChange={(e) => onUpdate("answer", e.target.value)} disabled={disabled} className="text-xs border rounded px-2 py-1 disabled:bg-gray-100">
+          <select value={q.answer || "T"} onChange={(e) => onUpdate("answer", e.target.value)} disabled={disabled} className="text-xs border rounded px-2 py-1 disabled:bg-[var(--primary-lighter)]">
             <option value="T">正确(T)</option><option value="F">错误(F)</option>
           </select>
         ) : q.type === "MULTIPLE_CHOICE" ? (
@@ -372,24 +372,24 @@ function QuestionCard({ q, idx, total, onUpdate, onDelete, onMoveUp, onMoveDown,
             })}
           </div>
         ) : (
-          <select value={q.answer || "A"} onChange={(e) => onUpdate("answer", e.target.value)} disabled={disabled} className="text-xs border rounded px-2 py-1 disabled:bg-gray-100">
+          <select value={q.answer || "A"} onChange={(e) => onUpdate("answer", e.target.value)} disabled={disabled} className="text-xs border rounded px-2 py-1 disabled:bg-[var(--primary-lighter)]">
             <option value="A">A</option><option value="B">B</option><option value="C">C</option><option value="D">D</option>
           </select>
         )}
-        <button onClick={onPreview} disabled={disabled} className="text-xs text-blue-400 hover:text-blue-600 disabled:text-gray-400 disabled:cursor-not-allowed">预览</button>
-        <button onClick={onDelete} disabled={disabled} className="ml-auto text-xs text-red-400 hover:text-red-600 disabled:text-gray-400 disabled:cursor-not-allowed">删除</button>
+        <button onClick={onPreview} disabled={disabled} className="text-xs text-[var(--primary)] hover:text-[var(--primary-dark)] disabled:text-[var(--muted-light)] disabled:cursor-not-allowed">预览</button>
+        <button onClick={onDelete} disabled={disabled} className="ml-auto text-xs text-[var(--primary)] hover:text-[var(--primary-dark)] disabled:text-[var(--muted-light)] disabled:cursor-not-allowed">删除</button>
       </div>
-      <textarea value={q.content} onChange={(e) => onUpdate("content", e.target.value)} rows={2} disabled={disabled} className="w-full border rounded-lg px-3 py-2 text-sm mb-3 disabled:bg-gray-100" placeholder="题目内容" />
+      <textarea value={q.content} onChange={(e) => onUpdate("content", e.target.value)} rows={2} disabled={disabled} className="w-full border rounded-lg px-3 py-2 text-sm mb-3 disabled:bg-[var(--primary-lighter)]" placeholder="题目内容" />
       {q.type !== "TRUE_FALSE" && (
         <div className="grid grid-cols-2 gap-2">
           {["A","B","C","D"].map((k: string) => (
             <div key={k} className="flex items-center gap-2">
-              <span className="text-xs font-medium text-gray-500 w-4">{k}.</span>
+              <span className="text-xs font-medium text-[var(--muted)] w-4">{k}.</span>
               <input 
                 value={opts[k] || ""} 
                 onChange={(e) => { if (disabled) return; onUpdate("options", { ...opts, [k]: e.target.value }); }} 
                 disabled={disabled}
-                className="flex-1 border rounded px-2 py-1.5 text-sm disabled:bg-gray-100" 
+                className="flex-1 border rounded px-2 py-1.5 text-sm disabled:bg-[var(--primary-lighter)]" 
                 placeholder={`选项${k}`} 
               />
             </div>
@@ -411,21 +411,21 @@ function QuestionPreview({ question, onClose }: { question: Question; onClose: (
   
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50" onClick={onClose}>
-      <div className="bg-white rounded-2xl shadow-2xl p-8 max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-[var(--card-bg)] rounded-2xl shadow-2xl p-8 max-w-lg w-full mx-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-4">
           <div className="flex items-center gap-2">
-            {isMulti && <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium">[多选]</span>}
-            <span className="text-sm text-gray-400">{isJudge ? "判断题" : isMulti ? "多选题" : "单选题"} · {question.difficulty === "BASIC" ? "基础" : question.difficulty === "INTERMEDIATE" ? "提升" : "拓展"}</span>
+            {isMulti && <span className="text-xs px-1.5 py-0.5 rounded bg-[var(--warning-light)] text-[var(--warning)] font-medium">[多选]</span>}
+            <span className="text-sm text-[var(--muted-light)]">{isJudge ? "判断题" : isMulti ? "多选题" : "单选题"} · {question.difficulty === "BASIC" ? "基础" : question.difficulty === "INTERMEDIATE" ? "提升" : "拓展"}</span>
           </div>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-lg">✕</button>
+          <button onClick={onClose} className="text-[var(--muted-light)] hover:text-[var(--muted)] text-lg">✕</button>
         </div>
-        <div className="text-base text-gray-800 mb-6"><Markdown>{question.content}</Markdown></div>
+        <div className="text-base text-[var(--foreground)] mb-6"><Markdown>{question.content}</Markdown></div>
         {!isJudge && (
           <div className="space-y-3">
             {["A","B","C","D"].map((k) => opts[k] ? (
               <div key={k} className="flex items-center gap-3 p-3 border rounded-lg">
                 <span className="w-6 h-6 rounded-full border flex items-center justify-center text-xs font-medium">{k}</span>
-                <span className="text-sm text-gray-700"><Markdown inline>{String(opts[k])}</Markdown></span>
+                <span className="text-sm text-[var(--foreground)]"><Markdown inline>{String(opts[k])}</Markdown></span>
               </div>
             ) : null)}
           </div>
@@ -436,7 +436,7 @@ function QuestionPreview({ question, onClose }: { question: Question; onClose: (
             <div className="flex-1 p-3 border rounded-lg text-center text-sm">错误(F)</div>
           </div>
         )}
-        <div className="mt-6 text-xs text-gray-400">— 学生答题预览 —</div>
+        <div className="mt-6 text-xs text-[var(--muted-light)]">— 学生答题预览 —</div>
       </div>
     </div>
   );

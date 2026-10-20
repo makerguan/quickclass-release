@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { dedupeUnifiedOrder } from "@/lib/activities/unified-order";
 
 // GET: 获取单个课堂详情
 export async function GET(
@@ -214,12 +215,17 @@ export async function PUT(
     }
     // 保存每个 PresetConversation 关联的 Conversation（用于重建后恢复关联）
     const oldConversationsMap: Record<string, string[]> = {};
+    // 📐 对话 sortOrder 快照（2026-10-12）：重建时按 id 回填，保留老师排的跨类型授课顺序。
+    // ⛔ DO NOT REVERT: 旧实现直接写 pcIndex（前端提交数组下标），每次编辑保存都会把对话
+    //   顺序重置为分组顺序、摧毁交错排列（学生端按统一授课顺序展示后老师会明确感知）。
+    const oldPcSortOrderMap: Record<string, number> = {};
     for (const sp of oldSubProjects) {
       const pcs = await prisma.presetConversation.findMany({
         where: { subProjectId: sp.id },
-        select: { id: true },
+        select: { id: true, sortOrder: true },
       });
       for (const pc of pcs) {
+        oldPcSortOrderMap[pc.id] = pc.sortOrder;
         const convs = await prisma.conversation.findMany({
           where: { presetConversationId: pc.id },
           select: { id: true },
@@ -227,6 +233,28 @@ export async function PUT(
         if (convs.length > 0) {
           oldConversationsMap[pc.id] = convs.map(c => c.id);
         }
+      }
+    }
+
+    // 📐 项目提交快照（2026-10-12）：历史遗漏——对话/作业/探究都有「快照→重建→恢复」段，
+    // 唯独 ProjectSubmission 没有恢复段，编辑保存时随 SubProject 级联删除后直接丢失
+    //（连同学生提交 StudentProject、附件 ProjectAttachment、点赞 ProjectLike）。
+    // 本段与事务内「恢复 projectSubmissions」段配套，⛔ DO NOT REMOVE EITHER。
+    // ⚠️ GOTCHA: 恢复按 oldSubProjects[i] ↔ newSubProjects[i] 下标对应（与作业/探究恢复段
+    //   同款假设）；若老师编辑时增删了学习活动容器，下标会错位——届时 4 个恢复段需一并重审。
+    const oldProjectsMap: Record<string, any[]> = {};
+    const oldStudentProjectsMap: Record<string, any[]> = {};
+    for (const sp of oldSubProjects) {
+      const pss = await prisma.projectSubmission.findMany({
+        where: { subProjectId: sp.id },
+      });
+      if (pss.length > 0) oldProjectsMap[sp.id] = pss;
+      for (const ps of pss) {
+        const stuProjects = await prisma.studentProject.findMany({
+          where: { submissionId: ps.id },
+          include: { attachments: true, likes: true },
+        });
+        if (stuProjects.length > 0) oldStudentProjectsMap[ps.id] = stuProjects;
       }
     }
 
@@ -407,7 +435,12 @@ export async function PUT(
                 systemPrompt: pc.systemPrompt as string | undefined,
                 analysisPrompt: pc.analysisPrompt as string | undefined,
                 classAnalysisPrompt: pc.classAnalysisPrompt as string | undefined,
-                sortOrder: pcIndex,
+                // 📐 按 id 回填原 sortOrder（保留老师排的跨类型授课顺序）；新建对话用前端给值，
+                // 没有则退回数组下标——撞号/空洞由事务末尾 dedupeUnifiedOrder 紧凑化兜底
+                sortOrder:
+                  pc.id && oldPcSortOrderMap[pc.id as string] !== undefined
+                    ? oldPcSortOrderMap[pc.id as string]
+                    : ((pc.sortOrder as number) ?? pcIndex),
                 enabled: (pc.enabled as boolean) ?? true,
               };
               if (pc.studentInsightTemplateId) pcData.studentInsightTemplateId = pc.studentInsightTemplateId;
@@ -443,6 +476,8 @@ export async function PUT(
                 quizDesignTemplateId: qa.quizDesignTemplateId,
                 status: qa.status,
                 sortOrder: qa.sortOrder,
+                // 存量恢复遗漏修复（2026-10-12）：analysisPrompt 不恢复会导致编辑保存后作业分析提示词清空
+                analysisPrompt: qa.analysisPrompt,
                 createdAt: qa.createdAt,
                 updatedAt: new Date(),
               },
@@ -512,6 +547,10 @@ export async function PUT(
                 sortOrder: exp.sortOrder,
                 enabled: exp.enabled,
                 enableSubmission: exp.enableSubmission,
+                // 存量恢复遗漏修复（2026-10-12）：这两个字段不恢复会导致编辑保存后
+                // AI 伴学开关被重置、采集类别清单丢失（老师端展示维度走兜底）
+                enableAiCompanion: exp.enableAiCompanion,
+                collectProfile: exp.collectProfile,
                 questionsJson: exp.questionsJson,
                 teachingAdvice: exp.teachingAdvice,
                 createdAt: exp.createdAt,
@@ -549,6 +588,69 @@ export async function PUT(
         }
       }
 
+      // 📐 恢复 projectSubmissions（2026-10-12 新增）：历史遗漏——对话/作业/探究都有恢复段，
+      // 唯独项目提交没有，编辑保存后被级联删除且不恢复（连同学生提交/附件/点赞全部丢失）。
+      // 本段与事务前的「项目提交快照」段配套，⛔ DO NOT REMOVE EITHER。
+      // ⚠️ GOTCHA: 与作业/探究恢复段同款 oldSubProjects[i] ↔ newSubProjects[i] 下标对应假设。
+      for (let i = 0; i < newSubProjects.length; i++) {
+        const oldSp = oldSubProjects[i];
+        if (oldSp && oldProjectsMap[oldSp.id]?.length > 0) {
+          for (const ps of oldProjectsMap[oldSp.id]) {
+            const newPs = await tx.projectSubmission.create({
+              data: {
+                subProjectId: newSubProjects[i].id,
+                title: ps.title,
+                description: ps.description,
+                category: ps.category,
+                visibleToClass: ps.visibleToClass,
+                allowLike: ps.allowLike,
+                fileSizeLimit: ps.fileSizeLimit,
+                sortOrder: ps.sortOrder,
+                enabled: ps.enabled,
+                createdAt: ps.createdAt,
+              },
+            });
+            // 恢复学生提交（含附件与点赞）
+            const stuProjects = oldStudentProjectsMap[ps.id] || [];
+            for (const osp of stuProjects) {
+              const newStu = await tx.studentProject.create({
+                data: {
+                  submissionId: newPs.id,
+                  studentId: osp.studentId,
+                  classId: osp.classId,
+                  title: osp.title,
+                  description: osp.description,
+                  pinned: osp.pinned,
+                  hidden: osp.hidden,
+                  createdAt: osp.createdAt,
+                },
+              });
+              for (const att of osp.attachments || []) {
+                await tx.projectAttachment.create({
+                  data: {
+                    projectId: newStu.id,
+                    originalName: att.originalName,
+                    storedName: att.storedName,
+                    fileType: att.fileType,
+                    fileSize: att.fileSize,
+                    createdAt: att.createdAt,
+                  },
+                });
+              }
+              for (const like of osp.likes || []) {
+                await tx.projectLike.create({
+                  data: {
+                    projectId: newStu.id,
+                    studentId: like.studentId,
+                    createdAt: like.createdAt,
+                  },
+                });
+              }
+            }
+          }
+        }
+      }
+
       // 保存对话活动时，不修改课堂基本信息，只更新 updatedAt
       if (title !== undefined || description !== undefined || grade !== undefined || subject !== undefined ||
           objectives !== undefined || requirements !== undefined || knowledgeBase !== undefined ||
@@ -577,6 +679,18 @@ export async function PUT(
           where: { id: taskId },
           data: { updatedAt: new Date() },
         });
+      }
+
+      // 📐 CONTRACT（2026-10-12 修订）：编辑保存走「全删重建」，但 4 类活动均恢复老师排好的
+      // sortOrder——对话按 id 回填快照值、作业/探究/项目快照恢复（项目恢复段为本次新增）。
+      // 因此这里的兜底是 dedupeUnifiedOrder（无损紧凑化：仅消除重建产生的撞号/空洞，
+      // 顺序语义不变），绝不能用 applyUnifiedOrder(tx, nsp.id, null)——那是按类型分组的
+      // 重排，会把老师跨类型调好的授课顺序打回分组顺序。
+      // ⛔ DO NOT REVERT：改回分组重排 = 每次编辑保存摧毁一次交错顺序。
+      // ⚠️ GOTCHA: ProjectSubmission 曾在重建中被级联删除且无恢复段（2026-10-12 已修，
+      //   见上方恢复段），编辑保存不再丢项目任务与学生提交。
+      for (const nsp of newSubProjects) {
+        await dedupeUnifiedOrder(tx, nsp.id);
       }
       });
     }

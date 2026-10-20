@@ -18,7 +18,7 @@
  *   - 旧配置（aurora 等旧主题名）自动落回默认蓝，无需迁移。
  */
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   DEFAULT_THEME,
   SUBMITTED_AT_FIELD,
@@ -49,19 +49,19 @@ function accentColor(theme: string | undefined): string {
 
 /* ------------------------------ 栅格列数 / 占列 ------------------------------ */
 
-/** gridCols → Tailwind 栅格类（移动端 1 列，xl 起按配置列数） */
+/** gridCols → Tailwind 栅格类（移动端 1 列，lg(≥1024px) 起按配置列数；与 KPI 行断点一致） */
 const GRID_COLS_CLASS: Record<number, string> = {
-  2: "grid-cols-1 xl:grid-cols-2",
-  3: "grid-cols-1 xl:grid-cols-3",
-  4: "grid-cols-1 xl:grid-cols-4",
+  2: "grid-cols-1 lg:grid-cols-2",
+  3: "grid-cols-1 lg:grid-cols-3",
+  4: "grid-cols-1 lg:grid-cols-4",
 };
 
 /** span → 占列类（span=1 不加类，占默认 1 列） */
 const SPAN_CLASS: Record<number, string> = {
   1: "",
-  2: "xl:col-span-2",
-  3: "xl:col-span-3",
-  4: "xl:col-span-4",
+  2: "lg:col-span-2",
+  3: "lg:col-span-3",
+  4: "lg:col-span-4",
 };
 
 /** 该图实际占列数：名单永远通栏；其余按 span 夹到 1..gridCols */
@@ -157,6 +157,43 @@ function entriesForField(values: unknown[], limit: number): Entry[] {
     return numericBuckets(nums, new Set(nums.map((v) => String(v))).size);
   }
   return counter(values, limit);
+}
+
+/**
+ * 词云专用分词：一个字段值里常含多个词（如「勤劳，无私、清凉」应按 3 个词计数），
+ * 按中英文标点 + 空白拆开逐词计数；纯数字值（含小数）整体保留，避免「3.5」被拆成「3」「5」。
+ * ⚠️ 仅按标点/空格切分，不做停用词过滤、不丢单字词（保持数据忠实；虚词霸榜问题留待真实数据反馈再定）。
+ * 🔗 仅 AI 大屏的词云分支使用；旧手排大屏 QuickFormDashboard 的 TagCloud 未接入（保持整值口径，勿混用）。
+ */
+function collectWords(values: unknown[]): string[] {
+  const out: string[] = [];
+  const push = (s: string) => {
+    for (const w of s.split(
+      /[\s,，、;；:：.。!！?？·•|/\\~～\-—_()（）[\]【】<>《》「」『』"'“”‘’]+/
+    )) {
+      const t = w.trim();
+      if (t) out.push(t);
+    }
+  };
+  for (const v of values) {
+    if (v === undefined || v === null) continue;
+    if (Array.isArray(v)) {
+      for (const x of v) {
+        if (x === undefined || x === null) continue;
+        const s = String(x).trim();
+        if (s) push(s);
+      }
+      continue;
+    }
+    const s = String(v).trim();
+    if (!s) continue;
+    if (isNumericValue(s)) {
+      out.push(s);
+      continue;
+    }
+    push(s);
+  }
+  return out;
 }
 
 /** 计算 KPI 数值（count 已在调用方按 total 处理，这里只算字段维度） */
@@ -361,31 +398,126 @@ function RankingList({
   );
 }
 
-/** 词云：字号/透明度随频次变化，词越大出现越多 */
+/* ------------------------------ 词云（螺旋布局） ------------------------------ */
+
+/** 词云卡片固定高度（px）：竖排长词 + 36px 大词需要的高度下限 */
+const WORDCLOUD_HEIGHT = 210;
+
+interface WordLayoutItem {
+  label: string;
+  count: number;
+  /** 包围盒中心（px） */
+  cx: number;
+  cy: number;
+  fontSize: number;
+  opacity: number;
+  bold: boolean;
+  rotated: boolean;
+}
+
+/**
+ * 词云：经典螺旋布局（阿基米德螺旋 + 矩形碰撞检测），高频词居中、字号大、颜色实，
+ * 约 30% 的词竖排（旋转 90°；用确定性伪随机选词，避免每次渲染方向跳变）。
+ * ⛔ DO NOT REVERT 到 flex 平铺：老师要求「真正的词云效果」（2026-10-13），平铺无旋转无密度感。
+ * ⚠️ GOTCHA：布局依赖容器实际宽度，必须经 ResizeObserver 监听宽度变化重排；
+ * recharts 无词云组件，此处自绘，勿为此引入新依赖。
+ * 🔗 数据入口仅词云分支：counter(collectWords(values), max(limit,6))，降序传入；
+ * 字号映射 12~36px（旧平铺版是 12~26px），放不下的词缩字号重试、缩到底仍放不下静默丢弃。
+ */
 function WordCloud({ entries, color }: { entries: Entry[]; color: string }) {
-  const max = entries[0]?.[1] || 1;
-  return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2 py-2">
-      {entries.map(([label, count]) => {
+  const boxRef = useRef<HTMLDivElement | null>(null);
+  const [words, setWords] = useState<WordLayoutItem[]>([]);
+
+  useEffect(() => {
+    const box = boxRef.current;
+    if (!box) return;
+    const ctx = document.createElement("canvas").getContext("2d");
+    if (!ctx) return;
+    const family = getComputedStyle(box).fontFamily; // 用页面真实字体测量，避免 canvas/DOM 字体不一致
+
+    const layout = (width: number) => {
+      if (width < 40) return; // 容器不可见（display:none 等），等 ResizeObserver 再触发
+      const placed: { x: number; y: number; w: number; h: number }[] = [];
+      const out: WordLayoutItem[] = [];
+      const max = entries[0]?.[1] || 1;
+
+      entries.forEach(([label, count], i) => {
         const t = count / max;
-        const fontSize = Math.round(12 + t * 14); // 12 ~ 26
-        const opacity = 0.55 + t * 0.45;
-        return (
-          <span
-            key={label}
-            title={`${label} · ${count} 次`}
-            style={{
-              fontSize,
-              color,
-              opacity,
-              fontWeight: t > 0.6 ? 600 : 400,
-              lineHeight: 1.2,
-            }}
-          >
-            {label}
-          </span>
-        );
-      })}
+        let size = Math.round(12 + t * 24); // 12 ~ 36，高频词更大
+        const bold = t > 0.6;
+        // 确定性伪随机竖排 ~30%；最高频词（i=0）永远横排做主视觉
+        const rotated = i > 0 && (i * 137) % 10 < 3;
+
+        for (let attempt = 0; attempt < 4; attempt++) {
+          ctx.font = `${bold ? 600 : 400} ${size}px ${family}`;
+          const tw = ctx.measureText(label).width + 6;
+          const th = size * 1.2 + 6;
+          // 竖排词：视觉包围盒宽高互换（transform rotate 围绕中心转）
+          const w = rotated ? th : tw;
+          const h = rotated ? tw : th;
+          let ok = false;
+          for (let s = 0; s < 400; s++) {
+            const theta = s * 0.32;
+            const r = 3 * theta;
+            const cx = width / 2 + r * Math.cos(theta) * 1.5; // x 拉伸适配宽矩形
+            const cy = WORDCLOUD_HEIGHT / 2 + r * Math.sin(theta);
+            if (
+              cx - w / 2 < 2 ||
+              cx + w / 2 > width - 2 ||
+              cy - h / 2 < 2 ||
+              cy + h / 2 > WORDCLOUD_HEIGHT - 2
+            )
+              continue;
+            let hit = false;
+            for (const p of placed) {
+              if (cx - w / 2 < p.x + p.w && cx + w / 2 > p.x && cy - h / 2 < p.y + p.h && cy + h / 2 > p.y) {
+                hit = true;
+                break;
+              }
+            }
+            if (!hit) {
+              placed.push({ x: cx - w / 2, y: cy - h / 2, w, h });
+              out.push({ label, count, cx, cy, fontSize: size, opacity: 0.55 + t * 0.45, bold, rotated });
+              ok = true;
+              break;
+            }
+          }
+          if (ok) break;
+          size = Math.max(10, Math.round(size * 0.85)); // 螺旋转满仍放不下 → 缩字号重试
+        }
+        // 缩到 10px 仍放不下 → 静默丢弃（词云装饰性质，不挤占版面）
+      });
+
+      setWords(out);
+    };
+
+    layout(box.clientWidth);
+    const ro = new ResizeObserver(() => layout(box.clientWidth));
+    ro.observe(box);
+    return () => ro.disconnect();
+  }, [entries]);
+
+  return (
+    <div ref={boxRef} className="relative w-full select-none" style={{ height: WORDCLOUD_HEIGHT }}>
+      {words.map((w) => (
+        <span
+          key={w.label}
+          title={`${w.label} · ${w.count} 次`}
+          className="absolute whitespace-nowrap"
+          style={{
+            left: w.cx,
+            top: w.cy,
+            fontSize: w.fontSize,
+            color,
+            opacity: w.opacity,
+            fontWeight: w.bold ? 600 : 400,
+            lineHeight: 1.2,
+            transform: `translate(-50%, -50%) rotate(${w.rotated ? 90 : 0}deg)`,
+          }}
+        >
+          {w.label}
+        </span>
+      ))}
     </div>
   );
 }
@@ -471,7 +603,10 @@ function ChartBody({
   const values = fieldValues.get(chart.field) || [];
 
   if (chart.type === "wordcloud") {
-    const wcEntries = entriesForField(values, 30);
+    // ⛔ DO NOT REVERT：词数上限曾写死 30，导致编辑器「显示条数」输入框形同虚设（2026-10-13 修复）。
+    // 现按 chart.limit 生效（默认 8，编辑器/后端 sanitize 限 3~20），下限 6 与 bar/hbar/pie/line 口径一致；
+    // 取值必须先经 collectWords 按标点/空格分词，否则「勤劳，无私、清凉」会被整串计为一个词。
+    const wcEntries = counter(collectWords(values), Math.max(limit, 6));
     if (wcEntries.length === 0) return null;
     return <WordCloud entries={wcEntries} color={color} />;
   }

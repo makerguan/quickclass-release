@@ -108,7 +108,7 @@ async function startUpstream(voice: string, text: string): Promise<Upstream> {
       connectTimeoutMsg
     );
     const res = (await withTimeout(
-      tts.toStream(text),
+      tts.toStream(text) as unknown as Promise<unknown>,
       CONNECT_TIMEOUT_MS,
       connectTimeoutMsg
     )) as unknown as { audioStream: AsyncIterable<Buffer> };

@@ -1,13 +1,19 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
 import { Button, Input, MessagePlugin, Tag } from "tdesign-react";
 import {
   SendIcon,
   ImageIcon,
   AddIcon,
-  FolderIcon,
   ChatIcon,
+  MicrophoneIcon,
+  BookOpenIcon,
+  BrowseIcon,
+  AssignmentIcon,
+  EditIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
 } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
 import SpeechControls from "@/components/speech/SpeechControls";
@@ -28,14 +34,23 @@ interface Message {
   role: "user" | "assistant";
   content: string;
   images?: MessageImage[];
+  audioUrl?: string;
   createdAt?: string;
+  // 本次回复所用线路（后端响应头 X-Model-Route）：text=图文模型（指示点绿）、omni=全媒体模型（指示点黑）。
+  // 历史消息无此字段（未存库），渲染时无指示点；仅新生成的回复显示。
+  modelRoute?: "text" | "omni";
 }
 
 interface PresetConversation {
   id: string;
   title: string;
   description?: string;
+  // 教师开场白（2026-10-13）：学生进入对话后 AI 的第一句话，本地渲染 + 首条发言时随上下文发送
+  openingMessage?: string;
   systemPrompt?: string;
+  // 📐 跨类型统一排序（2026-10-12）：4 表共用一个 sortOrder 数值空间（src/lib/activities/unified-order.ts），
+  // 学生端侧边栏按它合并渲染授课顺序
+  sortOrder?: number;
 }
 
 interface SubProject {
@@ -59,6 +74,7 @@ interface ExplorationInfo {
   enableSubmission?: boolean;
   enableAiCompanion?: boolean;
   questionsJson?: string;
+  sortOrder?: number;
 }
 
 interface QuestionData {
@@ -79,6 +95,7 @@ interface QuizInfo {
   status?: string;
   questions?: QuestionData[];
   _count?: { questions: number; attempts: number };
+  sortOrder?: number;
 }
 
 interface ProjectSubmissionInfo {
@@ -89,6 +106,7 @@ interface ProjectSubmissionInfo {
   visibleToClass: boolean;
   allowLike: boolean;
   fileSizeLimit: number;
+  sortOrder?: number;
 }
 
 interface LearningTask {
@@ -110,32 +128,158 @@ interface Conversation {
   messages: { id: string; role: string; content: string; createdAt: string }[];
 }
 
-/** 将服务端返回的 messages 列表规范化为前端 Message 结构（页面内多处使用，统一收敛） */
+// 与服务端 /api/chat 约定的「已切换模型」流内标记：识别后显示切换提示并剥离（不入正文）
+const SWITCH_PREFIX = "\u0000SWITCH\u0000";
+
+/**
+ * 📐 活动类型中文名（2026-10-15）：侧边栏活动名称 hover 时显示类型（见 ActivityNameTip），
+ * 与下方活动列表的 act.type 字面量一一对应。
+ * 现状约束：仅展示用，不参与排序/过滤；新增活动类型时必须同步补本映射，否则 hover 无文字。
+ * 🔗 RELATED：本文件活动列表渲染处（搜索 ACTIVITY_TYPE_LABEL）；教师端"活动"命名口径同此。
+ * ⛔ DO NOT REVERT：勿改回"仅靠图标区分类型"——图标对低年级/色弱学生不友好，文字是唯一语义出口。
+ */
+const ACTIVITY_TYPE_LABEL: Record<"conversation" | "exploration" | "project" | "quiz", string> = {
+  conversation: "对话活动",
+  exploration: "互动探究",
+  project: "项目提交",
+  quiz: "课堂作业",
+};
+
+/**
+ * 📐 活动名称 hover 类型提示（2026-10-15）：鼠标移到活动名称上，显示类型名 0.5s 后自动消失。
+ * 不用 TDesign Tooltip 的 duration——它只对组件首次挂载生效一次，做不到"每次 hover 都自动隐藏"，
+ * 故自实现：hover 启动 500ms 定时器，到点 setVisible(false) 淡出；移开立即隐藏。
+ * 现状约束：气泡 absolute 定位于 relative wrapper 上（标题 span 自带 overflow:hidden 的 truncate，
+ *   气泡若放 span 内部会被裁剪）；wrapper 用 min-w-0 max-w-full 保住原 truncate 收缩/省略行为。
+ * 🔗 RELATED：ACTIVITY_TYPE_LABEL（类型中文名）；本文件活动列表渲染处。
+ * ⛔ DO NOT REVERT：勿换回 TDesign Tooltip（无法每次 hover 自动隐藏）；勿把气泡塞进 truncate span 内部。
+ */
+function ActivityNameTip({
+  label,
+  active,
+  color,
+  children,
+}: {
+  label: string;
+  active: boolean;
+  color?: string;
+  children: ReactNode;
+}) {
+  const [visible, setVisible] = useState(false);
+  const timerRef = useRef<number | null>(null);
+
+  const show = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    setVisible(true);
+    timerRef.current = window.setTimeout(() => setVisible(false), 500);
+  };
+  const hide = () => {
+    if (timerRef.current) window.clearTimeout(timerRef.current);
+    setVisible(false);
+  };
+  useEffect(
+    () => () => {
+      if (timerRef.current) window.clearTimeout(timerRef.current);
+    },
+    []
+  );
+
+  return (
+    <span className="relative inline-flex min-w-0 max-w-full" onMouseEnter={show} onMouseLeave={hide}>
+      <span className={`text-[15px] truncate ${active ? "font-medium" : "text-[#333]"}`} style={active ? { color } : undefined}>
+        {children}
+      </span>
+      <span
+        className={`pointer-events-none absolute bottom-full left-1/2 z-10 mb-1.5 -translate-x-1/2 whitespace-nowrap rounded-md bg-[#333] px-2 py-1 text-xs text-white shadow-md transition-opacity duration-150 ${
+          visible ? "opacity-100" : "opacity-0"
+        }`}
+      >
+        {label}
+      </span>
+    </span>
+  );
+}
+
+/** 将服务端返回的 messages 列表规范化为前端 Message 结构（页面内多处使用，统一收敛）
+ * 多模态消息 content 是 JSON 字符串，需要解析出文本、图片、音频。 */
 function normalizeMessages(
   list: { id: string; role: string; content: string; createdAt: string }[] | undefined
 ): Message[] {
-  return (list || []).map((m) => ({
-    id: m.id,
-    role: m.role as "user" | "assistant",
-    content: m.content,
-    createdAt: m.createdAt,
-  }));
+  return (list || []).map((m) => {
+    const parsed = parseStoredContent(m.content);
+    return {
+      id: m.id,
+      role: m.role as "user" | "assistant",
+      content: parsed.text,
+      images: parsed.images,
+      audioUrl: parsed.audioUrl,
+      createdAt: m.createdAt,
+    };
+  });
 }
 
-/** 将本地消息列表转换为对话接口要求的 API 格式（文本 / 图片多段内容） */
+/** 解析服务端存储的消息 content：
+ * - 普通文本直接返回；
+ * - 多模态 JSON 数组提取 text、image_url、audio_url。 */
+function parseStoredContent(content: string): {
+  text: string;
+  images?: MessageImage[];
+  audioUrl?: string;
+} {
+  if (!content.startsWith("[")) {
+    return { text: content };
+  }
+  try {
+    const parts = JSON.parse(content) as Array<
+      | { type: "text"; text: string }
+      | { type: "image_url"; image_url: { url: string } }
+      | { type: "audio_url"; audio_url: { url: string } }
+    >;
+    if (!Array.isArray(parts)) return { text: content };
+
+    const text = parts
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join(" ");
+    const images = parts
+      .filter((p): p is { type: "image_url"; image_url: { url: string } } => p.type === "image_url")
+      .map((p) => ({ url: p.image_url.url }));
+    const audioPart = parts.find(
+      (p): p is { type: "audio_url"; audio_url: { url: string } } => p.type === "audio_url"
+    );
+    return {
+      text,
+      images: images.length > 0 ? images : undefined,
+      audioUrl: audioPart?.audio_url.url,
+    };
+  } catch {
+    return { text: content };
+  }
+}
+
+/** 将本地消息列表转换为对话接口要求的 API 格式（文本 / 图片 / 音频多段内容） */
 function toApiMessages(messages: Message[]) {
   return messages.map((m) => {
-    if (m.images && m.images.length > 0) {
-      return {
-        role: m.role,
-        content: [
-          { type: "text", text: m.content },
-          ...m.images.map((img) => ({
-            type: "image_url",
+    const hasImages = m.images && m.images.length > 0;
+    const hasAudio = !!m.audioUrl;
+    if (hasImages || hasAudio) {
+      const parts: Array<
+        | { type: "text"; text: string }
+        | { type: "image_url"; image_url: { url: string } }
+        | { type: "audio_url"; audio_url: { url: string } }
+      > = [{ type: "text", text: m.content }];
+      if (hasImages) {
+        parts.push(
+          ...m.images!.map((img) => ({
+            type: "image_url" as const,
             image_url: { url: img.url },
-          })),
-        ],
-      };
+          }))
+        );
+      }
+      if (hasAudio) {
+        parts.push({ type: "audio_url" as const, audio_url: { url: m.audioUrl! } });
+      }
+      return { role: m.role, content: parts };
     }
     return { role: m.role, content: m.content };
   });
@@ -196,6 +340,8 @@ export default function StudentChatPage() {
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadingData, setLoadingData] = useState(true);
+  // 是否显示「正在切换模型」提示（服务端流内标记触发，正文开始后随 loading 一起消失）
+  const [switchNotice, setSwitchNotice] = useState(false);
 
   // 作业状态
   const [activeType, setActiveType] = useState<"chat" | "quiz" | "exploration" | "project" | null>(null);
@@ -207,15 +353,27 @@ export default function StudentChatPage() {
   // 侧边栏折叠状态
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
+  // 📐 课堂活动折叠状态（2026-10-12）：多课堂时默认只展开最新课堂（后端 orderBy createdAt desc，tasks[0] 最新），
+  // 其他课堂折叠；当前选中活动所在课堂强制展开，避免高亮项看不见。
+  const [expandedTaskIds, setExpandedTaskIds] = useState<Set<string>>(new Set());
+
   // 朗读的开关 / 音色 / 语速统一由 lib/speech-settings 管理（见 SpeechControls 组件）；
   // 这里只记录最新一条 AI 回答的下标，供自动朗读时高亮对应的朗读按钮。
   const assistantIndexRef = useRef(-1);
 
-  // 图片
+  // 图片 / 音频附件
   const [pendingImages, setPendingImages] = useState<MessageImage[]>([]);
+  const [pendingAudio, setPendingAudio] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
+  // 话筒页内录音（2026-10-15 需求：点击直接调用麦克风，再点停止，录完作为语音附件）
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingSec, setRecordingSec] = useState(0);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const recordingStreamRef = useRef<MediaStream | null>(null);
+  const recordingChunksRef = useRef<Blob[]>([]);
+  const recordingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const activePresetRef = useRef<string | null>(null);
   const isSwitchingRef = useRef(false); // 防止 switch 函数重入
   const latestDetailConvRef = useRef<string | null>(null); // 最新一次详情请求的对话 ID（竞态保护：快速切换后丢弃旧响应）
@@ -233,6 +391,18 @@ export default function StudentChatPage() {
 
   useEffect(() => {
     fetchData();
+  }, []);
+
+  // 组件卸载时兜底停止录音并释放麦克风
+  useEffect(() => {
+    return () => {
+      if (recordingTimerRef.current) {
+        clearInterval(recordingTimerRef.current);
+        recordingTimerRef.current = null;
+      }
+      recordingStreamRef.current?.getTracks().forEach((t) => t.stop());
+      recordingStreamRef.current = null;
+    };
   }, []);
 
   useEffect(() => {
@@ -270,6 +440,37 @@ export default function StudentChatPage() {
   useEffect(() => {
     isSwitchingRef.current = false;
   }, [activePresetId, activeType]);
+
+  // 根据当前选中的活动 ID，反查它属于哪个课堂（用于自动展开该课堂）。
+  const getActiveTaskId = () => {
+    if (!activeType) return null;
+    for (const task of tasks) {
+      for (const sp of task.subProjects) {
+        if (activeType === "chat" && sp.presetConversations.some((pc) => pc.id === activePresetId)) return task.id;
+        if (activeType === "quiz" && (sp.quizActivities || []).some((q) => q.id === activeQuizId)) return task.id;
+        if (activeType === "exploration" && (sp.explorations || []).some((e) => e.id === activeExplorationId)) return task.id;
+        if (activeType === "project" && (sp.projectSubmissions || []).some((p) => p.id === activeProjectId)) return task.id;
+      }
+    }
+    return null;
+  };
+
+  // 多课堂折叠策略：首次加载默认展开最新课堂；切换活动后自动展开所在课堂。
+  useEffect(() => {
+    let changed = false;
+    const next = new Set(expandedTaskIds);
+    if (next.size === 0 && tasks.length > 0) {
+      next.add(tasks[0].id);
+      changed = true;
+    }
+    const activeTaskId = getActiveTaskId();
+    if (activeTaskId && !next.has(activeTaskId)) {
+      next.add(activeTaskId);
+      changed = true;
+    }
+    if (changed) setExpandedTaskIds(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tasks, activeType, activePresetId, activeQuizId, activeExplorationId, activeProjectId]);
 
   const fetchData = async () => {
     const token = localStorage.getItem("token");
@@ -445,7 +646,7 @@ export default function StudentChatPage() {
   };
 
   // 图片处理
-  const handleImageSelect = (files: FileList | null) => {
+  const handleImageSelect = (files: FileList | File[] | null) => {
     if (!files) return;
     Array.from(files).forEach((file) => {
       if (!file.type.startsWith("image/")) {
@@ -465,14 +666,181 @@ export default function StudentChatPage() {
     });
   };
 
+  // ⛔ DO NOT REVERT: 音频统一转码为 WAV。AI SDK（@ai-sdk/openai）的 file part 音频
+  //   只接受 audio/wav、audio/mp3、audio/mpeg，m4a/ogg/webm 会抛 UnsupportedFunctionalityError；
+  //   浏览器 Web Audio 可解码任意格式，故上传前统一转 16kHz 单声道 WAV，保证全格式可用。
+  //   后端 /api/chat 收到 data:audio/wav;base64, 后转 file part 直通（见 route.ts mediaTypeToExt）。
+  const transcodeAudioToWav = async (file: File): Promise<string> => {
+    const arrayBuffer = await file.arrayBuffer();
+    const AudioCtx =
+      window.AudioContext ||
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const ctx = new AudioCtx();
+    try {
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      const targetRate = 16000;
+      const length = Math.ceil(audioBuffer.duration * targetRate);
+      const offlineCtx = new OfflineAudioContext(1, length, targetRate);
+      const source = offlineCtx.createBufferSource();
+      source.buffer = audioBuffer;
+      source.connect(offlineCtx.destination);
+      source.start(0);
+      const rendered = await offlineCtx.startRendering();
+      const pcm = rendered.getChannelData(0);
+
+      // 编码 16bit PCM WAV
+      const buffer = new ArrayBuffer(44 + pcm.length * 2);
+      const view = new DataView(buffer);
+      const writeStr = (offset: number, s: string) => {
+        for (let i = 0; i < s.length; i++) view.setUint8(offset + i, s.charCodeAt(i));
+      };
+      writeStr(0, "RIFF");
+      view.setUint32(4, 36 + pcm.length * 2, true);
+      writeStr(8, "WAVE");
+      writeStr(12, "fmt ");
+      view.setUint32(16, 16, true);
+      view.setUint16(20, 1, true); // PCM
+      view.setUint16(22, 1, true); // 单声道
+      view.setUint32(24, targetRate, true);
+      view.setUint32(28, targetRate * 2, true);
+      view.setUint16(32, 2, true);
+      view.setUint16(34, 16, true);
+      writeStr(36, "data");
+      view.setUint32(40, pcm.length * 2, true);
+      for (let i = 0; i < pcm.length; i++) {
+        const s = Math.max(-1, Math.min(1, pcm[i]));
+        view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      }
+
+      const wavBlob = new Blob([buffer], { type: "audio/wav" });
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = () => reject(reader.error);
+        reader.readAsDataURL(wavBlob);
+      });
+    } finally {
+      void ctx.close();
+    }
+  };
+
+  // 音频附件处理：选择录音/音频文件，统一转码为 16kHz 单声道 WAV 后暂存
+  const handleAudioSelect = async (files: FileList | File[] | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (!file.type.startsWith("audio/")) {
+      MessagePlugin.error("请选择音频文件");
+      return;
+    }
+    if (file.size > 20 * 1024 * 1024) {
+      MessagePlugin.error("音频不能超过 20MB");
+      return;
+    }
+    try {
+      const url = await transcodeAudioToWav(file);
+      setPendingAudio(url);
+    } catch {
+      MessagePlugin.error("音频解析失败，请换用常见格式（m4a/mp3/wav）");
+    }
+  };
+
+  // ⛔ 添加文件按钮（2026-10-15 需求）：一个入口同时支持图片（jpg/png/jpeg）与音频（m4a/mp3/wav），按类型分流处理
+  const handleAttachmentSelect = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const images: File[] = [];
+    const audios: File[] = [];
+    Array.from(files).forEach((file) => {
+      if (file.type.startsWith("image/")) images.push(file);
+      else if (file.type.startsWith("audio/")) audios.push(file);
+      else MessagePlugin.error(`不支持的文件：${file.name}（仅支持图片和音频）`);
+    });
+    if (images.length > 0) handleImageSelect(images);
+    if (audios.length > 0) handleAudioSelect(audios);
+  };
+
+  // ⛔ 话筒页内录音（2026-10-15 需求：点击直接调用麦克风开始录音，再点停止，录完作为语音附件）
+  // 录音统一走 transcodeAudioToWav 转 16kHz 单声道 WAV，与"选择音频文件"共用同一条发送链路
+  const MAX_RECORD_SEC = 60;
+  const clearRecordingTimer = () => {
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  };
+  const formatRecordSec = (s: number) =>
+    `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+  const toggleRecording = async () => {
+    // 录音中：点击停止
+    if (isRecording) {
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") recorder.stop();
+      return;
+    }
+    if (!activePresetId) return;
+    if (typeof MediaRecorder === "undefined") {
+      MessagePlugin.error("当前浏览器不支持录音，请用 Chrome / Edge");
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const recorder = new MediaRecorder(stream);
+      recordingChunksRef.current = [];
+      mediaRecorderRef.current = recorder;
+      recordingStreamRef.current = stream;
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) recordingChunksRef.current.push(e.data);
+      };
+      recorder.onstop = async () => {
+        clearRecordingTimer();
+        setIsRecording(false);
+        setRecordingSec(0);
+        recordingStreamRef.current?.getTracks().forEach((t) => t.stop());
+        recordingStreamRef.current = null;
+        const blob = new Blob(recordingChunksRef.current, {
+          type: recorder.mimeType || "audio/webm",
+        });
+        if (blob.size === 0) return;
+        try {
+          const file = new File([blob], `recording-${Date.now()}.webm`, { type: blob.type });
+          const url = await transcodeAudioToWav(file);
+          setPendingAudio(url);
+        } catch {
+          MessagePlugin.error("录音解析失败，请重试");
+        }
+      };
+      recorder.start();
+      setIsRecording(true);
+      setRecordingSec(0);
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingSec((s) => {
+          const next = s + 1;
+          if (next >= MAX_RECORD_SEC) {
+            // 到时自动停止录音
+            const rec = mediaRecorderRef.current;
+            if (rec && rec.state !== "inactive") rec.stop();
+          }
+          return next;
+        });
+      }, 1000);
+    } catch {
+      MessagePlugin.error("无法访问麦克风，请检查浏览器权限设置");
+    }
+  };
+
+  const removePendingAudio = () => {
+    setPendingAudio(null);
+  };
+
   const removePendingImage = (index: number) => {
     setPendingImages((prev) => prev.filter((_, i) => i !== index));
   };
 
   // 发送消息（供自动发送和手动发送共用）
-  const sendMessage = async (text: string, images?: MessageImage[]) => {
+  const sendMessage = async (text: string, images?: MessageImage[], audioUrl?: string) => {
     if (!text.trim() || loading) return;
     stopSpeaking(); // 发送新消息，停止上一条朗读
+    setSwitchNotice(false); // 新一轮对话重置切换提示
     // 使用 ref 而非 state 检查当前活动，因为 state 在 setTimeout 中可能还是旧值
     const currentPresetId = activePresetRef.current;
     if (!currentPresetId) return;
@@ -499,11 +867,28 @@ export default function StudentChatPage() {
       role: "user",
       content: text,
       images: images && images.length > 0 ? [...images] : undefined,
+      audioUrl,
     };
-    const newMessages = [...messages, userMessage];
+    // 教师开场白（2026-10-13）：对话尚未开始时，把开场白拼进首条发言的上下文，
+    // AI 顺着开场白继续对话；/api/chat 新会话分支会把它落库为 assistant 首条消息，
+    // 刷新后从库中读到的历史与此处渲染一致，不会重复。
+    const presetInfo = getCurrentPresetInfo();
+    const openingMessage: Message | null =
+      presetInfo?.preset?.openingMessage && messages.length === 0
+        ? { role: "assistant", content: presetInfo.preset.openingMessage }
+        : null;
+    // 完整历史 + 可能的开场白 + 本条新消息。开场白仅在冷启动（messages 为空）时补入，
+    // 与后端"仅新会话落库一次开场白"口径一致，不会重复；历史必须展开，否则发送时
+    // 界面被重置只剩一轮，AI 上下文也随之失忆（2026-10-13 回归修复）。
+    const newMessages = [
+      ...(openingMessage ? [openingMessage] : []),
+      ...messages,
+      userMessage,
+    ];
     setMessages(newMessages);
     setInput("");
     if (images) setPendingImages([]);
+    if (audioUrl) setPendingAudio(null);
     setLoading(true);
 
     try {
@@ -534,6 +919,9 @@ export default function StudentChatPage() {
       }
 
       const newConvId = res.headers.get("X-Conversation-Id");
+      // 本次回复所用线路（后端 X-Model-Route 响应头）：text=图文模型、omni=全媒体模型，
+      // 渲染时在回复首个字符前显示指示点（绿=图文、黑=全媒体）
+      const modelRoute = (res.headers.get("X-Model-Route") || "text") as "text" | "omni";
       // 新建对话时立即更新 activeConvId 并追加到列表（避免被后续请求覆盖）
       if (newConvId) {
         setActiveConvId(newConvId);
@@ -559,6 +947,7 @@ export default function StudentChatPage() {
       const decoder = new TextDecoder();
       let assistantContent = "";
       let assistantAdded = false; // 标记是否已添加 assistant 气泡
+      let pendingPrefix = ""; // 跨 chunk 缓冲「已切换模型」标记
 
       if (reader) {
         while (true) {
@@ -567,19 +956,56 @@ export default function StudentChatPage() {
           // 流式读取过程中检查是否被切换
           if (activePresetRef.current !== currentPresetId) return;
           const chunk = decoder.decode(value, { stream: true });
-          assistantContent += chunk;
+
+          // 剥离「已切换模型」标记：标记可能跨 chunk 分割（服务端单独 enqueue，网络分帧不保证一次取全）
           if (!assistantAdded) {
-            // 收到第一个 chunk 时才添加 assistant 气泡（带初始内容）
+            const combined = pendingPrefix + chunk;
+            const swIdx = combined.indexOf(SWITCH_PREFIX);
+            if (swIdx === 0) {
+              setSwitchNotice(true); // 标记在前：剥离后正文为空，切换提示由 loading 区显示
+              pendingPrefix = "";
+              assistantContent = combined.slice(SWITCH_PREFIX.length);
+            } else if (swIdx > 0) {
+              setSwitchNotice(true);
+              pendingPrefix = "";
+              assistantContent = combined.slice(0, swIdx) + combined.slice(swIdx + SWITCH_PREFIX.length);
+            } else if (combined.length > 0 && SWITCH_PREFIX.startsWith(combined)) {
+              pendingPrefix = combined; // 收到的仍是标记的一部分，继续等下一块
+            } else {
+              pendingPrefix = "";
+              assistantContent = combined; // 无标记：全部当正文
+            }
+          } else {
+            assistantContent += chunk;
+          }
+
+          if (!assistantAdded) {
+            // 收到第一个 chunk 时才添加 assistant 气泡（带初始内容与线路指示点）
             assistantAdded = true;
-            setMessages((prev) => [...prev, { role: "assistant", content: assistantContent }]);
+            setMessages((prev) => [
+              ...prev,
+              { role: "assistant", content: assistantContent, modelRoute },
+            ]);
           } else {
             setMessages((prev) => {
               const updated = [...prev];
-              updated[updated.length - 1] = { role: "assistant", content: assistantContent };
+              updated[updated.length - 1] = {
+                role: "assistant",
+                content: assistantContent,
+                modelRoute,
+              };
               return updated;
             });
           }
         }
+      }
+
+      // 语音转写回显（2026-10-15）：纯语音消息发送时，后端已用全媒体模型把语音转成文字入库；
+      // 流式回复结束后重拉本对话详情，把本地占位符"(发送了语音)"替换为转写文字（与刷新等价）。
+      // 仅纯语音触发（文字+语音并存时，用户输入的文字即内容，无需回写）。
+      const detailConvId = newConvId || snapshotConvId;
+      if (audioUrl && text.trim() === "(发送了语音)" && detailConvId) {
+        fetchConversationDetail(detailConvId);
       }
 
       // 流式回答生成完毕后，若朗读开关为开则自动朗读整段回答（讲完再读）
@@ -624,12 +1050,14 @@ export default function StudentChatPage() {
 
   // 手动发送
   const handleSend = async () => {
-    if (!input.trim() && pendingImages.length === 0) return;
-    const text = input || "(发送了图片)";
+    if (!input.trim() && pendingImages.length === 0 && !pendingAudio) return;
+    const text = input || (pendingAudio ? "(发送了语音)" : "(发送了图片)");
     const imgs = pendingImages.length > 0 ? [...pendingImages] : undefined;
+    const audio = pendingAudio || undefined;
     setInput("");
     setPendingImages([]);
-    await sendMessage(text, imgs);
+    setPendingAudio(null);
+    await sendMessage(text, imgs, audio);
   };
 
   const handleKeyDown = (value: string, context: { e: React.KeyboardEvent }) => {
@@ -647,7 +1075,7 @@ export default function StudentChatPage() {
         {/* 左侧：任务树 */}
         <div className={`${sidebarCollapsed ? 'w-10' : 'w-72'} border-r border-gray-200 flex flex-col bg-[#F7F8FA] transition-all duration-200`}>
           <div className="p-3 border-b border-gray-200 flex items-center justify-between">
-            {!sidebarCollapsed && <h3 className="text-sm font-medium text-[#1A1A1A]">课堂</h3>}
+            {!sidebarCollapsed && <h3 className="text-sm font-medium text-[#1A1A1A]">宁创教学智能体</h3>}
             <button
               className="text-gray-400 hover:text-gray-600 text-xs px-1"
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
@@ -670,185 +1098,129 @@ export default function StudentChatPage() {
                 const allQuizzes = task.subProjects.flatMap((sp) => (sp.quizActivities || []).filter(q => q.status === "ACTIVE"));
                 return (
                   <div key={task.id}>
-                    {/* 任务标题 */}
-                    <div className="px-3 py-2.5 border-b border-gray-100 bg-gray-50">
+                    {/* 任务标题（可点击折叠/展开课堂活动） */}
+                    <div
+                      className="px-3 py-2.5 border-b border-gray-100 bg-gray-50 cursor-pointer hover:bg-gray-100"
+                      onClick={() => {
+                        setExpandedTaskIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(task.id)) next.delete(task.id);
+                          else next.add(task.id);
+                          return next;
+                        });
+                      }}
+                    >
                       <div className="flex items-center gap-2">
-                        <FolderIcon className="text-[#0052D9]" size="16px" />
-                        <span className="text-sm font-medium text-[#1A1A1A] truncate">
+                        {expandedTaskIds.has(task.id) ? (
+                          <ChevronDownIcon className="text-gray-400 shrink-0" size="14px" />
+                        ) : (
+                          <ChevronRightIcon className="text-gray-400 shrink-0" size="14px" />
+                        )}
+                        {/* 课堂图标升级（2026-10-13 美化）：Folder → BookOpen + 浅蓝底座，语义更贴近"课堂" */}
+                        <span className="w-6 h-6 rounded-md flex items-center justify-center shrink-0 bg-[#0052D9]/10">
+                          <BookOpenIcon size="14px" style={{ color: "#0052D9" }} />
+                        </span>
+                        <span className="text-[15px] font-medium text-[#1A1A1A] truncate">
                           {task.title}
                         </span>
                       </div>
                     </div>
 
-                    {/* 学习活动 + 对话活动 */}
-                    {task.subProjects.map((sp) => (
-                      <div key={sp.id}>
-                        <div className="px-3 py-2 pl-8 border-b border-gray-50 bg-gray-50/50">
-                          <div className="flex items-center gap-2">
-                            <FolderIcon className="text-[#ED7B2F]" size="14px" />
-                            <span className="text-sm text-[#333] truncate">{sp.title === "默认活动" ? "对话思考" : sp.title}</span>
-                          </div>
-                        </div>
-
-                        {/* 对话活动 */}
-                        {sp.presetConversations.map((pc) => {
-                          const convs = findConversations(pc.id);
-                          const isActive = activeType === "chat" && activePresetId === pc.id;
-                          // 取该预设下最新的一个对话加载到聊天区
-                          const latestConv = convs.length > 0 ? convs[0] : undefined;
-                          return (
-                            <div
-                              key={pc.id}
-                              className={`px-3 py-2 pl-14 cursor-pointer hover:bg-gray-100 border-b border-gray-50 ${
-                                isActive ? "bg-white border-l-2 border-l-[#0052D9]" : ""
-                              }`}
-                              onClick={() => {
-                                switchToChat(pc.id, latestConv?.id);
-                              }}
-                            >
-                              <div className="flex items-center gap-2">
-                                <ChatIcon
-                                  className={convs.length > 0 ? "text-[#00A870]" : "text-gray-400"}
-                                  size="14px"
-                                />
-                                <span className={`text-sm truncate ${isActive ? "text-[#0052D9] font-medium" : "text-[#333]"}`}>
-                                  {pc.title}
-                                </span>
-                                {convs.length > 0 && (
-                                  <Tag theme="success" variant="light" size="small">
-                                    已学
-                                  </Tag>
-                                )}
+                    {expandedTaskIds.has(task.id) && (
+                      <>
+                        {/* 📐 统一活动列表（2026-10-12）：4 类活动按老师设计的跨类型顺序合并渲染。
+                            排序口径 = 后端各表 sortOrder（4 表共用一个数值空间，见 src/lib/activities/unified-order.ts，
+                            存量数据经 scripts/migrate-unified-activity-order.mjs 重排）。
+                            ⛔ DO NOT REVERT: 不要改回按类型分组的 4 个区块——老师跨类型调的授课顺序会被拆散。
+                            停用/未发布活动学生端不显示（/api/student/tasks 已按 enabled/status 过滤，
+                            此处作业再按 ACTIVE 过滤一次兜底）。 */}
+                        {(() => {
+                          const acts = task.subProjects.flatMap((sp) => [
+                            ...(sp.presetConversations || []).map((pc) => ({ type: "conversation" as const, id: pc.id, sortOrder: pc.sortOrder ?? 0, pc })),
+                            ...(sp.explorations || []).map((exp) => ({ type: "exploration" as const, id: exp.id, sortOrder: exp.sortOrder ?? 0, exp })),
+                            ...(sp.projectSubmissions || []).map((ps) => ({ type: "project" as const, id: ps.id, sortOrder: ps.sortOrder ?? 0, ps })),
+                            ...(sp.quizActivities || []).filter((q) => q.status === "ACTIVE").map((quiz) => ({ type: "quiz" as const, id: quiz.id, sortOrder: quiz.sortOrder ?? 0, quiz })),
+                          ]).sort((a, b) => a.sortOrder - b.sortOrder);
+                          if (acts.length === 0) {
+                            return (
+                              <div className="px-3 py-3 text-center text-gray-400 text-sm border-b border-gray-50">
+                                本课堂暂无活动
                               </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ))}
-
-                    {/* 互动探究入口 */}
-                    {task.subProjects.flatMap(sp => sp.explorations || []).length > 0 && (
-                      <div>
-                        <div className="px-3 py-2 pl-8 border-b border-gray-50 bg-gray-50/50">
-                          <div className="flex items-center gap-2">
-                            <FolderIcon className="text-[#00A870]" size="14px" />
-                            <span className="text-sm font-medium text-[#63666F]">互动探究</span>
-                          </div>
-                        </div>
-                        {task.subProjects.flatMap(sp =>
-                          (sp.explorations || []).map((exp: ExplorationInfo) => {
-                            const isActive = activeType === "exploration" && activeExplorationId === exp.id;
+                            );
+                          }
+                          const colorMap = { conversation: "#0052D9", exploration: "#00A870", project: "#FF7D00", quiz: "#6366F1" } as const;
+                          return acts.map((act) => {
+                            const color = colorMap[act.type];
+                            const isActive =
+                              (act.type === "conversation" && activeType === "chat" && activePresetId === act.id) ||
+                              (act.type === "exploration" && activeType === "exploration" && activeExplorationId === act.id) ||
+                              (act.type === "project" && activeType === "project" && activeProjectId === act.id) ||
+                              (act.type === "quiz" && activeType === "quiz" && activeQuizId === act.id);
+                            const title = act.type === "conversation" ? act.pc.title : act.type === "exploration" ? act.exp.title : act.type === "project" ? act.ps.title : act.quiz.title;
                             return (
                               <div
-                                key={exp.id}
-                                className={`px-3 py-2 pl-14 cursor-pointer hover:bg-gray-100 border-b border-gray-50 ${
-                                  isActive ? "bg-white border-l-2 border-l-[#00A870]" : ""
-                                }`}
-onClick={() => {
-                                switchToExploration(exp.id);
-                              }}
+                                key={`${act.type}-${act.id}`}
+                                className={`px-3 py-2 pl-8 cursor-pointer hover:bg-gray-100 border-b border-gray-50 ${isActive ? "bg-white border-l-2" : ""}`}
+                                style={isActive ? { borderLeftColor: color } : undefined}
+                                onClick={() => {
+                                  if (act.type === "conversation") {
+                                    const convs = findConversations(act.pc.id);
+                                    // 取该预设下最新的一个对话加载到聊天区
+                                    const latestConv = convs.length > 0 ? convs[0] : undefined;
+                                    switchToChat(act.pc.id, latestConv?.id);
+                                  } else if (act.type === "exploration") {
+                                    switchToExploration(act.exp.id);
+                                  } else if (act.type === "project") {
+                                    switchToProject(act.ps.id);
+                                  } else {
+                                    switchToQuiz(act.quiz.id);
+                                  }
+                                }}
                               >
                                 <div className="flex items-center gap-2">
-                                  <ChatIcon
-                                    className={isActive ? "text-[#00A870]" : "text-gray-400"}
-                                    size="14px"
-                                  />
-                                  <span className={`text-sm truncate ${isActive ? "text-[#00A870] font-medium" : "text-[#333]"}`}>
-                                    {exp.title}
+                                  {/* 类型图标分派 + 类型色 10% 底座（2026-10-13 美化）：4 类活动不再共用 ChatIcon，
+                                      对话/探究/项目/作业一眼可辨；底色 = colorMap 色 + 1A（hex 透明度 10%） */}
+                                  <span
+                                    className="w-6 h-6 rounded-md flex items-center justify-center shrink-0"
+                                    style={{ background: `${color}1A` }}
+                                  >
+                                    {act.type === "conversation" ? (
+                                      <ChatIcon size="14px" style={{ color }} />
+                                    ) : act.type === "exploration" ? (
+                                      <BrowseIcon size="14px" style={{ color }} />
+                                    ) : act.type === "project" ? (
+                                      <AssignmentIcon size="14px" style={{ color }} />
+                                    ) : (
+                                      <EditIcon size="14px" style={{ color }} />
+                                    )}
                                   </span>
-                                  {exp.enableSubmission && (
+                                  {/* 2026-10-15：活动名称 hover 显示类型名 0.5s 后自动消失（ActivityNameTip 自实现，
+                                      见常量区组件定义；不用 TDesign Tooltip——其 duration 仅首次挂载生效） */}
+                                  <ActivityNameTip label={ACTIVITY_TYPE_LABEL[act.type]} active={isActive} color={color}>
+                                    {title}
+                                  </ActivityNameTip>
+                                  {act.type === "conversation" && findConversations(act.pc.id).length > 0 && (
+                                    <Tag theme="success" variant="light" size="small">
+                                      已学
+                                    </Tag>
+                                  )}
+                                  {act.type === "exploration" && act.exp.enableSubmission && (
                                     <Tag theme="success" variant="light" size="small">
                                       可答题
                                     </Tag>
                                   )}
+                                  {act.type === "project" && (
+                                    <Tag theme="warning" variant="light" size="small">
+                                      {act.ps.category === "TEXT" ? "文本" : act.ps.category === "IMAGE" ? "图片" : "视频"}
+                                    </Tag>
+                                  )}
+                                  {/* 2026-10-13 需求：作业名片不显示题目数量（原 {act.quiz._count.questions}题 Tag 已移除） */}
                                 </div>
                               </div>
                             );
-                          })
-                        )}
-                      </div>
-                    )}
-
-                    {/* 项目提交入口 */}
-                    {task.subProjects.flatMap(sp => sp.projectSubmissions || []).length > 0 && (
-                      <div>
-                        <div className="px-3 py-2 pl-8 border-b border-gray-50 bg-gray-50/50">
-                          <div className="flex items-center gap-2">
-                            <FolderIcon className="text-[#FF7D00]" size="14px" />
-                            <span className="text-sm font-medium text-[#63666F]">项目提交</span>
-                          </div>
-                        </div>
-                        {task.subProjects.flatMap(sp =>
-                          (sp.projectSubmissions || []).map((ps: ProjectSubmissionInfo) => {
-                            const isActive = activeType === "project" && activeProjectId === ps.id;
-                            return (
-                              <div
-                                key={ps.id}
-                                className={`px-3 py-2 pl-14 cursor-pointer hover:bg-gray-100 border-b border-gray-50 ${
-                                  isActive ? "bg-white border-l-2 border-l-[#FF7D00]" : ""
-                                }`}
-                                onClick={() => {
-                                  switchToProject(ps.id);
-                                }}
-                              >
-                                <div className="flex items-center gap-2">
-                                  <ChatIcon
-                                    className={isActive ? "text-[#FF7D00]" : "text-gray-400"}
-                                    size="14px"
-                                  />
-                                  <span className={`text-sm truncate ${isActive ? "text-[#FF7D00] font-medium" : "text-[#333]"}`}>
-                                    {ps.title}
-                                  </span>
-                                  <Tag theme="warning" variant="light" size="small">
-                                    {ps.category === "TEXT" ? "文本" : ps.category === "IMAGE" ? "图片" : "视频"}
-                                  </Tag>
-                                </div>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                    )}
-
-                    {/* 作业入口 */}
-                    {allQuizzes.length > 0 && (
-                      <div>
-                        <div className="px-3 py-2 pl-8 border-b border-gray-50 bg-gray-50/50">
-                          <div className="flex items-center gap-2">
-                            <FolderIcon className="text-[#6366F1]" size="14px" />
-                            <span className="text-sm font-medium text-[#63666F]">课堂作业</span>
-                          </div>
-                        </div>
-                        {allQuizzes.map((quiz) => {
-                          const isActive = activeType === "quiz" && activeQuizId === quiz.id;
-                          return (
-                            <div
-                              key={quiz.id}
-                              className={`px-3 py-2 pl-14 cursor-pointer hover:bg-gray-100 border-b border-gray-50 ${
-                                isActive ? "bg-white border-l-2 border-l-[#6366F1]" : ""
-                              }`}
-                              onClick={() => {
-                                switchToQuiz(quiz.id);
-                              }}
-                            >
-                              <div className="flex items-center gap-2">
-                                <ChatIcon
-                                  className={isActive ? "text-[#6366F1]" : "text-gray-400"}
-                                  size="14px"
-                                />
-                                <span className={`text-sm truncate ${isActive ? "text-[#6366F1] font-medium" : "text-[#333]"}`}>
-                                  {quiz.title}
-                                </span>
-                                {quiz._count?.questions ? (
-                                  <Tag theme="primary" variant="light" size="small">
-                                    {quiz._count.questions}题
-                                  </Tag>
-                                ) : null}
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
+                          });
+                        })()}
+                      </>
                     )}
                   </div>
                 );
@@ -918,8 +1290,19 @@ onClick={() => {
               {messages.length === 0 && currentInfo && (
                 <div className="text-center text-gray-400 mt-10">
                   <p className="text-lg mb-2">{currentInfo.preset.title}</p>
-
-                  <p className="text-sm mt-4">开始吧！</p>
+                  {/* 教师开场白（2026-10-13）：仅本地展示，不入库；学生首条发言后
+                      /api/chat 新会话分支会把它落库为 assistant 首条消息，出现在真实消息流中 */}
+                  {currentInfo.preset.openingMessage ? (
+                    <div className="flex justify-start mt-6 text-left">
+                      <div className="max-w-[70%] rounded-2xl px-4 py-3 bg-gray-100 text-gray-800">
+                        <div className="prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5">
+                          <Markdown>{currentInfo.preset.openingMessage}</Markdown>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <p className="text-sm mt-4">开始吧！</p>
+                  )}
                 </div>
               )}
               {messages.map((msg, index) => (
@@ -947,16 +1330,45 @@ onClick={() => {
                       </div>
                     )}
                     {msg.role === "assistant" ? (
-                      <div className="prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_pre]:bg-gray-800 [&_pre]:text-gray-100 [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_pre_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-gray-400 [&_blockquote]:pl-3 [&_blockquote]:italic [&_table]:text-xs [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1">
-                        <Markdown>{msg.content}</Markdown>
-                        {msg.content.trim() && (
-                          <div className="mt-2 flex items-center justify-end">
-                            <SpeakButton owner={`msg-${index}`} text={msg.content} />
+                      <div className="relative">
+                        {/* 点 + 喇叭绝对定位浮在正文左上角；正文首行 text-indent 缩进 38px 避开图标（点 8 + gap 6 + 喇叭 24），
+                            第二行起回到行首顶到头，无缩进（2026-10-15 三版迭代后定稿） */}
+                        {(msg.modelRoute || msg.content.trim()) && (
+                          <div className="absolute left-0 top-0 flex h-[22px] items-center gap-1.5">
+                            {msg.modelRoute && (
+                              <span
+                                title={msg.modelRoute === "omni" ? "全媒体模型" : "图文模型"}
+                                className={`h-2 w-2 shrink-0 rounded-full ${
+                                  msg.modelRoute === "omni" ? "bg-black" : "bg-green-500"
+                                }`}
+                              />
+                            )}
+                            {msg.content.trim() && (
+                              <SpeakButton
+                                owner={`msg-${index}`}
+                                text={msg.content}
+                                className="shrink-0"
+                              />
+                            )}
                           </div>
                         )}
+                        <div
+                          className={`prose prose-sm prose-gray max-w-none overflow-hidden break-words [&_pre]:overflow-x-auto [&_code]:break-all [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_pre]:bg-gray-800 [&_pre]:text-gray-100 [&_pre]:rounded-lg [&_pre]:p-3 [&_code]:text-xs [&_pre_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-gray-400 [&_blockquote]:pl-3 [&_blockquote]:italic [&_table]:text-xs [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1] ${
+                            msg.modelRoute || msg.content.trim()
+                              ? "[&>*:first-child]:indent-[38px]"
+                              : ""
+                          }`}
+                        >
+                          <Markdown>{msg.content}</Markdown>
+                        </div>
                       </div>
                     ) : (
                       <div className="whitespace-pre-wrap">{msg.content}</div>
+                    )}
+                    {msg.audioUrl && (
+                      <div className="mt-2">
+                        <audio src={msg.audioUrl} controls className="max-w-full" />
+                      </div>
                     )}
                   </div>
                 </div>
@@ -964,16 +1376,16 @@ onClick={() => {
               {loading && (messages.length === 0 || messages[messages.length - 1]?.role !== "assistant" || !messages[messages.length - 1]?.content) && (
                 <div className="flex justify-start">
                   <div className="bg-gray-100 rounded-2xl px-4 py-3 text-gray-500">
-                    AI 正在思考中...
+                    {switchNotice ? "正在切换模型，请稍候..." : "AI 正在思考中..."}
                   </div>
                 </div>
               )}
               </div>
             </div>
 
-            {pendingImages.length > 0 && (
+            {(pendingImages.length > 0 || pendingAudio) && (
               <div className="border-t border-gray-100 px-4 pt-3 pb-1">
-                <div className="flex gap-2 flex-wrap">
+                <div className="flex gap-2 flex-wrap items-center">
                   {pendingImages.map((img, idx) => (
                     <div key={idx} className="relative group">
                       <img src={img.url} alt="待发送" className="w-16 h-16 object-cover rounded-lg border border-gray-200" />
@@ -985,12 +1397,42 @@ onClick={() => {
                       </button>
                     </div>
                   ))}
+                  {pendingAudio && (
+                    <div className="relative group flex items-center gap-2 px-3 py-2 rounded-lg border border-gray-200 bg-white">
+                      <audio src={pendingAudio} controls className="h-8 w-40" />
+                      <button
+                        onClick={removePendingAudio}
+                        className="w-5 h-5 bg-red-500 text-white rounded-full text-xs flex items-center justify-center"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}
 
             <div className="border-t border-gray-200 p-4">
-              <div className="flex gap-2 items-end">
+              <div className="flex gap-2 items-center">
+                {/* 1 话筒：点击直接调用麦克风开始录音，再点停止，录完作为语音附件 */}
+                <Button
+                  theme={isRecording ? "danger" : "default"}
+                  variant={isRecording ? "base" : "outline"}
+                  size="large"
+                  icon={<MicrophoneIcon />}
+                  onClick={toggleRecording}
+                  title={isRecording ? "停止录音" : "语音输入（点击开始录音）"}
+                  disabled={!activePresetId}
+                />
+                {isRecording && (
+                  <span
+                    className="text-red-500 text-sm font-medium whitespace-nowrap"
+                    title={`最长录音 ${MAX_RECORD_SEC} 秒`}
+                  >
+                    ● {formatRecordSec(recordingSec)}
+                  </span>
+                )}
+                {/* 2 图片：直接调用相机拍照 */}
                 <Button
                   theme="default"
                   variant="outline"
@@ -1000,13 +1442,14 @@ onClick={() => {
                   title="拍照"
                   disabled={!activePresetId}
                 />
+                {/* 3 添加文件：图片 jpg/png/jpeg、音频 m4a/mp3/wav 等 */}
                 <Button
                   theme="default"
                   variant="outline"
                   size="large"
                   icon={<AddIcon />}
                   onClick={() => fileInputRef.current?.click()}
-                  title="选择图片"
+                  title="添加文件"
                   disabled={!activePresetId}
                 />
                 <Input
@@ -1023,7 +1466,7 @@ onClick={() => {
                   icon={<SendIcon />}
                   onClick={handleSend}
                   loading={loading}
-                  disabled={!input.trim() && pendingImages.length === 0}
+                  disabled={!input.trim() && pendingImages.length === 0 && !pendingAudio}
                 >
                   发送
                 </Button>
@@ -1039,10 +1482,10 @@ onClick={() => {
               <input
                 ref={fileInputRef}
                 type="file"
-                accept="image/*"
+                accept="image/*,audio/*"
                 multiple
                 className="hidden"
-                onChange={(e) => { handleImageSelect(e.target.files); e.target.value = ""; }}
+                onChange={(e) => { handleAttachmentSelect(e.target.files); e.target.value = ""; }}
               />
             </div>
           </>

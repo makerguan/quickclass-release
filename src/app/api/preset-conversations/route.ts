@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { getNextUnifiedSortOrder } from "@/lib/activities/unified-order";
 
 // POST /api/preset-conversations
 // 新建单个对话活动（名片式独立 CRUD）
@@ -17,6 +18,7 @@ export async function POST(req: NextRequest) {
       subProjectId,
       title,
       description,
+      openingMessage,
       systemPrompt,
       analysisPrompt,
       classAnalysisPrompt,
@@ -32,19 +34,18 @@ export async function POST(req: NextRequest) {
     const sp = await prisma.subProject.findUnique({ where: { id: subProjectId } });
     if (!sp) return new NextResponse("子项目不存在", { status: 404 });
 
-    // sortOrder 取当前 subProject 下最大值 +1
-    const maxItem = await prisma.presetConversation.findFirst({
-      where: { subProjectId },
-      orderBy: { sortOrder: "desc" },
-      select: { sortOrder: true },
-    });
-    const nextOrder = (maxItem?.sortOrder ?? 0) + 1;
+    // 📐 CONTRACT: sortOrder 取跨 4 表（对话/探究/项目/作业）统一数值空间的 max+1，
+    // 支撑跨类型统一排序（详见 src/lib/activities/unified-order.ts）。
+    // ⛔ DO NOT REVERT: 不要改回只查本表 max——同一 SubProject 下 4 表共用一个排序数值空间，
+    // 本表 max 会让新活动插到其他类型活动的中间。
+    const nextOrder = await getNextUnifiedSortOrder(prisma, subProjectId);
 
     const created = await prisma.presetConversation.create({
       data: {
         subProjectId,
         title: title.trim(),
         description: description || null,
+        openingMessage: openingMessage || null,
         systemPrompt: systemPrompt || null,
         analysisPrompt: analysisPrompt || null,
         classAnalysisPrompt: classAnalysisPrompt || null,

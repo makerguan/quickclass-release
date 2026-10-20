@@ -8,15 +8,17 @@
 
 ### 1.1 为什么有两个仓库？
 
-本项目同时维护两个代码仓库：
+本项目同时维护三个代码仓库：
 
-| 仓库 | 平台 | 面向用户 | 说明 |
+| 仓库 | 平台 | 角色 | 说明 |
 |---|---|---|---|
-| Gitee 仓库 | `https://gitee.com/maoyouhui/quickclass-release.git` | 国内用户 | 主仓库，日常开发和国内发布都在这里 |
+| 私有仓库 | `https://gitee.com/maoyouhui/quickclass-private.git` | 项目负责人 | 日常开发与个人备份，本地 `dev` 的上游指向这里 |
+| Gitee 仓库 | `https://gitee.com/maoyouhui/quickclass-release.git` | 国内用户 + 合作者 | 发布仓库：合作者贡献汇聚在 `dev`，国内发布走 `main` |
 | GitHub 仓库 | `https://github.com/makerguan/quickclass-release.git` | 国际用户 | 国际版仓库，只发布稳定版本 |
 
 **设计原因：**
-- 国内访问 Gitee 更快、更稳定，所以把 Gitee 作为主开发仓库。
+- 私有仓库是负责人的"草稿区"：日常开发随时推送备份，不影响任何人，也不污染发布仓库。
+- 国内访问 Gitee 更快、更稳定，所以对外协作与国内发布都以 Gitee release 仓库为准。
 - GitHub 是国际用户更熟悉的平台，用于发布国际版。
 - GitHub 上的代码**完全等同于 Gitee 上的 `main` 分支**，不做额外修改。
 
@@ -24,16 +26,17 @@
 
 | 分支 | 用途 | 谁可以操作 |
 |---|---|---|
-| `dev` | 日常开发分支 | 所有合作开发者 |
+| `private/dev` | 负责人日常开发分支 | 项目负责人 |
+| `origin/dev` | 合作者贡献分支 | 所有合作开发者 |
 | `main` | 国内发布分支 | 项目负责人 |
 | `github-release/main` | 国际发布分支 | 项目负责人 |
 
 **设计思路：**
-- `dev` 是大家的"工作区"，所有新功能、修复都在这里开发。
+- `dev` 分属两个仓库：负责人平时在 `private/dev` 开发（随时备份、无人打扰）；合作者的贡献进入 `origin/dev`（有写权限可直接推，无写权限走 PR，见 §三）。发布时两边一起合并进 `main`。
 - `main` 是"稳定区"，只有当 `dev` 测试通过后才合并进来，用于国内发布。
 - `github-release/main` 是"国际稳定区"，内容和 `main` 保持一致，用于国际发布。
 
-> 简单来说：**dev 是开发，main 是国内发布，GitHub 是国际发布。**
+> 简单来说：**dev 是开发（负责人在 private、合作者在 origin），main 是国内发布，GitHub 是国际发布。**
 
 ---
 
@@ -44,23 +47,26 @@
 ```bash
 $ git remote -v
 
+private         https://gitee.com/maoyouhui/quickclass-private.git (fetch)
+private         https://gitee.com/maoyouhui/quickclass-private.git (push)
 origin          https://gitee.com/maoyouhui/quickclass-release.git (fetch)
 origin          https://gitee.com/maoyouhui/quickclass-release.git (push)
 github-release  https://github.com/makerguan/quickclass-release.git (fetch)
 github-release  https://github.com/makerguan/quickclass-release.git (push)
 ```
 
-- `origin`：对应 Gitee
-- `github-release`：对应 GitHub
+- `private`：私有开发仓库（负责人日常 `dev` 推送；⚠️ 注意 `origin` **不是**私有仓库）
+- `origin`：Gitee 发布仓库（合作者贡献 + 国内发布）
+- `github-release`：GitHub 国际发布仓库
 
 ---
 
 ## 三、合作开发者操作指南
 
-作为合作开发者，你只需要关心 `dev` 分支：
-1. 从 `dev` 拉取最新代码。
+作为合作开发者，你只需要关心 Gitee 发布仓库（`origin`）的 `dev` 分支：
+1. 从 `origin/dev` 拉取最新代码。
 2. 在 `dev` 上开发新功能或修复问题。
-3. 把代码推送到 Gitee 的 `dev` 分支。
+3. 把代码推送到 Gitee 的 `origin/dev` 分支（无写权限时走 PR，贡献方式以仓库根 `AGENTS.md` 为准）。
 4. 通知项目负责人合并到 `main`。
 
 ### 3.1 首次参与项目
@@ -167,20 +173,24 @@ git checkout dev
 git add .
 git commit -m "feat: 新增 xxx 功能"
 
-# 同步到 Gitee 上的 dev
-git push origin dev
+# 推送到私有仓库备份（dev 的上游指向 private，直接 git push 即可）
+git push
 ```
 
 #### 图形化方式
 
 与合作开发者相同：切换到 `dev` → 拉取 → 修改 → 暂存 → 提交 → 推送。
+（注意：负责人日常推送到 `private`，合作者推送到 `origin`。）
 
 ### 4.2 合并 dev 到 main 并发布
 
 #### 命令行方式
 
 ```bash
-# 1. 确保 dev 是最新的
+# 0. 先把本地开发成果备份到私有仓库
+git push
+
+# 1. 确保 dev 是最新的（拉取合作者在 origin/dev 上的贡献）
 git checkout dev
 git pull origin dev
 
@@ -217,6 +227,7 @@ git push github-release main
 
 每次发布前确认：
 - [ ] `dev` 分支上的功能已经测试通过。
+- [ ] 本地 `dev` 已推送到私有仓库备份（在 `dev` 上执行 `git push`）。
 - [ ] 合并前先在 `main` 上执行了 `git pull origin main`。
 - [ ] 合并后没有冲突。
 - [ ] `main` 已推送到 Gitee。
@@ -225,6 +236,8 @@ git push github-release main
 ---
 
 ## 五、完整协作流程图
+
+> 下图展示**合作者贡献 → 发布**的主链路。负责人日常开发的 `private/dev` 备份链路不在此图（见 §4.1）。
 
 ```
 ┌─────────────────┐
@@ -273,7 +286,7 @@ git push github-release main
 | 拉取代码 | `git pull origin dev` | **···** → **从...拉取** → 选择远程分支 |
 | 暂存文件 | `git add 文件名` | 点击文件右侧 **+** |
 | 提交代码 | `git commit -m "描述"` | 填写提交信息 → 点击 **提交** |
-| 推送代码 | `git push origin dev` | 点击 **推送** |
+| 推送代码 | `git push`（推当前分支上游：负责人 dev→private，合作者 dev→origin） | 点击 **推送** |
 | 合并分支 | `git merge dev` | 点击分支名称 → **合并分支...** |
 | 推送到 GitHub | `git push github-release main` | 建议用终端执行 |
 
@@ -327,9 +340,9 @@ git push github-release main
 | 目的 | 命令 |
 |---|---|
 | 切换到 dev | `git checkout dev` |
-| 同步 dev 最新代码 | `git pull origin dev` |
+| 同步 dev 最新代码 | `git pull origin dev`（合并合作者贡献）；负责人日常用 `git pull private dev` |
 | 提交代码 | `git add . && git commit -m "描述"` |
-| 推送 dev 到 Gitee | `git push origin dev` |
+| 推送 dev（负责人日常备份） | `git push`（上游 private/dev） |
 | 切换到 main | `git checkout main` |
 | 拉取 main 最新代码 | `git pull origin main` |
 | 合并 dev 到 main | `git merge dev` |
@@ -350,9 +363,9 @@ git push github-release main
 在 `package.json` 中添加：
 
 ```json
-"git:sync-dev": "git checkout dev && git pull origin dev",
-"git:push-dev": "git push origin dev",
-"git:release": "git checkout main && git pull origin main && git merge dev && git push origin main && git push github-release main"
+"git:sync-dev": "git checkout dev && git pull private dev",
+"git:push-dev": "git push",
+"git:release": "git push && git checkout main && git pull origin main && git merge dev && git push origin main && git push github-release main"
 ```
 
 使用：
@@ -368,8 +381,8 @@ npm run git:push-dev
 每个开发者本地配置：
 
 ```bash
-git config --global alias.sync-dev '!git checkout dev && git pull origin dev'
-git config --global alias.release '!git checkout main && git pull origin main && git merge dev && git push origin main && git push github-release main'
+git config --global alias.sync-dev '!git checkout dev && git pull private dev'
+git config --global alias.release '!git push && git checkout main && git pull origin main && git merge dev && git push origin main && git push github-release main'
 ```
 
 使用：
@@ -387,6 +400,7 @@ git release
 #!/bin/bash
 set -e
 git checkout dev
+git push
 git pull origin dev
 git checkout main
 git pull origin main
@@ -405,8 +419,8 @@ bash scripts/release.sh
 
 ## 十、总结
 
-- **合作开发者**：只在 `dev` 分支上开发，推送到 Gitee 的 `dev`。
-- **项目负责人**：审查 `dev`，合并到 `main`，推送到 Gitee，同步到 GitHub。
+- **合作开发者**：只在 `dev` 分支上开发，推送到 Gitee 的 `origin/dev`（或走 PR，见 `AGENTS.md`）。
+- **项目负责人**：日常开发推送到私有仓库 `private/dev`；发布时合并 `dev` 到 `main`，推送到 Gitee，同步到 GitHub。
 - **核心原则**：`main` 和 GitHub 是国际/国内发布分支，保持稳定性，不直接开发。
 
 按照这个流程，国内版和国际版可以保持一致，团队协作也不容易出错。

@@ -377,6 +377,7 @@ model PresetConversation {
   subProjectId                                                                   String
   title                                                                          String
   description                                                                    String?
+  openingMessage                                                                 String?
   systemPrompt                                                                   String?
   analysisPrompt                                                                 String?
   classAnalysisPrompt                                                            String?
@@ -483,6 +484,17 @@ model SystemConfig {
   aiBaseUrl                    String   @default("https://dashscope.aliyuncs.com/compatible-mode/v1")
   aiApiKey                     String?
   aiModel                      String   @default("qwen-turbo")
+  // 双线路主备（2026-10-15）：图文线路备用模型（主线复用 aiBaseUrl/aiApiKey/aiModel）
+  aiTextBackupBaseUrl          String?
+  aiTextBackupApiKey           String?
+  aiTextBackupModel            String?
+  // 双线路主备：全媒体线路（语音/图片/视频分析，主模型如 qwen3.8-omni-flash）
+  aiOmniBaseUrl                String?
+  aiOmniApiKey                 String?
+  aiOmniModel                  String?
+  aiOmniBackupBaseUrl          String?
+  aiOmniBackupApiKey           String?
+  aiOmniBackupModel            String?
   aiMaxConcurrent              Int      @default(20)
   reasoningEnabled             Boolean  @default(true)
   insightDataSource            String   @default("CONVERSATIONS")

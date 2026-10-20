@@ -3,6 +3,7 @@ import { streamText } from "ai";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
+import { transcribeAudioWithOmni } from "@/lib/asr";
 import { buildImageInjection, MERMAID_HINT } from "@/lib/image-library";
 import { aiQueue } from "@/lib/ai-queue";
 import { dbWrite } from "@/lib/db-queue";
@@ -15,10 +16,15 @@ import {
 } from "@/lib/prompts";
 import { MATH_OUTPUT_RULES } from "@/lib/math-format";
 
+// 流内「已切换模型」标记：主模型失败切备用成功后，作为流的首个数据块发给前端；
+// 前端（src/app/student/chat/page.tsx）识别后显示「正在切换模型」提示，并从正文中剥离（不入库）。
+const SWITCH_PREFIX = "\u0000SWITCH\u0000";
+
 // 多模态消息内容类型
 type MessageContentPart =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
+  | { type: "image_url"; image_url: { url: string } }
+  | { type: "audio_url"; audio_url: { url: string } };
 
 type MessageContent = string | MessageContentPart[];
 
@@ -42,6 +48,29 @@ function hasImageContent(content: MessageContent): boolean {
   return content.some((part) => part.type === "image_url");
 }
 
+// 检查消息是否包含音频
+function hasAudioContent(content: MessageContent): boolean {
+  if (typeof content === "string") return false;
+  return content.some((part) => part.type === "audio_url");
+}
+
+/** mediaType（如 audio/wav）→ 文件扩展名（wav/mp3/m4a/ogg/webm，未知回退 audio） */
+function mediaTypeToExt(mediaType: string): string {
+  const m = mediaType.toLowerCase();
+  if (m.includes("wav")) return "wav";
+  if (m.includes("mpeg") || m.includes("mp3")) return "mp3";
+  if (m.includes("m4a") || m.includes("mp4")) return "m4a";
+  if (m.includes("ogg")) return "ogg";
+  if (m.includes("webm")) return "webm";
+  return "audio";
+}
+
+// 判断消息是否为多模态消息（图片 / 音频）
+function isMultimodalContent(content: MessageContent): boolean {
+  if (typeof content === "string") return false;
+  return content.some((part) => part.type === "image_url" || part.type === "audio_url");
+}
+
 export async function POST(req: NextRequest) {
   try {
     const token = req.headers.get("authorization")?.replace("Bearer ", "");
@@ -57,7 +86,17 @@ export async function POST(req: NextRequest) {
     const { messages, conversationId, classId, presetConversationId } = await req.json();
     const lastMessage: ChatMessage = messages[messages.length - 1];
     const userId = String(payload.userId);
-    const textContent = extractTextContent(lastMessage.content);
+    let textContent = extractTextContent(lastMessage.content);
+
+    // 语音转写（2026-10-15 需求）：纯语音消息（文字为占位符"(发送了语音)"）用全媒体模型
+    // 转写为文字，存库后记录既能看文字又能播音频；分析链路只取文字。
+    // 转写与下方数据库读查询并行，失败降级保留占位符，不阻塞对话。
+    const transcribePromise =
+      typeof lastMessage.content !== "string" &&
+      lastMessage.content.some((p) => p.type === "audio_url") &&
+      textContent.trim() === "(发送了语音)"
+        ? transcribeAudioWithOmni(lastMessage.content)
+        : Promise.resolve(null);
 
     // 如果没有 conversationId，自动创建新的 Conversation（写操作走队列）
     let convId = conversationId;
@@ -89,15 +128,24 @@ export async function POST(req: NextRequest) {
       : Promise.resolve(null);
 
     // 等待读查询完成，再决定写操作
-    const [classData, materials, presetConv, currentUser] = await Promise.all([
+    const [classData, materials, presetConv, currentUser, transcribedText] = await Promise.all([
       classDataPromise,
       materialsPromise,
       presetConvPromise,
       currentUserPromise,
+      transcribePromise,
     ]);
 
     if (!classData) {
       return new Response("班级不存在", { status: 404 });
+    }
+
+    // 转写成功：用转写文字替换占位符（存库 + 发模型的文字都更新；音频 part 保留，AI 仍能"听"原声）
+    if (transcribedText && typeof lastMessage.content !== "string") {
+      lastMessage.content = lastMessage.content.map((p) =>
+        p.type === "text" ? { ...p, text: transcribedText } : p
+      );
+      textContent = transcribedText;
     }
 
     // 写操作 1：创建新对话（如需要）
@@ -115,16 +163,32 @@ export async function POST(req: NextRequest) {
         })
       );
       convId = createConvResult.id;
+
+      // 写操作 1.5：新会话预置教师开场白（assistant 首条消息，2026-10-13）。
+      // ⚠️ 仅 needCreate（新会话）写入一次，复用旧会话不重复插入；
+      // 前端首条发言的 apiMessages 已把开场白拼进上下文（见 student/chat sendMessage），两侧口径一致。
+      if (presetConv?.openingMessage) {
+        await dbWrite(() =>
+          prisma.message.create({
+            data: {
+              conversationId: convId!,
+              role: "assistant",
+              content: presetConv.openingMessage!,
+            },
+          })
+        );
+      }
     }
 
     // 写操作 2：保存用户消息（依赖 convId 已确定）
+    // 多模态消息把完整 JSON 存下来，刷新后仍能显示图片 / 音频
     await dbWrite(() =>
       prisma.message.create({
         data: {
           conversationId: convId!,
           role: "user",
-          content: hasImageContent(lastMessage.content)
-            ? textContent + " [包含图片]"
+          content: isMultimodalContent(lastMessage.content)
+            ? JSON.stringify(lastMessage.content)
             : textContent,
         },
       })
@@ -235,15 +299,39 @@ export async function POST(req: NextRequest) {
     // 否则模型可能输出 \(...\) / \[...\]，前端会当作普通文本，学生看到 LaTeX 源码
     systemPrompt += `\n\n${MATH_OUTPUT_RULES}`;
 
-    const { chatModel } = await createDashScopeClient();
+    // 双线路路由：含语音/音频的消息走全媒体线路（omni），否则走图文线路（text）
+    // ⚠️ GOTCHA: 线路只看最新一条消息。第二轮纯文字会切到 text 线路，但历史里第一条
+    //   语音消息仍带 file(音频) part —— provider 会转成 input_audio 发给图文模型，
+    //   实测报 "Failed to deserialize ... unknown variant input_audio"（2026-10-15）。
+    //   因此 text 线路必须在构建消息时剥离历史音频 part（见下方 filter，图片保留）。
+    const isOmniRoute = hasAudioContent(lastMessage.content);
+    // 切备事件上报：主失败切备用成功后，向流内注入「正在切换模型」标记
+    // （streamController 在流的 start() 中才赋值，onFailover 晚于此时触发，闭包可安全引用）
+    const { chatModel } = await createDashScopeClient(
+      isOmniRoute ? "omni" : "text",
+      {
+        onFailover: () => {
+          if (!switchNoticeSent && streamController) {
+            switchNoticeSent = true;
+            streamController.enqueue(encoder.encode(SWITCH_PREFIX));
+          }
+        },
+      }
+    );
 
     // 构建消息格式，支持多模态
+    // ⛔ DO NOT REVERT: text 线路（isOmniRoute=false）剥离历史 audio part。
+    //   历史教训：2026-10-15 语音后第二轮输入文字，带音频的历史消息被原样发给
+    //   图文模型（DeepSeek），其不认识 input_audio，请求整体失败。剥离后纯文字
+    //   轮次正常；语音轮次（omni）仍完整保留音频上下文。
     const formattedMessages = messages.map((m: ChatMessage) => {
       if (typeof m.content === "string") {
         return { role: m.role as "user" | "assistant", content: m.content };
       }
-      // 多模态消息：将 image_url 转为 ai v6 SDK 的 image 格式
-      const parts = m.content.map((part) => {
+      // 多模态消息：将 image_url / audio_url 转为 ai v6 SDK 的多模态格式
+      const parts = m.content
+        .filter((part) => isOmniRoute || part.type !== "audio_url")
+        .map((part) => {
         if (part.type === "image_url") {
           const url = part.image_url.url;
           // 如果是 Base64 data URL，提取编码数据
@@ -264,6 +352,28 @@ export async function POST(req: NextRequest) {
             mediaType: "image/jpeg",
           };
         }
+        if (part.type === "audio_url") {
+          const url = part.audio_url.url;
+          // 如果是 Base64 data URL，提取编码数据
+          if (url.startsWith("data:")) {
+            const match = url.match(/^data:(audio\/[\w.+-]+);base64,(.+)$/);
+            if (match) {
+              return {
+                type: "file" as const,
+                data: match[2], // 纯 base64 字符串
+                mediaType: match[1],
+                filename: `audio-${Date.now()}.${mediaTypeToExt(match[1])}`,
+              };
+            }
+          }
+          // 如果是 URL 音频
+          return {
+            type: "file" as const,
+            data: url,
+            mediaType: "audio/mpeg",
+            filename: "audio.mp3",
+          };
+        }
         return { type: "text" as const, text: part.text };
       });
       return { role: m.role as "user" | "assistant", content: parts };
@@ -271,9 +381,13 @@ export async function POST(req: NextRequest) {
 
     const finalConvId = convId;
     const encoder = new TextEncoder();
+    // 切备事件注入「正在切换模型」标记所需：控制器在 start() 中赋值，onFailover 回调晚于此时触发
+    let streamController: ReadableStreamDefaultController<Uint8Array> | null = null;
+    let switchNoticeSent = false;
 
     const stream = new ReadableStream({
       async start(controller) {
+        streamController = controller;
         let fullContent = "";
         let chunkCount = 0;
         let streamError: Error | null = null;
@@ -334,6 +448,8 @@ export async function POST(req: NextRequest) {
               errMsg = /quota|配额|free|429|rate|limit/i.test(raw)
                 ? "AI 服务繁忙（限流或配额不足），请稍后重试"
                 : `AI 服务响应异常：${raw.slice(0, 100)}`;
+            } else if (hasAudioContent(lastMessage.content)) {
+              errMsg = "AI 模型返回了空响应（可能不支持音频输入，请检查模型配置）";
             } else if (hasImageContent(lastMessage.content)) {
               errMsg = "AI 模型返回了空响应（可能不支持图片输入，请检查模型配置）";
             } else {
@@ -380,6 +496,9 @@ export async function POST(req: NextRequest) {
       headers: {
         "Content-Type": "text/plain; charset=utf-8",
         "X-Conversation-Id": finalConvId,
+        // 本次回复所用线路：前端据此在学生端显示「图文/全媒体模型」指示点（绿=图文 text、黑=全媒体 omni）。
+        // 用响应头而非流内标记：前端 fetch 后读一次即可，避免流解析跨 chunk 剥离的复杂度。
+        "X-Model-Route": isOmniRoute ? "omni" : "text",
       },
     });
   } catch (error) {

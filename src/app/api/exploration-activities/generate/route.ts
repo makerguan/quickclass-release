@@ -34,7 +34,7 @@ export async function POST(req: NextRequest) {
       ? `${background}\n\n${initialPrompt.trim()}`
       : "以下是教师导入的现有 HTML 页面，请严格基于它按后续指令增量修改，不要重新设计或套用探究模板。";
 
-    const messages = isFirstRound
+    const messages: Array<{ role: "user" | "assistant"; content: string }> = isFirstRound
       ? [{ role: "user", content: `${background}\n\n${initialPrompt.trim()}` }]
       : [
           { role: "user", content: baseline },

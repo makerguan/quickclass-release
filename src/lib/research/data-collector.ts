@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { buildClassExplorationStats } from "@/lib/exploration/stats-aggregator";
+import { extractMessageText } from "@/lib/message-content";
 
 /**
  * 6 类数据类型
@@ -381,7 +382,8 @@ export async function collectResearchData(
       const presetTitle = c.PresetConversation?.title || "(无预设)";
 
       // 收集对话内容（不收集全部消息，只取前 30 条做摘要）
-      const messages = c.Message.map((m) => ({ role: m.role, content: m.content }));
+      // 2026-10-15：语音消息只取转写文字（剥离音频/图片 base64），分析忽略声音文件
+      const messages = c.Message.map((m) => ({ role: m.role, content: extractMessageText(m.content) }));
       const messageSnippets = messages.slice(0, 6).map((m) => ({
         role: m.role,
         contentSnippet: m.content.slice(0, 120),

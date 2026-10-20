@@ -293,7 +293,10 @@ export default function ProjectSubmitPanel({
   }
 
   return (
-    <div className="flex-1 flex flex-col">
+    <div className="flex-1 flex flex-col overflow-hidden">
+      {/* ⛔ DO NOT REVERT：根 div 必须带 overflow-hidden（与 QuizPanel/ExplorationPanel 一致）。
+          缺它时 flex 列的 min-height 默认 auto，会让根按内容撑高、超出外层固定高度卡片后被裁剪，
+          内部 flex-1 overflow-y-auto 列表永远无法滚动（2026-10-10 复现：项目提交页不能上下滚动）。 */}
       {/* 头部 */}
       <div className="px-4 py-3 border-b border-gray-200 bg-[#FAFBFC] flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -493,7 +496,7 @@ export default function ProjectSubmitPanel({
               value={upDesc}
               onChange={(v) => setUpDesc(v as string)}
               placeholder="简单描述你的项目"
-              textarea
+              // tdesign Input 不支持 textarea prop（原本即未生效）；如需多行请改用 Textarea 组件
             />
           </div>
           <div>

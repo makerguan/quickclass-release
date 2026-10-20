@@ -30,6 +30,39 @@ if (!version && existsSync(join(ROOT, 'VERSION.md'))) {
 }
 if (!version) version = 'unknown';
 
+// msedge-tts 版本检查。
+// 该库跟随微软语音端点变更频繁发版（如 403 修复 2.0.7 → 2.1.0），
+// 发布包必须携带最新版，否则用户机器上的旧版会再次出现"语音暂不可用"。
+function checkMsedgeTts() {
+  let localVer = '';
+  try {
+    const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf-8'));
+    localVer = lock.packages?.['node_modules/msedge-tts']?.version || '';
+  } catch {}
+  let remoteVer = '';
+  try {
+    remoteVer = execSync('npm view msedge-tts version', { encoding: 'utf-8', timeout: 20000 }).trim();
+  } catch {
+    console.log('⚠️  无法联网检查 msedge-tts 新版本，按当前版本继续打包');
+    return;
+  }
+  if (!remoteVer) return;
+  if (remoteVer === localVer) {
+    console.log(`✅ msedge-tts 已是最新版本 (${localVer})`);
+    return;
+  }
+  // 跨 major 可能含破坏性变更，不自动升，留给开发者确认
+  if (localVer && localVer.split('.')[0] !== remoteVer.split('.')[0]) {
+    console.log(`⚠️  msedge-tts 有跨大版本更新 (${localVer} → ${remoteVer})，可能含破坏性变更，未自动升级。`);
+    console.log(`    确认兼容后手动执行: npm install msedge-tts@${remoteVer}，再重新打包`);
+    return;
+  }
+  console.log(`⬆️  msedge-tts 有新版本 (${localVer || '未记录'} → ${remoteVer})，自动升级后打包...`);
+  execSync(`npm install msedge-tts@${remoteVer} --no-audit --no-fund`, { cwd: ROOT, stdio: 'inherit' });
+  console.log(`✅ msedge-tts 已升级到 ${remoteVer}`);
+}
+checkMsedgeTts();
+
 console.log('==========================================');
 console.log(`  QuickClass 发布打包`);
 console.log(`  ${version} - ${changelog}`);
@@ -331,7 +364,9 @@ execSync(`rsync -a "${join(ROOT, 'scripts/')}" "${join(RELEASE_DIR, 'scripts/')}
 console.log('  scripts/ 同步完成');
 
 // 同步根配置文件
-const rootFiles = ['package.json', 'next.config.mjs', 'tsconfig.json', 'tailwind.config.ts', 'postcss.config.mjs', 'VERSION.md', '.env.example', '.npmrc'];
+// 同步根配置文件（含 package-lock.json：用户端 npm install 按 lock 精确安装，
+// 保证依赖版本与发布时验证过的完全一致，msedge-tts 新版也随 lock 分发）
+const rootFiles = ['package.json', 'package-lock.json', 'next.config.mjs', 'tsconfig.json', 'tailwind.config.ts', 'postcss.config.mjs', 'VERSION.md', '.env.example', '.npmrc'];
 for (const f of rootFiles) {
   const src = join(ROOT, f);
   if (existsSync(src)) {

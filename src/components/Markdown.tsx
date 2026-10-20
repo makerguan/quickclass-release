@@ -175,14 +175,32 @@ function extractText(node: ReactNode): string {
  * src/app/student/chat/page.tsx:951（学生聊天页调用点）。
  * ⛔ DO NOT REVERT：不要为了"就近取用组件体变量"把它挪回函数体内 —— 那正是闪烁 bug 的根源。
  */
+/**
+ * ⚠️ GOTCHA / 旧数据兼容（2026-10-15）：
+ * MERMAID_HINT 提示词（src/lib/image-library.ts，commit f46c1e9 引入）上线前生成的对话里，
+ * AI 画示意图未被要求用 ```mermaid 围栏，常见输出 ```graph / ```graph TD / ```flowchart TD /
+ * 空语言围栏 → react-markdown 给 code 的 className 是 language-graph / language-flowchart / 空，
+ * MarkdownPre 原逻辑只认 language-mermaid → 历史消息里这些示意图全被渲染成普通代码块（学生看到源码）。
+ * 本正则对「代码块内容首行是 mermaid 图表类型关键字」的代码做兼容，一律交给 MermaidBlock；
+ * 即便误判，MermaidBlock parse 失败也会回退成源码代码块（外观等价普通代码块），不会更糟。
+ * 现状约束：graph/flowchart 必须带方向缩写（TD/TB/LR/RL/BT/DU），防止把 `graph = {...}` 等
+ * 普通代码首行误判成 mermaid；其余类型关键字本身足够独特（普通代码不会以此开头）。
+ * 🔗 RELATED：MermaidBlock 与本函数（本文件）；MERMAID_HINT（src/lib/image-library.ts）。
+ * ⛔ DO NOT REVERT：勿删兼容分支——f46c1e9 之前的历史对话示意图全靠它兜底；
+ *   若将来做数据迁移（给旧消息补 ```mermaid 围栏）并确认旧数据已清空，才能移除。
+ */
+const MERMAID_FIRST_LINE_RE =
+  /^\s*(?:sequenceDiagram|mindmap|timeline|stateDiagram(?:-v2)?|classDiagram(?:-v2)?|erDiagram|gantt|journey|pie|gitGraph|quadrantChart|sankey-beta|xychart-beta|block-beta|C4Context|C4Container|C4Component|C4Deployment|zenuml|architecture-beta|packet-beta|kanban|excalidraw|requirementDiagram|(?:graph|flowchart)\s+(?:TD|TB|LR|RL|BT|DU))\b/;
+
 function MarkdownPre({ children }: { children?: ReactNode }) {
   // mermaid 代码块：整块交给 MermaidBlock 渲染（pre 内不能嵌 div，故在此拦截）
   const child = Array.isArray(children) ? children[0] : children;
-  if (
-    isValidElement<{ className?: string; children?: ReactNode }>(child) &&
-    /^language-mermaid/.test(String(child.props.className || ""))
-  ) {
-    return <MermaidBlock code={extractText(child.props.children)} />;
+  if (isValidElement<{ className?: string; children?: ReactNode }>(child)) {
+    const code = extractText(child.props.children);
+    // 标准 ```mermaid 围栏，或旧数据兼容：内容首行是 mermaid 图表类型（见 MERMAID_FIRST_LINE_RE 注释）
+    if (/^language-mermaid/.test(String(child.props.className || "")) || MERMAID_FIRST_LINE_RE.test(code)) {
+      return <MermaidBlock code={code} />;
+    }
   }
   return <pre>{children}</pre>;
 }
@@ -202,6 +220,64 @@ const REHYPE_PLUGINS = [rehypeKatex];
 
 /** 块级模式：mermaid 拦截（pre）+ 图片增强（img） */
 const BLOCK_COMPONENTS = { img: MarkdownImg, pre: MarkdownPre };
+
+// ─────────────────────────────────────────────
+// qc-chart 图表片段渲染（文本型学情报告的图示）
+// ─────────────────────────────────────────────
+
+/**
+ * 📐 CONTRACT —— qc-chart 片段由后端 src/lib/insight-clean.ts 的 processChartBlocks 写库前替换：
+ * 模板结构固定为 <div class="qc-chart" ...>[可选标题 div]<svg|table|提示 div></div>，
+ * 生成端是 src/lib/report-charts.ts 的 wrap()，内部文本/数值全部经 esc() 转义。
+ *
+ * 为什么要在 Markdown 组件里特殊处理：react-markdown 10.x 默认不渲染内嵌 HTML，
+ * 文本型报告里的 qc-chart 片段（分析 AI 的 ```chart 块被渲染成 SVG 后的产物）会被
+ * 当纯文本原样显示成源码。HTML 型报告不走本组件，不受影响。
+ *
+ * ⛔ DO NOT REVERT：不要用 rehype-raw 全局放行 HTML 来修这个问题 ——
+ * 本组件被 16+ 页面共用（学生聊天/题目/评语等），全局放行等于把 AI 输出的任意 HTML
+ * 注入所有渲染点（XSS 面不可控）。只精准放行 qc-chart 这一种自家确定性生成的结构。
+ */
+const QC_CHART_START = '<div class="qc-chart"';
+/** 黑名单：命中则放弃 HTML 渲染、按普通 Markdown 显示源码 —— 防 AI 绕过校验在正文自造 qc-chart 夹带脚本/事件属性 */
+const QC_CHART_UNSAFE_RE = /<script|<iframe|<object|<embed|\son\w+\s*=|javascript:/i;
+
+type ChartSegment = { type: "md" | "chart"; value: string };
+
+/** 把文本按 qc-chart HTML 片段切分为 [markdown | chart html] 序列（无片段时返回空数组表示整段走原逻辑） */
+function splitChartSegments(text: string): ChartSegment[] {
+  if (!text.includes(QC_CHART_START)) return [];
+  const segments: ChartSegment[] = [];
+  let rest = text;
+  for (;;) {
+    const idx = rest.indexOf(QC_CHART_START);
+    if (idx === -1) break;
+    // div 开闭配对扫描找匹配的 </div>（片段内嵌一层标题/提示 div，栈计数可精确定位）
+    let depth = 0;
+    let end = -1;
+    const tagRe = /<\/?div\b/g;
+    tagRe.lastIndex = idx;
+    let m: RegExpExecArray | null;
+    while ((m = tagRe.exec(rest)) !== null) {
+      if (m[0].startsWith("</")) {
+        depth -= 1;
+        if (depth === 0) {
+          end = tagRe.lastIndex;
+          break;
+        }
+      } else {
+        depth += 1;
+      }
+    }
+    // 未闭合（流式输出的半截片段）：剩余整体按 Markdown 渲染（显示源码），闭合后下次渲染恢复图形
+    if (end === -1) break;
+    if (idx > 0) segments.push({ type: "md", value: rest.slice(0, idx) });
+    segments.push({ type: "chart", value: rest.slice(idx, end) });
+    rest = rest.slice(end);
+  }
+  if (rest) segments.push({ type: "md", value: rest });
+  return segments;
+}
 
 /**
  * 行内模式：p 剥块级包装。
@@ -231,14 +307,54 @@ const Markdown = memo(function Markdown({
    */
   inline?: boolean;
 }) {
+  if (inline) {
+    return (
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
+        components={INLINE_COMPONENTS}
+      >
+        {normalizeMathDelimiters(children)}
+      </ReactMarkdown>
+    );
+  }
+
+  // 块级模式：先按 qc-chart 片段切分；无片段走原逻辑，有片段做 markdown/图表混合渲染
+  const segments = splitChartSegments(children);
+  const hasChart = segments.some((s) => s.type === "chart" && !QC_CHART_UNSAFE_RE.test(s.value));
+  if (!hasChart) {
+    return (
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={REHYPE_PLUGINS}
+        components={BLOCK_COMPONENTS}
+      >
+        {normalizeMathDelimiters(children)}
+      </ReactMarkdown>
+    );
+  }
   return (
-    <ReactMarkdown
-      remarkPlugins={REMARK_PLUGINS}
-      rehypePlugins={REHYPE_PLUGINS}
-      components={inline ? INLINE_COMPONENTS : BLOCK_COMPONENTS}
-    >
-      {normalizeMathDelimiters(children)}
-    </ReactMarkdown>
+    <>
+      {segments.map((seg, i) => {
+        if (seg.type === "chart" && !QC_CHART_UNSAFE_RE.test(seg.value)) {
+          // 片段是后端确定性生成的 SVG/表格容器，转义已在上游完成（见 splitChartSegments 契约注释）
+          return <div key={i} dangerouslySetInnerHTML={{ __html: seg.value }} />;
+        }
+        const md = seg.type === "chart" ? "" : seg.value;
+        // 空白段跳过，避免渲染出多余的空 <p>
+        if (!md.trim()) return null;
+        return (
+          <ReactMarkdown
+            key={i}
+            remarkPlugins={REMARK_PLUGINS}
+            rehypePlugins={REHYPE_PLUGINS}
+            components={BLOCK_COMPONENTS}
+          >
+            {normalizeMathDelimiters(md)}
+          </ReactMarkdown>
+        );
+      })}
+    </>
   );
 });
 

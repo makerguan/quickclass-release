@@ -15,7 +15,7 @@ export default function ViewFrame({ src, title, onBack }: ViewFrameProps) {
         <Button theme="default" variant="outline" onClick={onBack}>
           ← 返回
         </Button>
-        {title && <h2 className="text-base font-medium text-[#1A1A1A]">{title}</h2>}
+        {title && <h2 className="text-base font-medium text-[var(--foreground)]">{title}</h2>}
       </div>
       <iframe
         src={src}

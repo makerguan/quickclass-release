@@ -35,7 +35,7 @@
     "katex": "^0.18.0",
     "mammoth": "^1.12.0",
     "mermaid": "^12.0.0",
-    "msedge-tts": "^2.0.7",
+    "msedge-tts": "^2.1.0",
     "next": "14.2.35",
     "next-auth": "^4.24.14",
     "p-queue": "^8.1.1",

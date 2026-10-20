@@ -6,8 +6,8 @@ import { getQfCore } from "@/lib/quickform";
 import { generateText } from "ai";
 import {
   buildFallbackCharts,
+  buildDashboardSystemPrompt,
   buildFieldSummaries,
-  DASHBOARD_SYSTEM_PROMPT,
   detectKpiAggIntents,
   extractJsonObject,
   sanitizeDashboardConfig,
@@ -23,8 +23,13 @@ const TYPE_LABEL: Record<FieldSummary["type"], string> = {
   multi: "多选",
 };
 
-/** 把字段摘要拼成 user 提示词（不含任何原始学生记录） */
-function buildUserPrompt(summaries: FieldSummary[], total: number, instruction: string): string {
+/** 把字段摘要拼成 user 提示词（不含任何原始学生记录）；baseConfig 存在时进入修订模式 */
+function buildUserPrompt(
+  summaries: FieldSummary[],
+  total: number,
+  instruction: string,
+  baseConfig?: AiDashboardConfig | null
+): string {
   const lines = summaries.map((s) => {
     const base = `- ${s.name}｜类型:${TYPE_LABEL[s.type]}｜${s.count} 条｜去重 ${s.unique}`;
     if (s.type === "number") {
@@ -39,10 +44,14 @@ function buildUserPrompt(summaries: FieldSummary[], total: number, instruction: 
   const kpiConstraint = intents.length
     ? `\n【KPI 硬约束】老师点名了这些指标：${intents.join("、")}。请在 kpis 中逐一兑现（放在靠前位置、选对应字段、label 用老师原词）。\n`
     : "";
+  // 修订模式：当前配置作为基准交给 AI（已经 sanitize，字段/类型/长度都受控，无注入面）
+  const baseSection = baseConfig
+    ? `\n【当前大屏配置】（修订基准，未提及的部分必须原样保留）\n${JSON.stringify(baseConfig)}\n`
+    : "";
   const extra = instruction ? `\n【老师额外要求】${instruction}\n${kpiConstraint}` : "";
   return (
-    `共 ${total} 条学生提交。\n【字段摘要】\n${lines.join("\n")}\n${extra}\n` +
-    `请据上述字段设计数据大屏配置，只输出 JSON。`
+    `共 ${total} 条学生提交。\n【字段摘要】\n${lines.join("\n")}${baseSection}${extra}\n` +
+    `请据上述字段${baseConfig ? "在当前配置基础上修订" : "设计"}数据大屏配置，只输出 JSON。`
   );
 }
 
@@ -93,6 +102,9 @@ export async function POST(
     const body = await req.json().catch(() => ({}));
     const instruction =
       typeof body?.instruction === "string" ? body.instruction.trim().slice(0, 200) : "";
+    // 修订模式（方案 A）：前端带上老师当前已保存的大屏配置，AI 只改指令提到的部分
+    const rawBaseConfig =
+      body?.baseConfig && typeof body.baseConfig === "object" ? body.baseConfig : null;
 
     let items: { data?: Record<string, unknown> }[] = [];
     let total = 0;
@@ -124,14 +136,23 @@ export async function POST(
       return NextResponse.json({ ok: false, message: "提交数据里没有可用字段。" }, { status: 400 });
     }
 
+    // 修订基准：sanitize 一遍（同一白名单口径），sanitize 后还有卡片才值得修订
+    const validFields = [...summaries.map((s) => s.name), SUBMITTED_AT_FIELD];
+    const baseConfig = rawBaseConfig ? sanitizeDashboardConfig(rawBaseConfig, validFields) : null;
+    const isRevise = Boolean(
+      instruction &&
+        baseConfig &&
+        ((baseConfig.charts?.length ?? 0) > 0 || (baseConfig.kpis?.length ?? 0) > 0)
+    );
+
     let config: AiDashboardConfig | null = null;
     try {
       const { chatModel } = await createDashScopeClient();
       const { text } = await generateText({
         model: chatModel,
-        system: DASHBOARD_SYSTEM_PROMPT,
-        prompt: buildUserPrompt(summaries, total, instruction),
-        temperature: 0.4,
+        system: buildDashboardSystemPrompt(isRevise ? "revise" : "create"),
+        prompt: buildUserPrompt(summaries, total, instruction, isRevise ? baseConfig : null),
+        temperature: isRevise ? 0.2 : 0.4, // 修订要保守，别自作主张大改
       });
       const parsed = extractJsonObject(text);
       console.log("[dashboard-config] AI 原始输出:", text?.slice(0, 800));

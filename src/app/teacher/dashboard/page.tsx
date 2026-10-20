@@ -278,11 +278,11 @@ export default function TeacherDashboardPage() {
         {/* 页面标题 + 班级选择 */}
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-semibold text-[#1A1A1A]">学情仪表盘</h2>
-            <p className="text-[#63666F] text-sm mt-1">基于 AI 对话记录分析班级学习情况</p>
+            <h2 className="text-xl font-semibold text-[var(--title)]">学情仪表盘</h2>
+            <p className="text-[var(--muted)] text-sm mt-1">基于 AI 对话记录分析班级学习情况</p>
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-sm text-[#63666F]">班级：</span>
+            <span className="text-sm text-[var(--muted)]">班级：</span>
             <Select
               value={selectedClassId}
               onChange={(val) => setSelectedClassId(String(val))}
@@ -298,33 +298,34 @@ export default function TeacherDashboardPage() {
           <>
             {/* 统计卡片 */}
             <div className="grid grid-cols-3 gap-4">
-              <Card>
+              <Card className="dashboard-stat-card" style={{ boxShadow: 'var(--card-shadow)' }}>
                 <div className="flex items-center gap-3">
-                  <UserIcon className="text-[#0052D9]" />
+                  {/* 苹果式纯色图标（2026-10-13）：⛔ DO NOT ADD 图标底色，底色会让小图标变糊 */}
+                  <UserIcon className="text-[var(--primary)]" size="24px" />
                   <Statistic title="学生人数" value={stats.totalStudents} />
                 </div>
               </Card>
-              <Card>
+              <Card className="dashboard-stat-card" style={{ boxShadow: 'var(--card-shadow)' }}>
                 <div className="flex items-center gap-3">
-                  <ChatIcon className="text-[#00A870]" />
+                  <ChatIcon className="text-[var(--success)]" size="24px" />
                   <Statistic title="对话总数" value={stats.totalConversations} />
                 </div>
               </Card>
-              <Card>
+              <Card className="dashboard-stat-card" style={{ boxShadow: 'var(--card-shadow)' }}>
                 <div className="flex items-center gap-3">
-                  <DashboardIcon className="text-[#ED7B2F]" />
+                  <DashboardIcon className="text-[var(--warning)]" size="24px" />
                   <Statistic title="消息总数" value={stats.totalMessages} />
                 </div>
               </Card>
             </div>
 
             {/* 班级学情洞察 */}
-            <Card>
+            <Card className="dashboard-main-card" style={{ boxShadow: 'var(--card-shadow)' }}>
               <div className="flex justify-between items-center mb-4">
                 <div>
-                  <h3 className="font-medium text-[#1A1A1A]">AI 学情洞察</h3>
+                  <h3 className="font-medium text-[var(--foreground)]">AI 学情洞察</h3>
                   {!classInsight && (
-                    <p className="text-xs text-[#63666F] mt-0.5">
+                    <p className="text-xs text-[var(--muted)] mt-0.5">
                       基于班级学生的 AI 对话记录与学习数据智能分析
                     </p>
                   )}
@@ -359,17 +360,17 @@ export default function TeacherDashboardPage() {
               </div>
               <div
                 ref={insightRef}
-                className="bg-[#F7F8FA] p-5 rounded-lg text-sm leading-relaxed whitespace-pre-wrap min-h-[120px] max-h-[600px] overflow-y-auto break-words prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all"
+                className="bg-[var(--primary-lighter)] p-5 rounded-lg text-sm leading-relaxed whitespace-pre-wrap min-h-[120px] max-h-[600px] overflow-y-auto break-words prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all"
               >
                 {classInsight ? <Markdown>{classInsight.content}</Markdown> : (
-                  <span className="text-gray-400">点击「生成洞察」按钮，AI 将读取班级学生的对话记录和学习数据，生成详细的学情分析报告...</span>
+                  <span className="text-[var(--muted-light)]">点击「生成洞察」按钮，AI 将读取班级学生的对话记录和学习数据，生成详细的学情分析报告...</span>
                 )}
               </div>
               {/* 对比区域 */}
               {showComparison.class && previousInsights.class && (
                 <div className="mt-4">
-                  <h4 className="text-sm font-medium text-[#ED7B2F] mb-2">上一次分析结果：</h4>
-                  <div className="bg-[#FFF8F0] p-5 rounded-lg text-sm leading-relaxed max-h-[400px] overflow-y-auto border border-[#ED7B2F]/20 break-words">
+                  <h4 className="text-sm font-medium text-[var(--warning)] mb-2">上一次分析结果：</h4>
+                  <div className="bg-[var(--warning-light)] p-5 rounded-lg text-sm leading-relaxed max-h-[400px] overflow-y-auto border border-[var(--warning-light)] break-words">
                     <Markdown>{previousInsights.class}</Markdown>
                   </div>
                 </div>
@@ -377,11 +378,11 @@ export default function TeacherDashboardPage() {
             </Card>
 
             {/* 学生列表 */}
-            <Card>
+            <Card className="dashboard-main-card" style={{ boxShadow: 'var(--card-shadow)' }}>
               <div className="flex justify-between items-center mb-4">
                 <div>
-                  <h3 className="font-medium text-[#1A1A1A]">学生学习洞察</h3>
-                  <p className="text-xs text-[#63666F] mt-0.5">
+                  <h3 className="font-medium text-[var(--foreground)]">学生学习洞察</h3>
+                  <p className="text-xs text-[var(--muted)] mt-0.5">
                     {students.filter((s) => s.hasInsight).length}/{students.length} 名学生已生成分析
                   </p>
                 </div>
@@ -403,7 +404,7 @@ export default function TeacherDashboardPage() {
               </div>
 
               {students.length === 0 ? (
-                <div className="text-center text-gray-400 py-8">
+                <div className="text-center text-[var(--muted-light)] py-8">
                   <p>暂无学生数据</p>
                 </div>
               ) : (
@@ -416,29 +417,29 @@ export default function TeacherDashboardPage() {
                     return (
                       <div
                         key={student.id}
-                        className={`border rounded-lg transition-all ${isExpanded ? "border-[#0052D9] border-opacity-40 shadow-sm" : "border-gray-200"}`}
+                        className={`border rounded-lg transition-all ${isExpanded ? "border-[var(--primary)] shadow-sm" : "border-[var(--card-border)]"}`}
                       >
                         <div
-                          className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-gray-50"
+                          className="flex items-center justify-between px-4 py-3 cursor-pointer hover:bg-[var(--hover-bg)]"
                           onClick={() => toggleStudent(student.id)}
                         >
                           <div className="flex items-center gap-3">
-                            <div className="w-8 h-8 rounded-full bg-[#0052D9] bg-opacity-10 flex items-center justify-center">
-                              <span className="text-[#0052D9] text-xs font-medium">
+                            <div className="w-8 h-8 rounded-full bg-[var(--primary-light)] flex items-center justify-center">
+                              <span className="text-[var(--primary)] text-xs font-medium">
                                 {student.name.charAt(0)}
                               </span>
                             </div>
                             <div>
-                              <span className="font-medium text-[#1A1A1A] text-sm">{student.name}</span>
+                              <span className="font-medium text-[var(--foreground)] text-sm">{student.name}</span>
                               <div className="flex items-center gap-3 mt-0.5">
-                                <span className="text-xs text-[#63666F]">{student.convCount} 次对话</span>
-                                <span className="text-xs text-[#63666F]">{student.msgCount} 条消息</span>
+                                <span className="text-xs text-[var(--muted)]">{student.convCount} 次对话</span>
+                                <span className="text-xs text-[var(--muted)]">{student.msgCount} 条消息</span>
                               </div>
                             </div>
                           </div>
                           <div className="flex items-center gap-2">
                             {student.hasInsight && (
-                              <span className="text-xs text-[#00A870] bg-green-50 px-2 py-0.5 rounded">
+                              <span className="text-xs text-[var(--success)] bg-[var(--success-light)] px-2 py-0.5 rounded">
                                 V{student.insightVersion}
                               </span>
                             )}
@@ -462,10 +463,10 @@ export default function TeacherDashboardPage() {
                               </Button>
                             )}
                             {isLoading && (
-                              <span className="text-xs text-[#0052D9]">分析中...</span>
+                              <span className="text-xs text-[var(--primary)]">分析中...</span>
                             )}
                             <svg
-                              className={`w-4 h-4 text-gray-400 transition-transform ${isExpanded ? "rotate-180" : ""}`}
+                              className={`w-4 h-4 text-[var(--muted-light)] transition-transform ${isExpanded ? "rotate-180" : ""}`}
                               fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}
                             >
                               <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
@@ -474,11 +475,11 @@ export default function TeacherDashboardPage() {
                         </div>
 
                         {isExpanded && (
-                          <div className="px-4 pb-4 pt-2 border-t border-gray-100">
+                          <div className="px-4 pb-4 pt-2 border-t border-[var(--card-border)]">
                             {insight ? (
                               <>
                                 <div className="flex items-center justify-between mb-2">
-                                  <span className="text-xs text-[#63666F]">
+                                  <span className="text-xs text-[var(--muted)]">
                                     第 {insight.version} 版 · {formatDate(insight.createdAt)}
                                   </span>
                                   <div className="flex items-center gap-2">
@@ -510,24 +511,24 @@ export default function TeacherDashboardPage() {
                                     </Button>
                                   </div>
                                 </div>
-                                <div className="bg-[#F7F8FA] p-4 rounded-lg text-sm leading-relaxed whitespace-pre-line max-h-[500px] overflow-y-auto prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
+                                <div className="bg-[var(--primary-lighter)] p-4 rounded-lg text-sm leading-relaxed whitespace-pre-line max-h-[500px] overflow-y-auto prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
                                   <Markdown>{insight.content}</Markdown>
                                 </div>
                                 {showComparison[student.id] && previousInsights[student.id] && (
                                   <div className="mt-3">
-                                    <h4 className="text-xs font-medium text-[#ED7B2F] mb-2">上一次分析：</h4>
-                                    <div className="bg-[#FFF8F0] p-4 rounded-lg text-sm leading-relaxed max-h-[400px] overflow-y-auto border border-[#ED7B2F]/20 prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
+                                    <h4 className="text-xs font-medium text-[var(--warning)] mb-2">上一次分析：</h4>
+                                    <div className="bg-[var(--warning-light)] p-4 rounded-lg text-sm leading-relaxed max-h-[400px] overflow-y-auto border border-[var(--warning-light)] prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
                                       <Markdown>{previousInsights[student.id]}</Markdown>
                                     </div>
                                   </div>
                                 )}
                               </>
                             ) : isLoading ? (
-                              <div className="bg-[#F7F8FA] p-4 rounded-lg text-sm text-gray-400 text-center">
+                              <div className="bg-[var(--primary-lighter)] p-4 rounded-lg text-sm text-[var(--muted-light)] text-center">
                                 AI 正在分析 {student.name} 的学习数据...
                               </div>
                             ) : (
-                              <div className="bg-[#F7F8FA] p-4 rounded-lg text-sm text-gray-400 text-center">
+                              <div className="bg-[var(--primary-lighter)] p-4 rounded-lg text-sm text-[var(--muted-light)] text-center">
                                 {student.convCount > 0
                                   ? "点击「AI 分析」按钮生成个性化学习洞察"
                                   : "该学生暂无对话记录，无法生成分析"}
@@ -543,8 +544,8 @@ export default function TeacherDashboardPage() {
             </Card>
           </>
         ) : (
-          <Card>
-            <div className="text-center py-12 text-gray-400">
+          <Card style={{ boxShadow: 'var(--card-shadow)' }}>
+            <div className="text-center py-12 text-[var(--muted-light)]">
               <p className="text-lg mb-2">📚</p>
               <p>请先选择一个班级查看学情数据</p>
               {classes.length === 0 && (
@@ -567,16 +568,16 @@ export default function TeacherDashboardPage() {
         }}
         renderContent={(content) => (
           <div className="space-y-4">
-            <div className="flex items-start gap-2 p-3 bg-[#F0F5FF] rounded-lg">
-              <InfoCircleIcon className="text-[#0052D9] mt-0.5 shrink-0" />
-              <p className="text-sm text-[#1A1A1A]">
+            <div className="flex items-start gap-2 p-3 bg-[var(--primary-lighter)] rounded-lg">
+              <InfoCircleIcon className="text-[var(--primary)] mt-0.5 shrink-0" />
+              <p className="text-sm text-[var(--foreground)]">
                 以下是将一次性发送给 AI 模型的完整消息。确认无误后点击「同意并发送」。
               </p>
             </div>
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <span className="px-2 py-0.5 bg-[#E8F0FE] text-[#0052D9] text-xs font-medium rounded">system</span>
-                <span className="text-xs text-[#63666F]">
+                <span className="px-2 py-0.5 bg-[var(--primary-light)] text-[var(--primary)] text-xs font-medium rounded">system</span>
+                <span className="text-xs text-[var(--muted)]">
                   AI 分析师角色设定，告知课堂信息
                 </span>
               </div>

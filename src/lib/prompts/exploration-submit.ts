@@ -387,13 +387,16 @@ function qfNorm(s) {
   return String(s == null ? "" : s).replace(/\\s+/g, " ").trim();
 }
 
-/** 跳过：隐藏/按钮类控件、禁用控件、显式标记、以及我们自己的提交按钮 */
+/** 跳过：隐藏/按钮/滑块类控件、禁用控件、显式标记、以及我们自己的提交按钮。
+ *  ⛔ range 必须跳过：滑块是实验/交互的中间状态，不是学生登记的答案；
+ *  自定义控件的数值走 __gameState__.answers 契约轨，扫滑块只会采到"停在最后一格"的假答案。 */
 function qfSkip(el) {
   var tag = el.tagName.toLowerCase();
   var type = (el.getAttribute("type") || "text").toLowerCase();
   if (tag === "input") {
     if (type === "hidden" || type === "submit" || type === "button" ||
-        type === "reset" || type === "image" || type === "file" || type === "password") return true;
+        type === "reset" || type === "image" || type === "file" || type === "password" ||
+        type === "range") return true;
   }
   if (el.disabled) return true;
   if (el.getAttribute("data-qf-skip") !== null) return true;

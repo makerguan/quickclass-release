@@ -484,7 +484,7 @@ function parseOptions(optionsStr: string, qType: string): [string, string][] {
     const opts =
       typeof optionsStr === "string" ? JSON.parse(optionsStr) : optionsStr;
     if (opts && typeof opts === "object") {
-      return Object.entries(opts).sort((a, b) => a[0].localeCompare(b[0]));
+      return (Object.entries(opts) as [string, string][]).sort((a, b) => a[0].localeCompare(b[0]));
     }
   } catch {
     // ignore

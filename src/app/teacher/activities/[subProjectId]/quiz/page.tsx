@@ -3,6 +3,7 @@ import { useState, useEffect } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { Switch, MessagePlugin } from "tdesign-react";
 import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
+import TeacherLayout from "@/components/layout/TeacherLayout";
 
 export default function TeacherQuizListPage() {
   const params = useParams();
@@ -124,35 +125,45 @@ export default function TeacherQuizListPage() {
 
   // 获取状态颜色（二态）
   const getStatusColor = (q: any) => {
-    if (q.status === "ACTIVE") return "bg-green-100 text-green-700";
-    return "bg-orange-100 text-orange-700";
+    if (q.status === "ACTIVE") return "bg-[var(--success-light)] text-[var(--success)]";
+    return "bg-[var(--warning-light)] text-[var(--warning)]";
   };
 
-  if (loading) return <div className="p-6 text-center">加载中...</div>;
+  if (loading)
+    return (
+      <TeacherLayout>
+        <div className="p-6 text-center">加载中...</div>
+      </TeacherLayout>
+    );
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    // ⛔ DO NOT REMOVE 外层 TeacherLayout：本页原本没包（2026-10-13 修复），
+    // 后果是整页没有侧边栏/顶栏，也拿不到 <html> 上的教师端主题变量 →
+    // 按钮退回 TDesign 默认蓝、标题退回全局默认黑，切换主题完全无效。
+    // 🔗 RELATED: 同目录 [quizId]/questions/page.tsx 就是用 TeacherLayout 包裹的正确写法
+    <TeacherLayout>
+      <div className="p-6 max-w-4xl mx-auto">
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h1 className="text-xl font-semibold text-gray-800">课堂作业</h1>
-          <div className="text-sm text-gray-400">管理作业题目和发布</div>
+          <h1 className="text-xl font-semibold text-[var(--title)]">课堂作业</h1>
+          <div className="text-sm text-[var(--muted-light)]">管理作业题目和发布</div>
         </div>
         <button
           onClick={() => { setShowModal(true); fetchTemplates(); }}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm"
+          className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg hover:bg-[var(--primary-dark)] text-sm"
         >
           + 新建作业
         </button>
       </div>
 
       {quizzes.length === 0 ? (
-        <div className="text-center py-12 text-gray-400 bg-white rounded-xl">
+        <div className="text-center py-12 text-[var(--muted-light)] bg-[var(--card-bg)] rounded-xl border border-[var(--card-border)]">
           暂无作业，点击上方"新建作业"创建
         </div>
       ) : (
         <div className="space-y-3">
           {quizzes.map((q) => (
-            <div key={q.id} className="bg-white rounded-xl shadow-sm p-4 flex items-center gap-4">
+            <div key={q.id} className="bg-[var(--card-bg)] rounded-xl shadow-sm p-4 flex items-center gap-4">
               {/* 状态标签 */}
               <div className="flex items-center gap-2">
                 <span className={`px-2 py-0.5 rounded-full text-xs ${getStatusColor(q)}`}>
@@ -165,8 +176,8 @@ export default function TeacherQuizListPage() {
                 className="flex-1 cursor-pointer"
                 onClick={() => router.push(`/teacher/activities/${subProjectId}/quiz/${q.id}`)}
               >
-                <div className="font-medium text-gray-800">{q.title}</div>
-                <div className="text-sm text-gray-400">{q.description || "无说明"} · {q.questions?.length || 0}题 · {q._count?.attempts || 0}人已答</div>
+                <div className="font-medium text-[var(--foreground)]">{q.title}</div>
+                <div className="text-sm text-[var(--muted-light)]">{q.description || "无说明"} · {q.questions?.length || 0}题 · {q._count?.attempts || 0}人已答</div>
               </div>
 
               {/* 开关 */}
@@ -179,7 +190,7 @@ export default function TeacherQuizListPage() {
 
                 <button
                   onClick={(e) => { e.stopPropagation(); router.push(q.status === "ACTIVE" ? `/teacher/activities/${subProjectId}/quiz/${q.id}/report` : `/teacher/activities/${subProjectId}/quiz/${q.id}/questions`); }}
-                  className="px-3 py-1.5 text-sm text-blue-600 border border-blue-300 rounded-lg hover:bg-blue-50"
+                  className="px-3 py-1.5 text-sm text-[var(--primary)] border border-[var(--primary-light)] rounded-lg hover:bg-[var(--primary-light)]"
                 >
                   {q.status === "ACTIVE" ? "查看报告" : "题目管理"}
                 </button>
@@ -192,7 +203,7 @@ export default function TeacherQuizListPage() {
       {/* 新建弹窗 */}
       {showModal && (
         <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
-          <div className="bg-white rounded-xl p-6 w-96 shadow-xl">
+          <div className="bg-[var(--card-bg)] rounded-xl p-6 w-96 shadow-xl">
             <h2 className="text-lg font-semibold mb-4">新建作业</h2>
             <input
               className="w-full border rounded-lg px-3 py-2 mb-3 text-sm"
@@ -209,7 +220,7 @@ export default function TeacherQuizListPage() {
               rows={3}
             />
             <div className="mb-3">
-              <div className="text-xs text-gray-500 mb-1">作业设计模板</div>
+              <div className="text-xs text-[var(--muted)] mb-1">作业设计模板</div>
               <select
                 className="w-full border rounded-lg px-3 py-2 text-sm"
                 value={selectedTemplateId}
@@ -225,7 +236,7 @@ export default function TeacherQuizListPage() {
                 ))}
               </select>
               {!selectedTemplateId && (
-                <div className="mt-2 p-2 bg-yellow-50 rounded-lg text-xs text-yellow-700">
+                <div className="mt-2 p-2 bg-[var(--warning-light)] rounded-lg text-xs text-[var(--warning)]">
                   还没有作业设计模板？请前往「模板设置」页面创建后再新建作业。
                 </div>
               )}
@@ -241,7 +252,7 @@ export default function TeacherQuizListPage() {
                       hasPreview={!!tpl.hasPreview}
                       previewStale={!!tpl.previewStale}
                     />
-                    <span className="text-xs text-gray-400">先看一眼这份模板会生成什么效果</span>
+                    <span className="text-xs text-[var(--muted-light)]">先看一眼这份模板会生成什么效果</span>
                   </div>
                 );
               })()}
@@ -254,7 +265,7 @@ export default function TeacherQuizListPage() {
               rows={5}
             />
             <div className="flex items-center gap-3 mb-4">
-              <label className="text-sm text-gray-600">合格线分值</label>
+              <label className="text-sm text-[var(--muted)]">合格线分值</label>
               <input
                 type="number"
                 min={0}
@@ -263,17 +274,18 @@ export default function TeacherQuizListPage() {
                 value={newPassScore}
                 onChange={(e) => setNewPassScore(Number(e.target.value) || 60)}
               />
-              <span className="text-xs text-gray-400">默认60分</span>
+              <span className="text-xs text-[var(--muted-light)]">默认60分</span>
             </div>
             <div className="flex gap-3 justify-end">
-              <button onClick={() => setShowModal(false)} className="px-4 py-2 text-gray-500 text-sm">取消</button>
-              <button onClick={handleCreate} disabled={creating || !newTitle.trim() || (autoGenerate && !selectedTemplateId)} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm disabled:opacity-50">
+              <button onClick={() => setShowModal(false)} className="px-4 py-2 text-[var(--muted)] text-sm">取消</button>
+              <button onClick={handleCreate} disabled={creating || !newTitle.trim() || (autoGenerate && !selectedTemplateId)} className="px-4 py-2 bg-[var(--primary)] text-white rounded-lg text-sm disabled:opacity-50">
                 {creating ? "创建中..." : "创建"}
               </button>
             </div>
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </TeacherLayout>
   );
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   Button, Card, Select, Tag, Loading, MessagePlugin,
@@ -12,10 +12,12 @@ import {
   InfoCircleIcon,
 } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
+import ExportPdfButton from "@/components/ExportPdfButton";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import { usePromptPreview, PromptPreviewDialog } from "@/components/prompt-preview";
 import { formatInsightTime } from "@/lib/format-time";
 import { cleanInsightContent } from "@/lib/insight-clean";
+import { GenOverlay, useGenOverlay } from "@/components/GenOverlay";
 
 // ===== 辅助函数 =====
 
@@ -40,7 +42,7 @@ function InsightContent({ content, className = "" }: { content: string; classNam
     return (
       <div className="relative group">
         <button
-          className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-white/80 hover:bg-white text-gray-600 rounded border border-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-[var(--card-bg)]/80 hover:bg-[var(--card-bg)] text-[var(--muted)] rounded border border-[var(--card-border)] opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={() => {
             const w = window.open('', '_blank');
             if (w) {
@@ -62,9 +64,12 @@ function InsightContent({ content, className = "" }: { content: string; classNam
       </div>
     );
   }
+  // 文本型分支：data-insight-body 是 ExportPdfButton 的定位锚点（closest 向上查找），
+  // 丢了该属性导出按钮静默失效。🔗 RELATED：src/components/ExportPdfButton.tsx
   return (
-    <div className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
+    <div data-insight-body className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
       <Markdown>{content}</Markdown>
+      <ExportPdfButton title="学情分析报告" />
     </div>
   );
 }
@@ -103,7 +108,8 @@ interface Insight {
   starCount?: number;
 }
 
-interface PCInsight { id: string; userId?: string; studentName?: string; content: string; version: number; createdAt: string; starCount?: number; }
+// ⚠️ PERF：content 初始 GET 已不再下发（按需拉取），改为可选，避免类型误用
+interface PCInsight { id: string; userId?: string; studentName?: string; content?: string; version: number; createdAt: string; starCount?: number; }
 // 模板类型
 interface AnalysisTemplate {
   id: string;
@@ -144,6 +150,8 @@ export default function TaskInsightsPage() {
   const [pcDeleteVisible, setPcDeleteVisible] = useState(false);
   const [pcDeleting, setPcDeleting] = useState(false);
   const [pcStudentInsights, setPcStudentInsights] = useState<PCInsight[]>([]);
+  // 对话活动学生洞察正文缓存（展开时按需拉取，避免一次性下发 N 份完整 HTML）
+  const [studentContentCache, setStudentContentCache] = useState<Record<string, string>>({});
   const [pcStudents, setPcStudents] = useState<Array<{ id: string; name: string; convCount: number; msgCount: number; completedPresets: string[]; lastActiveAt: string | null }>>([]);
   const [selectedPCId, setSelectedPCId] = useState<string>("");
 
@@ -161,6 +169,9 @@ export default function TaskInsightsPage() {
   const [loadingStudentId, setLoadingStudentId] = useState<string | null>(null);
   const [expandedStudentId, setExpandedStudentId] = useState<string | null>(null);
   const [batchAnalyzing, setBatchAnalyzing] = useState(false);
+  // 任一 AI 生成（课堂全班/个生、对话全班/个生）进行中：浮层无遮罩，所有生成
+  // 按钮统一 disabled 做视觉层防重复；数据层兜底是 generatingRef
+  const [generatingBusy, setGeneratingBusy] = useState(false);
   // 批量分析进度：done/total，显示在"一键分析全部"按钮上
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   // 学生学情分析版本切换：studentId -> 选中的版本在 versions 数组中的下标（0 表示最新）
@@ -370,20 +381,55 @@ export default function TaskInsightsPage() {
           completedPresets: [],
           lastActiveAt: null,
         })));
+        // 返回原始数据：生成回调用它在刷新结果里定位新版本 id（写正文缓存）
+        return data;
       }
     } catch { /* ignore */ }
     finally { setPcLoading(false); }
+    return null;
   };
 
   
 
 
 
+  // 对话活动学生洞察：展开时按需拉取正文（初始 GET 已改为只回元数据）
+  const loadStudentInsightContent = async (insightId: string) => {
+    if (!insightId || studentContentCache[insightId] != null) return;
+    try {
+      const token = localStorage.getItem("token") || "";
+      const res = await fetch(`/api/preset-conversations/${selectedPCId}/insights/student/${insightId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (res.ok) {
+        const d = await res.json();
+        setStudentContentCache((prev) => ({ ...prev, [insightId]: d.content || "" }));
+      }
+    } catch { /* 静默失败：保持加载态 */ }
+  };
+
   // ===== AI 生成 =====
+
+  // 生成过程浮层（试点：全班洞察入口）。流式接口：首字符前显示文案+秒数（60s 切
+  // "数据量较大..."），首字符后显示真实字数。浮层为非阻塞三态（见 GenOverlay.tsx），
+  // 重复提交防护用 ref guard：state 闭包在同一渲染周期读不到新值，不可靠。
+  // 🔗 RELATED: src/components/GenOverlay.tsx（组件与 hook，先在 tasks/page.tsx 内联实现）
+  const { genOverlay, startGenOverlay, updateGenOverlay, stopGenOverlay } = useGenOverlay();
+  // 生成进行中标记（同步 ref）：课堂/对话层级的全部生成入口共用（页面同一时刻
+  // 只跑一个 AI 生成，浮层是全局单例）；state 闭包在同一渲染周期读不到新值，故用 ref
+  const generatingRef = useRef(false);
+  // 浮层非阻塞后用户可在生成期间切换班级；完成回调需区分「发起班级」与「当前班级」，
+  // 只有两者一致才刷新列表覆盖当前视图（切回原班时 useEffect 会自动重新拉取）
+  const selectedClassIdRef = useRef(selectedClassId);
+  useEffect(() => { selectedClassIdRef.current = selectedClassId; }, [selectedClassId]);
+  // 对话层级：生成完成回调需区分「发起的对话活动」与「当前选中的对话活动」
+  const selectedPCIdRef = useRef(selectedPCId);
+  useEffect(() => { selectedPCIdRef.current = selectedPCId; }, [selectedPCId]);
 
   // 检查下级报告完整度，如果缺失则弹对话框
   const checkAndGenerateClassInsight = async () => {
     if (!selectedClassId) return;
+    if (generatingRef.current) return; // 生成中不重复进入（也避免白弹缺失检查框）
     // 只有 TASK_INSIGHTS 模式才需要检查
     if (insightDataSource === "TASK_INSIGHTS") {
       const token = localStorage.getItem("token");
@@ -408,34 +454,64 @@ export default function TaskInsightsPage() {
 
   const generateClassInsight = async () => {
     if (!selectedClassId) return;
+    if (generatingRef.current) return; // 生成中不重复发起（按钮 disabled 只是视觉层，数据层兜底在此）
+    const originClassId = selectedClassId;
+    generatingRef.current = true;
+    setGeneratingBusy(true);
     setLoadingClassInsight(true);
+    startGenOverlay("AI 思考中...");
+    // 首 token 前的排队/思考期仍可能长达数十秒，60s 后切为真实状态提示
+    const hintTimer = setTimeout(() => updateGenOverlay("数据量较大，AI 仍在分析中..."), 60_000);
+    let received = 0;
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`/api/tasks/${taskId}/insights`, {
+      const res = await fetch(`/api/tasks/${taskId}/insights?stream=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ classId: selectedClassId, type: "class" }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        const newInsight = { id: data.id, content: data.content, version: data.version, createdAt: new Date().toISOString() };
-        setTaskClassInsight(newInsight);
-        setTaskClassInsightVersions((prev) => {
-          const updated = data.previousContent
-            ? [{ id: data.previousId, content: data.previousContent, version: data.version - 1, createdAt: "" }, newInsight]
-            : [newInsight];
-          return updated;
-        });
-        setTaskClassVersionIndex(0);
-        setExpandedTaskClass(true);
-        if (data.previousContent) setPreviousInsights((p) => ({ ...p, task_class: data.previousContent }));
-        MessagePlugin.success("班级学情洞察已生成");
+      const contentType = res.headers.get("content-type") || "";
+      if (res.ok && contentType.includes("text/plain")) {
+        // 流式：首字符到达 → "正在生成 X 字"（真实字数递增）；流结束 = 服务端已清理落库
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          if (received === 0) clearTimeout(hintTimer);
+          received = text.length;
+          updateGenOverlay(`正在生成 ${received.toLocaleString()} 字...`);
+        }
+        // ⛔ DO NOT REVERT to local version-list rebuild ([previousContent, newInsight], version = new-1).
+        // Why removed (2026-10-11): (1) in-place rebuild silently drops all historical versions
+        // from the UI — DB still has them, symptom was "versions missing until page refresh";
+        // (2) the rebuilt list puts the PREVIOUS version first, so index 0 highlighted the old
+        // version button while setTaskClassInsight(newInsight) showed the NEW content — version
+        // and content desynced until refresh.
+        // Current contract: generate → full refetch via fetchTaskInsights, which atomically sets
+        // taskClassInsight = versions[0] (latest, server returns version desc) and index = 0.
+        // Server data is the single source of truth. Same pattern as generateStudentInsight below.
+        // 🔗 RELATED: fetchTaskInsights (sets [0] + index 0), generatePCInsight class branch (same
+        // fix), src/app/api/tasks/[taskId]/insights/route.ts POST (returns only previousContent,
+        // NOT the full version list — insufficient for local rebuild).
+        if (selectedClassIdRef.current !== originClassId) {
+          // 生成期间用户已切到其他班级：不覆盖当前视图的数据（切回原班时 useEffect 自动拉取）
+          MessagePlugin.success("班级学情洞察已生成（已切换班级，切回后可查看）");
+        } else {
+          await fetchTaskInsights(originClassId);
+          setExpandedTaskClass(true);
+          MessagePlugin.success("班级学情洞察已生成");
+        }
       } else {
         const err = await res.json().catch(() => ({}));
         MessagePlugin.error(err.error || "生成洞察失败");
       }
-    } catch { MessagePlugin.error("网络错误"); }
-    finally { setLoadingClassInsight(false); }
+    } catch {
+      MessagePlugin.error(received > 0 ? "生成中断，内容未保存，请重试" : "生成失败，请重试");
+    }
+    finally { clearTimeout(hintTimer); stopGenOverlay(); generatingRef.current = false; setGeneratingBusy(false); setLoadingClassInsight(false); }
   };
 
   const generateStudentInsight = async (studentId: string) => {
@@ -444,26 +520,56 @@ export default function TaskInsightsPage() {
       MessagePlugin.warning("批量分析进行中，请等待完成后再单独分析");
       return;
     }
+    if (generatingRef.current) {
+      MessagePlugin.warning("已有分析任务进行中，请等待完成");
+      return;
+    }
+    const originClassId = selectedClassId;
+    generatingRef.current = true;
+    setGeneratingBusy(true);
     setLoadingStudentId(studentId);
     setExpandedStudentId(studentId);
+    startGenOverlay("AI 思考中...");
+    // 首 token 前的排队/思考期可能长达数十秒，60s 后切为真实状态提示
+    const hintTimer = setTimeout(() => updateGenOverlay("数据量较大，AI 仍在分析中..."), 60_000);
+    let received = 0;
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`/api/tasks/${taskId}/insights`, {
+      const res = await fetch(`/api/tasks/${taskId}/insights?stream=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ classId: selectedClassId, type: "student", studentId }),
       });
-      if (res.ok) {
-        const data = await res.json();
-        if (data.previousContent) setPreviousInsights((p) => ({ ...p, [studentId]: data.previousContent }));
-        await fetchTaskInsights(selectedClassId);
-        MessagePlugin.success("学生分析已生成");
+      const contentType = res.headers.get("content-type") || "";
+      if (res.ok && contentType.includes("text/plain")) {
+        // 流式：首字符到达 → "正在生成 X 字"（真实字数递增）；流结束 = 服务端已清理落库
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          if (received === 0) clearTimeout(hintTimer);
+          received = text.length;
+          updateGenOverlay(`正在生成 ${received.toLocaleString()} 字...`);
+        }
+        // 生成 → 全量刷新（与 generateClassInsight 同一契约，禁止本地重建版本列表）
+        if (selectedClassIdRef.current !== originClassId) {
+          // 生成期间用户已切到其他班级：不覆盖当前视图的数据（切回原班时 useEffect 自动拉取）
+          MessagePlugin.success("学生分析已生成（已切换班级，切回后可查看）");
+        } else {
+          await fetchTaskInsights(originClassId);
+          MessagePlugin.success("学生分析已生成");
+        }
       } else {
         const err = await res.json().catch(() => ({}));
         MessagePlugin.error(err.error || "生成分析失败");
       }
-    } catch { MessagePlugin.error("网络错误"); }
-    finally { setLoadingStudentId(null); }
+    } catch {
+      MessagePlugin.error(received > 0 ? "生成中断，内容未保存，请重试" : "生成失败，请重试");
+    }
+    finally { clearTimeout(hintTimer); stopGenOverlay(); generatingRef.current = false; setGeneratingBusy(false); setLoadingStudentId(null); }
   };
 
   const generatePCInsight = async (type: "class" | "student", studentId?: string) => {
@@ -473,40 +579,77 @@ export default function TaskInsightsPage() {
       return;
     }
     if (type === "student" && !studentId) return;
+    if (generatingRef.current) {
+      MessagePlugin.warning("已有分析任务进行中，请等待完成");
+      return;
+    }
+    const originPCId = selectedPCId;
+    const originClassId = selectedClassId;
+    generatingRef.current = true;
+    setGeneratingBusy(true);
     if (type === "student") {
       setLoadingStudentId(studentId!);
     } else {
       setLoadingClassInsight(true);
     }
+    startGenOverlay("AI 思考中...");
+    // 首 token 前的排队/思考期可能长达数十秒，60s 后切为真实状态提示
+    const hintTimer = setTimeout(() => updateGenOverlay("数据量较大，AI 仍在分析中..."), 60_000);
+    let received = 0;
+    let fullText = "";
     try {
       const token = localStorage.getItem("token");
-      const res = await fetch(`/api/preset-conversations/${selectedPCId}/insights`, {
+      const res = await fetch(`/api/preset-conversations/${selectedPCId}/insights?stream=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
         body: JSON.stringify({ classId: selectedClassId, type, ...(studentId ? { studentId } : {}) }),
       });
-      if (res.ok) {
-        if (type === "class") {
-          const data = await res.json();
-          const newInsight = { id: data.id, content: data.content, version: data.version, createdAt: new Date().toISOString() };
-          setPcClassInsight(newInsight);
-          setPcClassInsightVersions((prev) => {
-            const updated = data.previousContent
-              ? [{ id: data.previousId, content: data.previousContent, version: data.version - 1, createdAt: "" }, newInsight]
-              : [newInsight];
-            return updated;
-          });
-          setPcClassVersionIndex(0);
-        } else {
-          await fetchPCInsights(selectedPCId, selectedClassId);
+      const contentType = res.headers.get("content-type") || "";
+      if (res.ok && contentType.includes("text/plain")) {
+        // 流式：首字符到达 → "正在生成 X 字"（真实字数递增）；流结束 = 服务端已清理落库
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let text = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          text += decoder.decode(value, { stream: true });
+          if (received === 0) clearTimeout(hintTimer);
+          received = text.length;
+          updateGenOverlay(`正在生成 ${received.toLocaleString()} 字...`);
         }
-        MessagePlugin.success("分析已生成");
+        if (!text.trim()) throw new Error("AI 返回了空内容，请重试");
+        fullText = text;
+        // ⛔ DO NOT REVERT to local version-list rebuild — same desync bug as generateClassInsight:
+        // in-place rebuild drops historical versions from the UI and highlights the OLD version
+        // button (index 0 = previous in rebuilt list) while showing the NEW content.
+        // Generate → full refetch (fetchPCInsights atomically sets insight = versions[0] latest
+        // + index 0). 🔗 RELATED: fetchPCInsights (bottom of this file), generateClassInsight (same fix).
+        // 生成期间用户切走班级/对话活动时不覆盖当前视图（切回时 useEffect 自动拉取）
+        if (selectedPCIdRef.current !== originPCId || selectedClassIdRef.current !== originClassId) {
+          MessagePlugin.success("分析已生成（已切换视图，切回后可查看）");
+        } else {
+          const data = await fetchPCInsights(originPCId, originClassId);
+          if (type === "student" && studentId) {
+            // 流式响应是纯文本、无 insight id；从刷新结果定位该学生的最新版本，
+            // 把刚看到的全文写入正文缓存，避免展开卡片再发一次按需拉取
+            const fresh = (data?.studentInsights || []).filter((i: PCInsight) => i.userId === studentId)[0];
+            if (fresh?.id) setStudentContentCache((prev) => ({ ...prev, [fresh.id]: fullText }));
+          }
+          MessagePlugin.success("分析已生成");
+        }
       } else {
         const err = await res.json().catch(() => ({}));
         MessagePlugin.error(err.error || "生成失败");
       }
-    } catch { MessagePlugin.error("网络错误"); }
-    finally { 
+    } catch {
+      MessagePlugin.error(received > 0 ? "生成中断，内容未保存，请重试" : "生成失败，请重试");
+    }
+    finally {
+      clearTimeout(hintTimer);
+      stopGenOverlay();
+      generatingRef.current = false;
+      setGeneratingBusy(false);
       if (type === "student") {
         setLoadingStudentId(null);
       } else {
@@ -696,20 +839,6 @@ export default function TaskInsightsPage() {
     return `${d.getMonth() + 1}/${d.getDate()} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
   };
 
-  const formatLastActive = (dateStr: string | null) => {
-    if (!dateStr) return "未活跃";
-    const d = new Date(dateStr);
-    const now = new Date();
-    const diffMs = now.getTime() - d.getTime();
-    const diffMins = Math.floor(diffMs / 60000);
-    if (diffMins < 60) return `${diffMins} 分钟前`;
-    const diffHours = Math.floor(diffMins / 60);
-    if (diffHours < 24) return `${diffHours} 小时前`;
-    const diffDays = Math.floor(diffHours / 24);
-    if (diffDays < 7) return `${diffDays} 天前`;
-    return formatDate(dateStr);
-  };
-
   const currentClass = classes[0];
   const pcOptions = currentClass?.subProjects.flatMap((sp) =>
     sp.presetConversations.map((pc) => ({ label: `${sp.title} / ${pc.title}`, value: pc.id }))
@@ -722,7 +851,7 @@ export default function TaskInsightsPage() {
     const displayCount = Math.max(0, Math.min(count, TOTAL_STARS));
     return (
       <span className="text-sm whitespace-nowrap" title={`${count}/${TOTAL_STARS}`}>
-        <span className="text-[#BBBBBB]">指数：</span>
+        <span className="text-[var(--muted-light)]">指数：</span>
         <span className="text-[#F5A623]">
           {"★".repeat(displayCount)}
         </span>
@@ -777,7 +906,7 @@ export default function TaskInsightsPage() {
   if (!task) {
     const content = (
       <div className="text-center py-16">
-        <p className="text-gray-400 text-lg">课堂不存在</p>
+        <p className="text-[var(--muted-light)] text-lg">课堂不存在</p>
         <Button theme="primary" variant="text" onClick={() => router.push("/teacher/tasks")} className="mt-4">
           返回课堂列表
         </Button>
@@ -795,7 +924,7 @@ export default function TaskInsightsPage() {
       <div className="space-y-6 pb-8">
         {/* 顶部导航 */}
         <div className="flex items-center gap-3">
-          <Button theme="default" variant="text" icon={<ChevronLeftIcon />} onClick={() => router.push("/teacher/tasks")}>
+          <Button theme="primary" variant="text" icon={<ChevronLeftIcon />} onClick={() => router.push("/teacher/tasks")}>
             返回课堂列表
           </Button>
         </div>
@@ -805,11 +934,11 @@ export default function TaskInsightsPage() {
           <div className="space-y-3">
             <div className="flex items-start justify-between">
               <div>
-                <h2 className="text-xl font-semibold text-[#1A1A1A]">{task.title}</h2>
-                {task.description && <p className="text-sm text-[#63666F] mt-1">{task.description}</p>}
+                <h2 className="text-xl font-semibold text-[var(--title)]">{task.title}</h2>
+                {task.description && <p className="text-sm text-[var(--muted)] mt-1">{task.description}</p>}
               </div>
               <div className="flex items-center gap-3">
-                <span className="text-sm text-[#63666F]">班级：</span>
+                <span className="text-sm text-[var(--muted)]">班级：</span>
                 <Select value={selectedClassId} onChange={(val) => setSelectedClassId(String(val))}
                   options={classOptions} placeholder="选择班级" style={{ width: 180 }} size="medium" />
               </div>
@@ -849,19 +978,19 @@ export default function TaskInsightsPage() {
                 ) : selectedPCId && currentClass ? (
                   <>
                     {/* 班级分析 */}
-                    <div className="bg-[#F7F8FA] rounded-lg overflow-hidden">
-                      <div className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-[#EEF0F3] transition-colors"
+                    <div className="bg-[var(--primary-lighter)] rounded-lg overflow-hidden">
+                      <div className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-[var(--hover-bg)] transition-colors"
                         onClick={() => setExpandedPcClass(!expandedPcClass)}>
                         <div className="flex items-center gap-2">
-                          <span className={`text-[#63666F] text-xs transition-transform ${expandedPcClass ? 'rotate-90' : ''}`}>▶</span>
+                          <span className={`text-[var(--muted)] text-xs transition-transform ${expandedPcClass ? 'rotate-90' : ''}`}>▶</span>
                           <h4 className="font-medium text-sm">{pcOptions.find(o => o.value === selectedPCId)?.label || (selectedPCId ? "班级分析" : "请选择对话活动")}</h4>
                           {pcClassInsightVersions.length > 1 && (
                             <div className="flex items-center ml-3 gap-2">
-                              <span className="text-xs text-gray-400">版本：</span>
+                              <span className="text-xs text-[var(--muted-light)]">版本：</span>
                               {pcClassInsightVersions.map((v, i) => (
                                 <div key={i} className="flex items-center gap-3">
                                   <button
-                                    className={`px-2 py-0.5 text-xs rounded ${i === pcClassVersionIndex ? 'bg-[#0052D9] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                    className={`px-2 py-0.5 text-xs rounded ${i === pcClassVersionIndex ? 'bg-[var(--primary)] text-white' : 'bg-[var(--primary-lighter)] text-[var(--muted)] hover:bg-[var(--hover-bg)]'}`}
                                     onClick={(e) => {
                                       e.stopPropagation();
                                       setPcClassVersionIndex(i);
@@ -872,7 +1001,7 @@ export default function TaskInsightsPage() {
                                   </button>
                                   {v.id && (
                                     <button
-                                      className="text-xs text-red-400 hover:text-red-600 px-0.5"
+                                      className="text-xs text-[var(--danger)] hover:text-[var(--danger)] px-0.5"
                                       onClick={(e) => {
                                         e.stopPropagation();
                                         setPcDeleteVersion({ id: v.id!, version: v.version });
@@ -890,6 +1019,7 @@ export default function TaskInsightsPage() {
                         </div>
                         <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
                           <Button theme="primary" variant="text" size="small" loading={loadingClassInsight || promptPreviewLoading}
+                            disabled={generatingBusy}
                             onClick={() => withPromptPreview(
                               () => selectedPCId && selectedClassId ? {
                                 endpoint: `/api/preset-conversations/${selectedPCId}/insights`,
@@ -907,7 +1037,7 @@ export default function TaskInsightsPage() {
                                         </div>
                       )}
                       {expandedPcClass && !pcClassInsight && (
-                        <p className="text-gray-400 text-sm px-4 pb-4">点击「生成分析」开始分析</p>
+                        <p className="text-[var(--muted-light)] text-sm px-4 pb-4">点击「生成分析」开始分析</p>
                       )}
                     </div>
 
@@ -939,7 +1069,7 @@ export default function TaskInsightsPage() {
                                 () => batchAnalyzeAllStudents()
                               );
                             }}
-                            disabled={pcStudents.filter((s) => s.convCount > 0).length === 0}
+                            disabled={generatingBusy || pcStudents.filter((s) => s.convCount > 0).length === 0}
                           >
                             {batchAnalyzing ? `分析中 ${batchProgress.done}/${batchProgress.total}` : "一键分析全部"}
                           </Button>
@@ -955,33 +1085,45 @@ export default function TaskInsightsPage() {
                           const hasConv = student.convCount > 0;
                           return (
                             <div key={student.id} className={`border rounded-lg overflow-hidden ${!hasConv ? "opacity-50" : ""}`}>
-                              <div className="flex items-center justify-between px-4 py-3 bg-[#F7F8FA] cursor-pointer"
-                                onClick={() => hasConv && setExpandedStudentId(isExpanded ? null : student.id)}>
+                              <div className="flex items-center justify-between px-4 py-3 bg-[var(--primary-lighter)] cursor-pointer"
+                                onClick={() => {
+                                  if (!hasConv) return;
+                                  const next = isExpanded ? null : student.id;
+                                  setExpandedStudentId(next);
+                                  // 展开时按需拉取该学生洞察正文（初始 GET 不含 content）
+                                  if (next && ins?.id) loadStudentInsightContent(ins.id);
+                                }}>
                                 <div className="flex items-center gap-2 flex-wrap">
                                   {ins && <StarRating count={ins.starCount || 0} />}
-                                  <div className="w-7 h-7 rounded-full bg-[#0052D9]/10 flex items-center justify-center">
-                                    <span className="text-[#0052D9] text-xs font-medium">{student.name.charAt(0)}</span>
+                                  <div className="w-7 h-7 rounded-full bg-[var(--primary-light)] flex items-center justify-center">
+                                    <span className="text-[var(--primary)] text-xs font-medium">{student.name.charAt(0)}</span>
                                   </div>
                                   <span className="text-sm font-medium">{student.name}</span>
                                   {versions.length > 1 && (
-                                    <div className="flex items-center gap-1 ml-1 pl-2 border-l border-gray-200">
-                                      <span className="text-xs text-gray-400">版本：</span>
+                                    <div className="flex items-center gap-1 ml-1 pl-2 border-l border-[var(--card-border)]">
+                                      <span className="text-xs text-[var(--muted-light)]">版本：</span>
                                       {versions.map((v, i) => (
                                         <div key={v.id} className="flex items-center gap-0.5">
                                           <button
                                             className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
                                               i === versionIndex
-                                                ? "bg-[#0052D9] text-white"
-                                                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                                ? "bg-[var(--primary)] text-white"
+                                                : "bg-[var(--primary-lighter)] text-[var(--muted)] hover:bg-[var(--hover-bg)]"
                                             }`}
-                                            onClick={(e) => { e.stopPropagation(); setStudentVersionIndex((p) => ({ ...p, [student.id]: i })); }}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setStudentVersionIndex((p) => ({ ...p, [student.id]: i }));
+                                              // 切换版本时按需拉取该版正文
+                                              const vins = versions[i];
+                                              if (vins?.id) loadStudentInsightContent(vins.id);
+                                            }}
                                             title={`第 ${v.version} 版${v.createdAt ? ` · ${formatInsightTime(v.createdAt)}` : ""}`}
                                           >
                                             v{v.version}
                                           </button>
                                           {v.id && (
                                             <button
-                                              className="text-xs text-red-400 hover:text-red-600 px-0.5"
+                                              className="text-xs text-[var(--danger)] hover:text-[var(--danger)] px-0.5"
                                               onClick={(e) => {
                                                 e.stopPropagation();
                                                 setPcDeleteVersion({ id: v.id!, version: v.version });
@@ -997,12 +1139,13 @@ export default function TaskInsightsPage() {
                                     </div>
                                   )}
                                   {!hasConv && <Tag theme="default" variant="outline" size="small">无对话</Tag>}
-                                  {hasConv && !ins && !requireStarRating && <span className="text-xs text-[#BBBBBB]">未评分</span>}
+                                  {hasConv && !ins && !requireStarRating && <span className="text-xs text-[var(--muted-light)]">未评分</span>}
                                 </div>
                                 <div className="flex items-center gap-2">
                                   {hasConv && (
                                     <>
                                       <Button theme="primary" variant="text" size="small" loading={isAnalyzing}
+                                        disabled={generatingBusy}
                                         onClick={(e) => { e.stopPropagation(); withPromptPreview(
                                           () => selectedPCId && selectedClassId ? {
                                             endpoint: `/api/preset-conversations/${selectedPCId}/insights`,
@@ -1012,27 +1155,31 @@ export default function TaskInsightsPage() {
                                         ); }}>
                                         {ins ? "重新分析" : "AI 分析"}
                                       </Button>
-                                      {ins && <span className="text-[#63666F] text-xs cursor-pointer">{isExpanded ? "收起" : "展开"}</span>}
+                                      {ins && <span className="text-[var(--muted)] text-xs cursor-pointer">{isExpanded ? "收起" : "展开"}</span>}
                                     </>
                                   )}
                                 </div>
                               </div>
 {isExpanded && ins && !requireStarRating && (
                                           <div className="px-4 py-3">
-                                            <InsightContent content={ins.content} />
+                                            {studentContentCache[ins.id] != null ? (
+                                              <InsightContent content={studentContentCache[ins.id]} />
+                                            ) : (
+                                              <div className="text-xs text-[var(--muted-light)] py-4 text-center">加载中…</div>
+                                            )}
                                           </div>
                                         )}
                             </div>
                           );
                         })}
                         {pcStudents.length === 0 && (
-                          <p className="text-gray-400 text-sm text-center py-4">班级暂无学生</p>
+                          <p className="text-[var(--muted-light)] text-sm text-center py-4">班级暂无学生</p>
                         )}
                       </div>
                     </div>
                   </>
                 ) : (
-                  <p className="text-gray-400 text-sm text-center py-8">请选择一个对话活动</p>
+                  <p className="text-[var(--muted-light)] text-sm text-center py-8">请选择一个对话活动</p>
                 )}
               </div>
             )}
@@ -1043,25 +1190,25 @@ export default function TaskInsightsPage() {
               <div className="space-y-4">
                 {/* 课堂级班级分析 */}
                 <Card>
-                  <div className="flex items-center justify-between cursor-pointer select-none hover:bg-[#F7F8FA] -mx-4 -mt-4 px-4 pt-4 pb-3 transition-colors rounded-t-lg"
+                  <div className="flex items-center justify-between cursor-pointer select-none hover:bg-[var(--primary-lighter)] -mx-4 -mt-4 px-4 pt-4 pb-3 transition-colors rounded-t-lg"
                     onClick={() => setExpandedTaskClass(!expandedTaskClass)}>
                     <div className="flex items-center gap-2">
-                      <span className={`text-[#63666F] text-xs transition-transform ${expandedTaskClass ? 'rotate-90' : ''}`}>▶</span>
+                      <span className={`text-[var(--muted)] text-xs transition-transform ${expandedTaskClass ? 'rotate-90' : ''}`}>▶</span>
                       <div>
-                        <h3 className="font-medium text-[#1A1A1A] text-sm">{taskClassInsight ? task.title : "课堂级学情洞察"}</h3>
+                        <h3 className="font-medium text-[var(--foreground)] text-sm">{taskClassInsight ? task.title : "课堂级学情洞察"}</h3>
                         {!taskClassInsight && (
-                          <p className="text-xs text-[#63666F] mt-0.5">
+                          <p className="text-xs text-[var(--muted)] mt-0.5">
                             {`数据来源：${insightDataSource === "TASK_INSIGHTS" ? "各学习活动分析结果" : "原始对话记录"}`}
                           </p>
                         )}
                       </div>
                       {taskClassInsightVersions.length > 1 && (
                         <div className="flex items-center ml-3 gap-2">
-                          <span className="text-xs text-gray-400">版本：</span>
+                          <span className="text-xs text-[var(--muted-light)]">版本：</span>
                           {taskClassInsightVersions.map((v, i) => (
                             <div key={i} className="flex items-center gap-3">
                               <button
-                                className={`px-2 py-0.5 text-xs rounded ${i === taskClassVersionIndex ? 'bg-[#0052D9] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                                className={`px-2 py-0.5 text-xs rounded ${i === taskClassVersionIndex ? 'bg-[var(--primary)] text-white' : 'bg-[var(--primary-lighter)] text-[var(--muted)] hover:bg-[var(--hover-bg)]'}`}
                                 onClick={(e) => {
                                   e.stopPropagation();
                                   setTaskClassVersionIndex(i);
@@ -1072,7 +1219,7 @@ export default function TaskInsightsPage() {
                               </button>
 {v.id && (
                                             <button
-                                              className="text-xs text-red-400 hover:text-red-600 px-0.5"
+                                              className="text-xs text-[var(--danger)] hover:text-[var(--danger)] px-0.5"
                                               onClick={(e) => {
                                                 e.stopPropagation();
                                                 setTaskDeleteVersion({ id: v.id!, version: v.version });
@@ -1096,6 +1243,7 @@ export default function TaskInsightsPage() {
                         </Button>
                       )}
                       <Button theme="primary" size="small" loading={loadingClassInsight || promptPreviewLoading}
+                        disabled={generatingBusy}
                         icon={!loadingClassInsight ? <ChartBarIcon /> : undefined}
                         onClick={() => withPromptPreview(
                           () => taskId && selectedClassId ? {
@@ -1110,17 +1258,17 @@ export default function TaskInsightsPage() {
                   </div>
                   {expandedTaskClass && (
                     <>
-<div className="bg-[#F7F8FA] p-5 rounded-lg text-sm leading-relaxed min-h-[120px] prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
+<div className="bg-[var(--primary-lighter)] p-5 rounded-lg text-sm leading-relaxed min-h-[120px] prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
                                           {taskClassInsight ? (
                                             <InsightContent content={taskClassInsight.content} />
                                           ) : (
-                          <span className="text-gray-400">点击「生成洞察」按钮，AI 将基于{insightDataSource === "TASK_INSIGHTS" ? "各学习活动分析结果" : "原始对话记录"}生成学情报告...</span>
+                          <span className="text-[var(--muted-light)]">点击「生成洞察」按钮，AI 将基于{insightDataSource === "TASK_INSIGHTS" ? "各学习活动分析结果" : "原始对话记录"}生成学情报告...</span>
                         )}
                       </div>
                       {showComparison.task && previousInsights.task_class && (
                         <div className="mt-4">
-                          <h4 className="text-sm font-medium text-[#ED7B2F] mb-2">上一次分析结果：</h4>
-<div className="bg-[#FFF8F0] p-5 rounded-lg text-sm leading-relaxed max-h-[400px] overflow-y-auto border border-[#ED7B2F]/20">
+                          <h4 className="text-sm font-medium text-[var(--warning)] mb-2">上一次分析结果：</h4>
+<div className="bg-[var(--warning-light)] p-5 rounded-lg text-sm leading-relaxed max-h-[400px] overflow-y-auto border border-[var(--warning-light)]">
                                               <InsightContent content={previousInsights.task_class} />
                                             </div>
                         </div>
@@ -1132,7 +1280,7 @@ export default function TaskInsightsPage() {
                 {/* 课堂级学生分析 */}
                 <Card>
                   <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-medium text-[#1A1A1A]">
+                    <h3 className="font-medium text-[var(--foreground)]">
                       学生分析（{new Set(taskStudentInsights.map((i) => i.userId)).size}/{currentClass.students.filter((s) => s.convCount > 0).length} 人已分析）
                     </h3>
                     <div className="flex items-center gap-2">
@@ -1157,7 +1305,7 @@ export default function TaskInsightsPage() {
                             () => batchAnalyzeAllStudents()
                           );
                         }}
-                        disabled={currentClass.students.filter((s) => s.convCount > 0).length === 0}
+                        disabled={generatingBusy || currentClass.students.filter((s) => s.convCount > 0).length === 0}
                       >
                         {batchAnalyzing ? `分析中 ${batchProgress.done}/${batchProgress.total}` : "一键分析全部"}
                       </Button>
@@ -1173,28 +1321,28 @@ export default function TaskInsightsPage() {
                       const hasConv = student.convCount > 0;
                       return (
                         <div key={student.id} className={`border rounded-lg overflow-hidden ${!hasConv ? "opacity-50" : ""}`}>
-                          <div className="flex items-center justify-between px-4 py-3 bg-[#F7F8FA] cursor-pointer"
+                          <div className="flex items-center justify-between px-4 py-3 bg-[var(--primary-lighter)] cursor-pointer"
                             onClick={() => hasConv && setExpandedStudentId(isExpanded ? null : student.id)}>
                             <div className="flex items-center gap-2 flex-wrap">
                               {ins && <StarRating count={ins.starCount || 0} />}
-                              <div className="w-7 h-7 rounded-full bg-[#0052D9]/10 flex items-center justify-center">
-                                <span className="text-[#0052D9] text-xs font-medium">{student.name.charAt(0)}</span>
+                              <div className="w-7 h-7 rounded-full bg-[var(--primary-light)] flex items-center justify-center">
+                                <span className="text-[var(--primary)] text-xs font-medium">{student.name.charAt(0)}</span>
                               </div>
                               <span className="text-sm font-medium">{student.name}</span>
                               {ins && <Tag theme="success" variant="light" size="small">V{ins.version}</Tag>}
                               {!hasConv && <Tag theme="default" variant="outline" size="small">无对话</Tag>}
-                              {hasConv && !ins && !requireStarRating && <span className="text-xs text-[#BBBBBB]">未评分</span>}
-                              {hasConv && <span className="text-xs text-[#63666F]">{formatLastActive(student.lastActiveAt)}</span>}
+                              {hasConv && !ins && !requireStarRating && <span className="text-xs text-[var(--muted-light)]">未评分</span>}
+                              {/* 最后活跃时间已移除（对齐对话活动层级）：它跟在 V 版本号后面，常被误读为版本生成时间（2026-10-11 用户反馈）；如需恢复，数据源是 student.lastActiveAt */}
                               {versions.length > 1 && (
-                                <div className="flex items-center gap-1 ml-1 pl-2 border-l border-gray-200">
-                                  <span className="text-xs text-gray-400">版本：</span>
+                                <div className="flex items-center gap-1 ml-1 pl-2 border-l border-[var(--card-border)]">
+                                  <span className="text-xs text-[var(--muted-light)]">版本：</span>
                                   {versions.map((v, i) => (
                                     <div key={v.id} className="flex items-center gap-0.5">
                                       <button
                                         className={`text-xs px-1.5 py-0.5 rounded transition-colors ${
                                           i === versionIndex
-                                            ? "bg-[#0052D9] text-white"
-                                            : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                                            ? "bg-[var(--primary)] text-white"
+                                            : "bg-[var(--primary-lighter)] text-[var(--muted)] hover:bg-[var(--hover-bg)]"
                                         }`}
                                         onClick={(e) => { e.stopPropagation(); setStudentVersionIndex((p) => ({ ...p, [student.id]: i })); }}
                                         title={`第 ${v.version} 版${v.createdAt ? ` · ${formatInsightTime(v.createdAt)}` : ""}`}
@@ -1203,7 +1351,7 @@ export default function TaskInsightsPage() {
                                       </button>
                                       {v.id && (
                                         <button
-                                          className="text-xs text-red-400 hover:text-red-600 px-0.5"
+                                          className="text-xs text-[var(--danger)] hover:text-[var(--danger)] px-0.5"
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             setTaskDeleteVersion({ id: v.id!, version: v.version });
@@ -1223,6 +1371,7 @@ export default function TaskInsightsPage() {
                               {hasConv && (
                                 <>
                                   <Button theme="primary" variant="text" size="small" loading={isLoading}
+                                    disabled={generatingBusy}
                                     onClick={(e) => { e.stopPropagation(); withPromptPreview(
                                       () => taskId && selectedClassId ? {
                                         endpoint: `/api/tasks/${taskId}/insights`,
@@ -1232,7 +1381,7 @@ export default function TaskInsightsPage() {
                                     ); }}>
                                     {ins ? "重新分析" : "AI 分析"}
                                   </Button>
-                                  {ins && <span className="text-[#63666F] text-xs cursor-pointer">{isExpanded ? "收起" : "展开"}</span>}
+                                  {ins && <span className="text-[var(--muted)] text-xs cursor-pointer">{isExpanded ? "收起" : "展开"}</span>}
                                 </>
                               )}
                             </div>
@@ -1262,10 +1411,10 @@ export default function TaskInsightsPage() {
         width={700}
       >
         <div className="space-y-4">
-          <p className="text-sm text-[#63666F]">
+          <p className="text-sm text-[var(--muted)]">
             当前编辑：<strong>{promptDialogTitle}</strong>
           </p>
-          <p className="text-xs text-[#63666F] bg-[#F7F8FA] rounded-lg p-3">
+          <p className="text-xs text-[var(--muted)] bg-[var(--primary-lighter)] rounded-lg p-3">
             提示词模板将用于 AI 分析时的 Prompt 构建。可使用变量如 {"${学生人数}"}{"，"}{"${对话内容}"} 等。
           </p>
           <Textarea
@@ -1298,16 +1447,16 @@ export default function TaskInsightsPage() {
         }}
         renderContent={(content) => (
           <div className="space-y-4">
-            <div className="flex items-start gap-2 p-3 bg-[#F0F5FF] rounded-lg">
-              <InfoCircleIcon className="text-[#0052D9] mt-0.5 shrink-0" />
-              <p className="text-sm text-[#1A1A1A]">
+            <div className="flex items-start gap-2 p-3 bg-[var(--primary-light)] rounded-lg">
+              <InfoCircleIcon className="text-[var(--primary)] mt-0.5 shrink-0" />
+              <p className="text-sm text-[var(--foreground)]">
                 以下是将一次性发送给 AI 模型的完整消息。确认无误后点击「同意并发送」。
               </p>
             </div>
             <div>
               <div className="flex items-center gap-2 mb-2">
-                <span className="px-2 py-0.5 bg-[#E8F0FE] text-[#0052D9] text-xs font-medium rounded">user</span>
-                <span className="text-xs text-[#63666F]">
+                <span className="px-2 py-0.5 bg-[var(--primary-light)] text-[var(--primary)] text-xs font-medium rounded">user</span>
+                <span className="text-xs text-[var(--muted)]">
                   包含分析指令 + 嵌入的对话数据或下级分析结果
                 </span>
               </div>
@@ -1328,9 +1477,9 @@ export default function TaskInsightsPage() {
         width={600}
       >
         <div className="space-y-4">
-          <div className="flex items-start gap-2 p-3 bg-[#FFF3E0] rounded-lg">
-            <InfoCircleIcon className="text-[#ED7B2F] mt-0.5 shrink-0" />
-            <p className="text-sm text-[#1A1A1A]">
+          <div className="flex items-start gap-2 p-3 bg-[var(--warning-light)] rounded-lg">
+            <InfoCircleIcon className="text-[var(--warning)] mt-0.5 shrink-0" />
+            <p className="text-sm text-[var(--foreground)]">
               以下分析报告尚未生成，将只基于已有报告进行分析：
             </p>
           </div>
@@ -1338,14 +1487,14 @@ export default function TaskInsightsPage() {
           {/* 对话活动缺失项 */}
           {missingItems.presetConversations && missingItems.presetConversations.length > 0 && (
             <div>
-              <h4 className="text-sm font-medium text-[#1A1A1A] mb-2">对话活动分析缺失：</h4>
+              <h4 className="text-sm font-medium text-[var(--foreground)] mb-2">对话活动分析缺失：</h4>
               <div className="space-y-2">
                 {missingItems.presetConversations.map((pc) => (
-                  <div key={pc.id} className="p-3 bg-[#F7F8FA] rounded-lg text-sm">
+                  <div key={pc.id} className="p-3 bg-[var(--primary-lighter)] rounded-lg text-sm">
                     <p className="font-medium">{pc.title}</p>
-                    {pc.missingClass && <p className="text-[#ED7B2F] text-xs mt-1">• 班级分析未生成</p>}
+                    {pc.missingClass && <p className="text-[var(--warning)] text-xs mt-1">• 班级分析未生成</p>}
                     {pc.missingStudents.length > 0 && (
-                      <p className="text-[#ED7B2F] text-xs mt-1">• 学生分析未生成：{pc.missingStudents.join("、")}</p>
+                      <p className="text-[var(--warning)] text-xs mt-1">• 学生分析未生成：{pc.missingStudents.join("、")}</p>
                     )}
                   </div>
                 ))}
@@ -1376,10 +1525,10 @@ export default function TaskInsightsPage() {
         footer={null}
       >
         <div className="space-y-4">
-          <p className="text-gray-700">
+          <p className="text-[var(--foreground)]">
             确定要删除 <strong>v{pcDeleteVersion?.version}</strong> 版分析吗？
           </p>
-          <p className="text-sm text-red-600">此操作不可撤销！</p>
+          <p className="text-sm text-[var(--danger)]">此操作不可撤销！</p>
           <div className="flex gap-2 justify-end">
             <Button onClick={() => { setPcDeleteVisible(false); setPcDeleteVersion(null); }}>取消</Button>
             <Button theme="danger" loading={pcDeleting} onClick={async () => {
@@ -1430,10 +1579,10 @@ export default function TaskInsightsPage() {
         footer={null}
       >
         <div className="space-y-4">
-          <p className="text-gray-700">
+          <p className="text-[var(--foreground)]">
             确定要删除 <strong>v{taskDeleteVersion?.version}</strong> 版分析吗？
           </p>
-          <p className="text-sm text-red-600">此操作不可撤销！</p>
+          <p className="text-sm text-[var(--danger)]">此操作不可撤销！</p>
           <div className="flex gap-2 justify-end">
             <Button onClick={() => { setTaskDeleteVisible(false); setTaskDeleteVersion(null); }}>取消</Button>
             <Button theme="danger" loading={taskDeleting} onClick={async () => {
@@ -1483,5 +1632,6 @@ export default function TaskInsightsPage() {
       </Dialog>
     </>
   );
-  return <TeacherLayout>{mainContent}</TeacherLayout>;
+  // 生成过程浮层挂在主内容分支即可：loading/错误分支不触发生成
+  return <TeacherLayout>{mainContent}<GenOverlay {...genOverlay} /></TeacherLayout>;
 }

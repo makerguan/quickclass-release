@@ -4,7 +4,7 @@ import { verifyToken } from "@/lib/auth";
 import { createDashScopeClient } from "@/lib/ai";
 import { aiQueue } from "@/lib/ai-queue";
 import { dbWrite } from "@/lib/db-queue";
-import { generateText } from "ai";
+import { generateText, streamText } from "ai";
 import {
   ANALYST_SYSTEM,
   buildTaskClassPrompt,
@@ -15,6 +15,31 @@ import {
   buildClassExplorationStats,
   buildPersonalExplorationStats,
 } from "@/lib/exploration/stats-aggregator";
+
+/** 把多模态消息的 JSON content 解析成可读的文本摘要（用于任务洞察分析） */
+function normalizeMessageContent(content: string): string {
+  if (!content.startsWith("[")) return content;
+  try {
+    const parts = JSON.parse(content) as Array<
+      | { type: "text"; text: string }
+      | { type: "image_url" }
+      | { type: "audio_url" }
+    >;
+    if (!Array.isArray(parts)) return content;
+    const text = parts
+      .filter((p): p is { type: "text"; text: string } => p.type === "text")
+      .map((p) => p.text)
+      .join(" ");
+    const hasImage = parts.some((p) => p.type === "image_url");
+    const hasAudio = parts.some((p) => p.type === "audio_url");
+    const tags: string[] = [];
+    if (hasImage) tags.push("[包含图片]");
+    if (hasAudio) tags.push("[包含语音]");
+    return [text, ...tags].filter(Boolean).join(" ") || content;
+  } catch {
+    return content;
+  }
+}
 
 // ============================================================
 // 批量分析短期缓存：批量分析时多个学生请求会重复查询相同的
@@ -205,7 +230,7 @@ export async function GET(
             id: sp.id,
             title: sp.title,
             analysisPrompt: sp.analysisPrompt,
-            presetConversations: (sp as any).PresetConversation.map((pc: { id: string }) => {
+            presetConversations: (sp as any).PresetConversation.map((pc: { id: string; title: string; analysisPrompt?: string | null }) => {
               const stat = presetConvStats.get(pc.id) || { completedCount: 0, totalMessages: 0 };
               return {
                 id: pc.id,
@@ -384,14 +409,14 @@ export async function POST(
 
     // 检测提示词是否为 HTML 格式
     const isHtmlOutput = effectivePrompt ? (
-      // 显式信号：新 chart 协议数据型模板（确定性判定，优先于关键词嗅探）
+      // 显式信号：HTML 结构/标签或网页型图表库（确定性判定，优先于关键词嗅探）
+      // 注意：不再用 includes('chart') 嗅探——文本型模板里的 ```chart 示例块会被误判为网页型。
       effectivePrompt.includes('图表协议') ||
       effectivePrompt.includes('<!DOCTYPE') ||
       effectivePrompt.includes('<html') ||
       effectivePrompt.includes('<div') ||
       effectivePrompt.includes('echarts') ||
       effectivePrompt.includes('ECharts') ||
-      effectivePrompt.includes('chart') ||
       effectivePrompt.toLowerCase().includes('html')
     ) : false;
 
@@ -448,7 +473,7 @@ export async function POST(
         const activeStudents = new Set(conversations.map((c) => c.userId));
         dialogData = `参与学生：${activeStudents.size}/${students.length}人\n\n`;
         dialogData += conversations.slice(0, 10).map((c) => {
-          const msgs = c.Message.map((m) => `${m.role === "user" ? "学生" : "AI"}：${m.content.substring(0, 200)}`).join("\n");
+          const msgs = c.Message.map((m) => `${m.role === "user" ? "学生" : "AI"}：${normalizeMessageContent(m.content).substring(0, 200)}`).join("\n");
           return `${c.User?.name || "未知"} - ${c.title}:\n${msgs}`;
         }).join("\n\n---\n\n");
       } else {
@@ -468,11 +493,137 @@ export async function POST(
         ]);
         dialogData = `学生：${student?.name || "未知"}\n对话数：${conversations.length}\n\n`;
         dialogData += conversations.map((conv, i) => {
-          const msgs = conv.Message.map((m) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${m.content}`).join("\n");
+          const msgs = conv.Message.map((m) => `${m.role === "user" ? "👤 学生" : "🤖 AI"}：${normalizeMessageContent(m.content)}`).join("\n");
           return `【对话 ${i + 1}】${conv.PresetConversation?.title || conv.title}\n${msgs}`;
         }).join("\n\n---\n\n");
       }
       return NextResponse.json({ prompt: promptText, dialogData });
+    }
+
+    // ------------------------------------------------------------
+    // ?stream=1 流式生成（试点：班级洞察）：复用 isPreview 模式只构建
+    // 提示词（不调 AI），然后 streamText 边生成边转发给前端（浮层实时
+    // 显示"正在生成 X 字"）；全文读完后照旧空内容检查 + cleanInsightContent
+    // + dbWrite 落库。不带 stream=1 的旧路径（下方非流式分支）行为不变。
+    // 注意：流无法像 coalesceGeneration 那样共享给第二个消费者，本分支
+    // 不做请求合并——前端浮层遮罩已挡住同页重复点击；跨标签页并发会
+    // 各生成一个版本，版本机制可容纳。客户端中途断开时消费循环中断，
+    // 落库被跳过，不会写入不完整数据。
+    // ------------------------------------------------------------
+    if (type === "class" && new URL(req.url).searchParams.get("stream") === "1") {
+      const prompt = await generateTaskClassInsightWithTemplate(chatModel, taskNormalized, classId, insightDataSource, effectivePrompt, {
+        insightLevel, classWordLimit: isHtmlOutput ? undefined : classWordLimit, starCount, requireStarRating, isHtmlOutput,
+      }, true);
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            await aiQueue.enqueue(async () => {
+              const { textStream } = streamText({
+                model: chatModel as Parameters<typeof streamText>[0]["model"],
+                system: ANALYST_SYSTEM,
+                messages: [{ role: "user", content: prompt }],
+                // 网关默认输出上限 4096 tokens（实测硬上限 65536）：不传时长报告会被截断
+                maxOutputTokens: 65536,
+              });
+              let full = "";
+              for await (const delta of textStream) {
+                full += delta;
+                controller.enqueue(encoder.encode(delta));
+              }
+              // 空内容检查（与非流式分支同一口径）
+              if (!full.trim()) throw new Error("AI 返回了空内容，请重试");
+              const cleanedContent = cleanInsightContent(full);
+              // 版本查询 + 写入作为一个原子段走 dbWrite 串行队列（与非流式分支同一口径）
+              await dbWrite(async () => {
+                const existingInsight = await prisma.aIInsight.findFirst({
+                  where: { classId, type: insightType, userId: null, scopeId: taskId },
+                  orderBy: { version: "desc" },
+                });
+                const version = (existingInsight?.version || 0) + 1;
+                await prisma.aIInsight.create({
+                  data: {
+                    type: insightType,
+                    classId,
+                    userId: null,
+                    scopeId: taskId,
+                    content: cleanedContent,
+                    version,
+                  },
+                });
+              });
+            });
+            controller.close();
+          } catch (e) {
+            console.error("Generate task insight (stream) error:", e);
+            // 客户端断开（关页/刷新）时流已取消，error() 会再抛——兜住即可；
+            // 前端收到流错误按"生成失败/中断"提示，断开场景全文未落库，无脏数据
+            try { controller.error(e); } catch { /* 流已被客户端取消 */ }
+          }
+        },
+      });
+      return new Response(stream, {
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+      });
+    }
+
+    // 同上的流式出口（第二期：学生洞察）：type=student + ?stream=1。与非流式
+    // 分支同一提示词函数（promptOnly 模式），落库 userId=studentId、scopeId=taskId。
+    // 同样不做请求合并；客户端中途断开时消费循环中断，落库被跳过，不会写入不完整数据。
+    if (type === "student" && new URL(req.url).searchParams.get("stream") === "1") {
+      const prompt = await generateTaskStudentInsightWithTemplate(chatModel, taskNormalized, classId, studentId, insightDataSource, effectivePrompt, {
+        insightLevel, studentWordLimit: isHtmlOutput ? undefined : studentWordLimit, starCount, requireStarRating, isHtmlOutput,
+      }, true);
+      const encoder = new TextEncoder();
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          try {
+            await aiQueue.enqueue(async () => {
+              const { textStream } = streamText({
+                model: chatModel as Parameters<typeof streamText>[0]["model"],
+                system: ANALYST_SYSTEM,
+                messages: [{ role: "user", content: prompt }],
+                // 网关默认输出上限 4096 tokens（实测硬上限 65536）：不传时长报告会被截断
+                maxOutputTokens: 65536,
+              });
+              let full = "";
+              for await (const delta of textStream) {
+                full += delta;
+                controller.enqueue(encoder.encode(delta));
+              }
+              // 空内容检查（与非流式分支同一口径）
+              if (!full.trim()) throw new Error("AI 返回了空内容，请重试");
+              const cleanedContent = cleanInsightContent(full);
+              // 版本查询 + 写入作为一个原子段走 dbWrite 串行队列（与非流式分支同一口径）
+              await dbWrite(async () => {
+                const existingInsight = await prisma.aIInsight.findFirst({
+                  where: { classId, type: insightType, userId: studentId, scopeId: taskId },
+                  orderBy: { version: "desc" },
+                });
+                const version = (existingInsight?.version || 0) + 1;
+                await prisma.aIInsight.create({
+                  data: {
+                    type: insightType,
+                    classId,
+                    userId: studentId,
+                    scopeId: taskId,
+                    content: cleanedContent,
+                    version,
+                  },
+                });
+              });
+            });
+            controller.close();
+          } catch (e) {
+            console.error("Generate task student insight (stream) error:", e);
+            // 客户端断开（关页/刷新）时流已取消，error() 会再抛——兜住即可
+            try { controller.error(e); } catch { /* 流已被客户端取消 */ }
+          }
+        },
+      });
+      return new Response(stream, {
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" },
+      });
     }
 
     // 同目标生成去重：同一（任务+班级+类型+学生）的生成进行中时，
@@ -558,6 +709,7 @@ async function generateTaskClassInsight(
     subProjects: Array<{
       id: string; title: string; objectives: string; requirements: string; analysisPrompt?: string | null;
       presetConversations: Array<{ id: string; title: string; description?: string | null }>;
+      explorationActivities: Array<{ id: string }>;
     }>;
   },
   classId: string,
@@ -909,6 +1061,7 @@ async function generateTaskClassInsightWithTemplate(
     subProjects: Array<{
       id: string; title: string; objectives: string; requirements: string;
       presetConversations: Array<{ id: string; title: string }>;
+      explorationActivities: Array<{ id: string }>;
     }>;
   },
   classId: string,
@@ -1219,8 +1372,9 @@ async function checkTaskMissingItems(
   if (!task) return { hasMissing: false, missingItems: { PresetConversation: [] } };
 
   // 获取所有对话活动（扁平化）
+  // 2026-10-15 修复：Prisma include 返回字段名为 PresetConversation（单数模型名），原 presetConversations 运行时恒为 undefined 会 500
   const allPCs = task.subProjects.flatMap((sp) =>
-    sp.presetConversations.map((pc) => ({ id: pc.id, title: pc.title }))
+    sp.PresetConversation.map((pc) => ({ id: pc.id, title: pc.title }))
   );
   const presetIds = allPCs.map((pc) => pc.id);
 
@@ -1304,7 +1458,6 @@ function buildDialogContents(
     userId: string;
     Message: Array<{ role: string; content: string }>;
     updatedAt: Date;
-    user: { name: string } | null;
     presetConversationId?: string | null;
   }>,
   students: Array<{ id: string; name: string }>,

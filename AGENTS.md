@@ -35,6 +35,7 @@ QuickClass（觉课智能体）—— 面向教师/学生的 AI 课堂平台。W
 |---|---|
 | 技术栈 | Next.js 14（App Router）+ TypeScript + Prisma + SQLite + TDesign |
 | 主仓库 | Gitee `maoyouhui/quickclass-release`（GitHub 有国际镜像仓库） |
+| 私有开发仓库 | Gitee `maoyouhui/quickclass-private`（`dev` 日常推送与个人备份，见 §6） |
 | 开发分支 | `dev`（**所有改动都提到 `dev`**） |
 | 生产分支 | `main`（只由项目负责人从 `dev` 合并，见 `Git协作完整指南.md`） |
 | 权威协作文档 | `Git协作完整指南.md`（给人看的完整版；本文件是给 AI 看的可执行版） |
@@ -165,9 +166,10 @@ curl -s -X PUT -H "Authorization: Bearer $GITEE_TOKEN" \
 ### ③ 同步代码，然后才开始工作
 
 ```bash
-git fetch origin
+# 日常开发的真身在私有仓库 private；origin 是发布仓库，其 dev 仅发布时由 main 反向同步
+git fetch private
 git checkout dev
-git pull origin dev
+git pull private dev
 git status          # 确认工作区干净、无冲突，再开始
 ```
 
@@ -219,7 +221,9 @@ git status          # 确认工作区干净、无冲突，再开始
 
 ## 6. 提交与分支约定
 
-- 一律**提交到 `dev`**（走 PR），**不直接推 `main`**。
+- **项目负责人**：日常改动直接推 `private/dev`（`dev` 的上游已指向私有仓库，裸 `git push` 即可）。
+- **外部合作者**：向 `maoyouhui/quickclass-release` 提 PR，由负责人按 §4 流程合并进 `dev`。
+- **不直接推 `main`**：`main` 只在发布时由项目负责人从 `dev` 合并后推送（见 `私有dev发布流程.md`）。
 - 一个提交一件事；提交信息写清“**做了什么 + 为什么**”。
 - 推送前自查：`git status` 干净、无 `.env` / `*.db` 混入。
 - 提交信息规范见 `.trae/rules/git-commit-message.md`。

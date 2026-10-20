@@ -238,11 +238,11 @@ export default function ProjectBrowseView({
             返回
           </Button>
           <div className="flex items-center gap-2">
-            <h2 className="text-lg font-medium text-[#1A1A1A]">
+            <h2 className="text-lg font-medium text-[var(--foreground)]">
               {data?.submission?.title || "项目浏览"}
             </h2>
             {data?.submission && (
-              <span className="text-xs text-[#63666F]">
+              <span className="text-xs text-[var(--muted)]">
                 {data.submission.category === "TEXT"
                   ? "文本类"
                   : data.submission.category === "IMAGE"
@@ -254,8 +254,8 @@ export default function ProjectBrowseView({
             )}
           </div>
         </div>
-        <span className="text-sm text-[#63666F]">
-          已提交 <b className="text-[#1A1A1A]">{data?.total ?? 0}</b> 项 · 占用{" "}
+        <span className="text-sm text-[var(--muted)]">
+          已提交 <b className="text-[var(--foreground)]">{data?.total ?? 0}</b> 项 · 占用{" "}
           {data ? formatSize(data.totalSize) : "—"}
         </span>
       </div>
@@ -282,7 +282,7 @@ export default function ProjectBrowseView({
         </Button>
         {(data?.classes?.length ?? 0) > 1 && (
           <>
-            <span className="w-px h-6 bg-gray-200 mx-1" />
+            <span className="w-px h-6 bg-[var(--hover-bg)] mx-1" />
             <Button
               size="small"
               variant={classId === "" ? "base" : "outline"}
@@ -312,7 +312,7 @@ export default function ProjectBrowseView({
             ))}
           </>
         )}
-        <span className="w-px h-6 bg-gray-200 mx-1" />
+        <span className="w-px h-6 bg-[var(--hover-bg)] mx-1" />
         {COL_OPTIONS.map((n) => (
           <Button
             key={n}
@@ -328,9 +328,9 @@ export default function ProjectBrowseView({
 
       {/* 内容区 */}
       {loading ? (
-        <p className="text-center text-gray-400 py-10">加载中…</p>
+        <p className="text-center text-[var(--muted-light)] py-10">加载中…</p>
       ) : !data || data.items.length === 0 ? (
-        <p className="text-center text-gray-400 py-10">暂无提交</p>
+        <p className="text-center text-[var(--muted-light)] py-10">暂无提交</p>
       ) : (
         <div
           className="grid gap-3"
@@ -365,7 +365,7 @@ export default function ProjectBrowseView({
             return (
               <div
                 key={it.id}
-                className="bg-white rounded-xl border overflow-hidden hover:shadow-md"
+                className="bg-[var(--card-bg)] rounded-xl border overflow-hidden hover:shadow-md"
               >
                 {/* 图片：缩略图 + 灯箱 */}
                 {isImage && fullUrl ? (
@@ -383,14 +383,14 @@ export default function ProjectBrowseView({
                 ) : isPdf && fullUrl ? (
                   /* PDF：点击图标弹出灯箱预览 */
                   <div
-                    className="w-full aspect-square bg-[#F0F5FF] flex flex-col items-center justify-center gap-2 p-3 cursor-pointer"
+                    className="w-full aspect-square bg-[var(--primary-light)] flex flex-col items-center justify-center gap-2 p-3 cursor-pointer"
                     onClick={() => setLightbox({ url: fullUrl + "&inline=1", isIframe: true })}
                     title="点击预览 PDF"
                   >
                     <span className="text-3xl">{fileInfo.icon}</span>
-                    <span className="text-xs text-gray-500">{fileInfo.label}</span>
-                    <span className="text-[#0052D9] text-sm hover:underline">点击预览</span>
-                    <span className="text-xs text-gray-400 truncate max-w-full">{it.attachment?.originalName}</span>
+                    <span className="text-xs text-[var(--muted)]">{fileInfo.label}</span>
+                    <span className="text-[var(--primary)] text-sm hover:underline">点击预览</span>
+                    <span className="text-xs text-[var(--muted-light)] truncate max-w-full">{it.attachment?.originalName}</span>
                   </div>
                 ) : isVideo && fullUrl ? (
                   /* 视频：原生 video 播放器 */
@@ -406,15 +406,15 @@ export default function ProjectBrowseView({
                   </div>
                 ) : isAudio && fullUrl ? (
                   /* 音频：原生 audio 播放器 */
-                  <div className="w-full aspect-square bg-[#F0F5FF] flex flex-col items-center justify-center gap-2 p-3">
+                  <div className="w-full aspect-square bg-[var(--primary-light)] flex flex-col items-center justify-center gap-2 p-3">
                     <span className="text-3xl">{fileInfo.icon}</span>
-                    <span className="text-xs text-gray-500">{fileInfo.label}</span>
+                    <span className="text-xs text-[var(--muted)]">{fileInfo.label}</span>
                     <audio src={fullUrl} controls className="w-full max-w-[200px]" />
                     <a
                       href={fullUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-[#0052D9] text-xs hover:underline"
+                      className="text-[var(--primary)] text-xs hover:underline"
                     >
                       下载
                     </a>
@@ -422,53 +422,53 @@ export default function ProjectBrowseView({
                 ) : isTxt && fullUrl ? (
                   /* 文本：点击图标弹出灯箱预览 */
                   <div
-                    className="w-full aspect-square bg-[#F0F5FF] flex flex-col items-center justify-center gap-2 p-3 cursor-pointer"
+                    className="w-full aspect-square bg-[var(--primary-light)] flex flex-col items-center justify-center gap-2 p-3 cursor-pointer"
                     onClick={() => setLightbox({ url: fullUrl + "&inline=1", isIframe: true })}
                     title="点击预览文本"
                   >
                     <span className="text-3xl">{fileInfo.icon}</span>
-                    <span className="text-xs text-gray-500">{fileInfo.label}</span>
-                    <span className="text-[#0052D9] text-sm hover:underline">点击预览</span>
-                    <span className="text-xs text-gray-400 truncate max-w-full">{it.attachment?.originalName}</span>
+                    <span className="text-xs text-[var(--muted)]">{fileInfo.label}</span>
+                    <span className="text-[var(--primary)] text-sm hover:underline">点击预览</span>
+                    <span className="text-xs text-[var(--muted-light)] truncate max-w-full">{it.attachment?.originalName}</span>
                   </div>
                 ) : (
                   /* 其他类型：图标 + 下载 */
-                  <div className="w-full aspect-square bg-[#F0F5FF] flex flex-col items-center justify-center gap-2 p-3">
+                  <div className="w-full aspect-square bg-[var(--primary-light)] flex flex-col items-center justify-center gap-2 p-3">
                     {fullUrl ? (
                       <>
                         <span className="text-3xl">{fileInfo.icon}</span>
-                        <span className="text-xs text-gray-500">{fileInfo.label}</span>
+                        <span className="text-xs text-[var(--muted)]">{fileInfo.label}</span>
                         <a
                           href={fullUrl}
                           target="_blank"
                           rel="noreferrer"
-                          className="text-[#0052D9] text-sm hover:underline"
+                          className="text-[var(--primary)] text-sm hover:underline"
                         >
                           下载
                         </a>
-                        <span className="text-xs text-gray-400 truncate max-w-full">{it.attachment?.originalName}</span>
+                        <span className="text-xs text-[var(--muted-light)] truncate max-w-full">{it.attachment?.originalName}</span>
                       </>
                     ) : (
                       <>
                         <span className="text-3xl">{fileInfo.icon}</span>
-                        <span className="text-gray-400 text-sm">无附件</span>
+                        <span className="text-[var(--muted-light)] text-sm">无附件</span>
                       </>
                     )}
                   </div>
                 )}
                 <div className="p-2.5">
-                  <p className="text-sm font-medium text-[#1A1A1A] truncate">{it.title}</p>
+                  <p className="text-sm font-medium text-[var(--foreground)] truncate">{it.title}</p>
                   <div className="flex items-center justify-between mt-1">
                     <div className="flex items-center gap-1 min-w-0">
-                      <span className="text-xs text-[#63666F] truncate">{it.studentName}</span>
+                      <span className="text-xs text-[var(--muted)] truncate">{it.studentName}</span>
                       {(data?.classes?.length ?? 0) > 1 && it.className && (
-                        <span className="text-[10px] text-gray-400 shrink-0">{it.className}</span>
+                        <span className="text-[10px] text-[var(--muted-light)] shrink-0">{it.className}</span>
                       )}
                       <button
                         className={`shrink-0 w-5 h-5 flex items-center justify-center rounded text-xs leading-none transition-colors ${
                           it.pinned
-                            ? "text-red-500 bg-red-50"
-                            : "text-gray-300 hover:text-red-400 hover:bg-red-50/50"
+                            ? "text-[var(--danger)] bg-[var(--danger-light)]"
+                            : "text-[var(--muted-light)] hover:text-[var(--danger)] hover:bg-[var(--danger-light)]"
                         }`}
                         title={it.pinned ? "已置顶（点击取消置顶）" : "置顶（排到最前）"}
                         onClick={(e) => { e.stopPropagation(); togglePin(it.id, !!it.pinned); }}
@@ -478,8 +478,8 @@ export default function ProjectBrowseView({
                       <button
                         className={`shrink-0 w-5 h-5 flex items-center justify-center rounded text-xs leading-none transition-colors ${
                           it.hidden
-                            ? "text-red-500 bg-red-50"
-                            : "text-gray-300 hover:text-red-400 hover:bg-red-50/50"
+                            ? "text-[var(--danger)] bg-[var(--danger-light)]"
+                            : "text-[var(--muted-light)] hover:text-[var(--danger)] hover:bg-[var(--danger-light)]"
                         }`}
                         title={it.hidden ? "已下架（点击恢复显示）" : "下架（仅学生本人可见）"}
                         onClick={(e) => { e.stopPropagation(); toggleHide(it.id, !!it.hidden); }}
@@ -487,7 +487,7 @@ export default function ProjectBrowseView({
                         <svg viewBox="0 0 12 12" className="w-3 h-3 fill-current"><path d="M6 10L10 4H8V1H4v3H2z"/></svg>
                       </button>
                       <button
-                        className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-xs leading-none transition-colors text-gray-300 hover:text-red-400 hover:bg-red-50/50"
+                        className="shrink-0 w-5 h-5 flex items-center justify-center rounded text-xs leading-none transition-colors text-[var(--muted-light)] hover:text-[var(--danger)] hover:bg-[var(--danger-light)]"
                         title="删除该作品（不可恢复）"
                         onClick={(e) => { e.stopPropagation(); deleteProject(it.id, it.studentName, it.title); }}
                       >
@@ -497,7 +497,7 @@ export default function ProjectBrowseView({
                     <div className="flex items-center gap-1 shrink-0">
                       <button
                         className={`text-xs shrink-0 transition-colors ${
-                          it.likedByMe ? "text-red-500" : "text-gray-300 hover:text-red-400"
+                          it.likedByMe ? "text-[var(--danger)]" : "text-[var(--muted-light)] hover:text-[var(--danger)]"
                         }`}
                         title={it.likedByMe ? "取消点赞" : "点赞"}
                         onClick={(e) => { e.stopPropagation(); toggleLike(it.id, !!it.likedByMe); }}
@@ -525,7 +525,7 @@ export default function ProjectBrowseView({
           {lightbox.isIframe ? (
             <iframe
               src={lightbox.url}
-              className="w-[90vw] h-[90vh] rounded-lg shadow-2xl bg-white"
+              className="w-[90vw] h-[90vh] rounded-lg shadow-2xl bg-[var(--card-bg)]"
               onClick={(e) => e.stopPropagation()}
             />
           ) : (
@@ -559,7 +559,7 @@ export default function ProjectBrowseView({
           >
             上一页
           </Button>
-          <span className="text-sm text-[#63666F]">
+          <span className="text-sm text-[var(--muted)]">
             {data.page} / {data.totalPages}
           </span>
           <Button

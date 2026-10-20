@@ -178,6 +178,22 @@ export async function GET(
       select: { classId: true },
     });
     const allClassIds = taskAssignments.map(a => a.classId);
+    // 各班级提交数（基于全量提交统计）。
+    // ⚠️ GOTCHA：教师可能带多个班，默认「当前班级」可能无提交，导致前端误显示 0 提交。
+    //   此字段供前端默认选中「有提交的班级」（见 fetchData / openAnalysisModal）。
+    // 🔗 RELATED: src/app/teacher/tasks/[taskId]/exploration/[explorationId]/page.tsx (fetchData)
+    //             src/app/teacher/tasks/page.tsx (openAnalysisModal)
+    // ⛔ DO NOT REMOVE: 移除会导致多班教师点「分析」看不到任何提交数据。
+    const allSubmissions = exploration.ExplorationSubmission;
+    const subUserIds = [...new Set(allSubmissions.map(s => s.studentId))];
+    const subUsers = subUserIds.length > 0
+      ? await prisma.user.findMany({ where: { id: { in: subUserIds } }, select: { id: true, classId: true } })
+      : [];
+    const subUserClassMap = new Map(subUsers.map(u => [u.id, u.classId]));
+    const classSubmittedCounts: Record<string, number> = {};
+    for (const cid of allClassIds) {
+      classSubmittedCounts[cid] = allSubmissions.filter(s => subUserClassMap.get(s.studentId) === cid).length;
+    }
     // 如果指定了班级，过滤提交记录
     let filterStudentIds: string[] = [];
     if (filterClassId) {
@@ -187,7 +203,7 @@ export async function GET(
       });
       filterStudentIds = students.map(s => s.id);
     }
-    const submissions = filterClassId ? exploration.ExplorationSubmission.filter(s => filterStudentIds.includes(s.studentId)) : exploration.ExplorationSubmission;
+    const submissions = filterClassId ? allSubmissions.filter(s => filterStudentIds.includes(s.studentId)) : allSubmissions;
     const submittedCount = submissions.length;
 
     const classStudentsCount = filterClassId
@@ -289,6 +305,7 @@ export async function GET(
       submittedCount,
       totalStudents: classStudentsCount || submittedCount,
       classIds: allClassIds,
+      classSubmittedCounts,
       averageScore,
       scoreDistribution,
       avgTimeSpent,

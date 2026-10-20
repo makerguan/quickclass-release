@@ -39,6 +39,10 @@ function loadKatexAssets(): { js: string; css: string; available: boolean } {
 // 模块加载时执行一次（Next.js 路由在 Node.js 环境中运行）
 const katexAssets = loadKatexAssets();
 
+// AI伴学机器人图标（内联 SVG，注入到 iframe 使用）
+// 与 ExplorationPanel.tsx 保持一致：圆头、大眼睛、微笑的可爱风格，更适合学生认知。
+const AI_COMPANION_ROBOT_SVG = `<svg viewBox="0 0 24 24" width="1em" height="1em" fill="currentColor" aria-hidden="true"><path d="M12 2C12.55 2 13 2.45 13 3V4.07C16.39 4.55 19.04 7.06 19.82 10.36C20.21 10.49 20.5 10.85 20.5 11.29V13.71C20.5 14.26 20.05 14.71 19.5 14.71H18.97C18.46 18.11 15.53 20.71 12 20.71C8.47 20.71 5.54 18.11 5.03 14.71H4.5C3.95 14.71 3.5 14.26 3.5 13.71V11.29C3.5 10.85 3.79 10.49 4.18 10.36C4.96 7.06 7.61 4.55 11 4.07V3C11 2.45 11.45 2 12 2Z"/><circle cx="8.8" cy="11" r="1.6" fill="white"/><circle cx="15.2" cy="11" r="1.6" fill="white"/><circle cx="8.8" cy="11" r="0.7" fill="currentColor"/><circle cx="15.2" cy="11" r="0.7" fill="currentColor"/><path d="M9.2 14.3C9.2 14.3 10.4 15.6 12 15.6C13.6 15.6 14.8 14.3 14.8 14.3" stroke="white" stroke-width="1.2" stroke-linecap="round" fill="none"/></svg>`;
+
 // （历史机制退役 2026-09）曾用 AI_COMPANION_VERSION 版本号识别库里 HTML 的伴学注入新旧，
 // 读取时「版本一致直接放行、不一致剥旧注新」。现读取路径（renderExplorationHtml）入口
 // 无条件 purify 后永远注入当前版，不存在「放行库里旧注入」的路径，版本号随之退役。
@@ -57,17 +61,17 @@ export const aiCompanionCSS = `
 #ai-companion-root #ai-companion-trigger {
   position: fixed; bottom: 30px; right: 80px;
   width: 52px; height: 52px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #f97316 0%, #fb923c 100%);
   color: white; border: none; border-radius: 50%;
   cursor: pointer; z-index: 10001;
-  box-shadow: 0 4px 15px rgba(102,126,234,0.4);
+  box-shadow: 0 4px 15px rgba(249,115,22,0.4);
   display: flex; align-items: center; justify-content: center;
   font-size: 22px; transition: transform 0.2s, box-shadow 0.2s;
 }
-#ai-companion-root #ai-companion-trigger:hover { transform: scale(1.1); box-shadow: 0 6px 20px rgba(102,126,234,0.6); }
+#ai-companion-root #ai-companion-trigger:hover { transform: scale(1.1); box-shadow: 0 6px 20px rgba(249,115,22,0.6); }
 #ai-companion-root #ai-companion-trigger .pulse {
   position: absolute; width: 100%; height: 100%; border-radius: 50%;
-  background: rgba(102,126,234,0.3); animation: aiPulse 2s infinite;
+  background: rgba(249,115,22,0.3); animation: aiPulse 2s infinite;
 }
 @keyframes aiPulse { 0%{transform:scale(1);opacity:1} 100%{transform:scale(1.8);opacity:0} }
 
@@ -84,7 +88,7 @@ export const aiCompanionCSS = `
 
 /* 头部 */
 #ai-companion-root #ac-header {
-  padding: 14px 16px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 14px 16px; background: linear-gradient(135deg, #f97316 0%, #fb923c 100%);
   color: white; display: flex; align-items: center; justify-content: space-between;
 }
 #ai-companion-root #ac-header .title { font-size: 14px; font-weight: 600; }
@@ -102,7 +106,7 @@ export const aiCompanionCSS = `
 #ai-companion-root #ac-messages::-webkit-scrollbar-thumb { background: #d1d5db; border-radius: 2px; }
 
 #ai-companion-root .ac-msg { max-width: 85%; padding: 10px 14px; border-radius: 12px; font-size: 13px; line-height: 1.6; word-break: break-word; white-space: pre-wrap; }
-#ai-companion-root .ac-msg.user { align-self: flex-end; background: #667eea; color: white; border-bottom-right-radius: 4px; }
+#ai-companion-root .ac-msg.user { align-self: flex-end; background: #f97316; color: white; border-bottom-right-radius: 4px; }
 #ai-companion-root .ac-msg.assistant { align-self: flex-start; background: white; color: #1f2937; border-bottom-left-radius: 4px; border: 1px solid #e5e7eb; }
 #ai-companion-root .ac-msg.assistant code { background: #f3f4f6; padding: 1px 4px; border-radius: 3px; font-size: 12px; }
 #ai-companion-root .ac-msg.error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
@@ -119,19 +123,23 @@ export const aiCompanionCSS = `
   resize: none; min-height: 36px; max-height: 80px;
   font-family: inherit; line-height: 1.4;
 }
-#ai-companion-root #ac-input:focus { border-color: #667eea; }
+#ai-companion-root #ac-input:focus { border-color: #f97316; }
 #ai-companion-root #ac-send {
-  width: 36px; height: 36px; border-radius: 50%;
-  background: #667eea; color: white; border: none;
+  width: 36px; height: 36px; min-width: 36px; min-height: 36px;
+  max-width: 36px; max-height: 36px;
+  padding: 0; border: none; border-radius: 50%;
+  box-sizing: border-box; aspect-ratio: 1;
+  overflow: hidden; clip-path: circle(50%);
+  background: #f97316; color: white;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
-  font-size: 16px; flex-shrink: 0; transition: background 0.2s;
+  flex-shrink: 0; transition: background 0.2s;
 }
-#ai-companion-root #ac-send:hover:not(:disabled) { background: #5568d3; }
+#ai-companion-root #ac-send:hover:not(:disabled) { background: #ea580c; }
 #ai-companion-root #ac-send:disabled { background: #d1d5db; cursor: not-allowed; }
 
 /* 欢迎提示 */
 #ai-companion-root #ac-welcome { text-align: center; padding: 30px 20px; color: #9ca3af; }
-#ai-companion-root #ac-welcome .icon { font-size: 32px; margin-bottom: 8px; }
+#ai-companion-root #ac-welcome .icon { font-size: 32px; margin-bottom: 8px; color: #f97316; }
 #ai-companion-root #ac-welcome .text { font-size: 13px; line-height: 1.8; }
 
 /* 打字指示器 */
@@ -151,7 +159,7 @@ export const aiCompanionCSS = `
 #ai-companion-root .ac-msg pre code { background: transparent; padding: 0; color: inherit; font-size: inherit; }
 #ai-companion-root .ac-msg ul, #ai-companion-root .ac-msg ol { margin: 4px 0 4px 18px; padding: 0; }
 #ai-companion-root .ac-msg li { margin: 2px 0; }
-#ai-companion-root .ac-msg a { color: #667eea; text-decoration: underline; }
+#ai-companion-root .ac-msg a { color: #f97316; text-decoration: underline; }
 #ai-companion-root .ac-msg.assistant img { display: block; max-width: 100%; max-height: 260px; border-radius: 8px; margin: 6px 0; border: 1px solid #e5e7eb; cursor: zoom-in; }
 
 /* 公式容器样式 */
@@ -168,8 +176,8 @@ export const aiCompanionCSS = `
   cursor: pointer; flex-shrink: 0;
   transition: background 0.15s, color 0.15s;
 }
-#ai-companion-root .ac-play:hover { background: #e8ecf3; color: #667eea; }
-#ai-companion-root .ac-play.playing { background: rgba(102,126,234,0.15); color: #667eea; }
+#ai-companion-root .ac-play:hover { background: #e8ecf3; color: #f97316; }
+#ai-companion-root .ac-play.playing { background: rgba(249,115,22,0.15); color: #f97316; }
 #ai-companion-root .ac-play.loading { animation: acBlink 0.8s ease-in-out infinite; cursor: default; }
 @keyframes acBlink { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
 #ai-companion-root .ac-speak-err { display: none; font-size: 11px; color: #9ca3af; }
@@ -188,6 +196,14 @@ export const aiCompanionCSS = `
 #ai-companion-root #ai-companion-panel.open { display: flex !important; }
 #ai-companion-root #ac-messages { display: flex !important; flex-direction: column !important; flex: 1 !important; overflow-y: auto !important; }
 #ai-companion-root #ac-input-area { display: flex !important; }
+#ai-companion-root #ac-send {
+  width: 36px !important; height: 36px !important;
+  min-width: 36px !important; min-height: 36px !important;
+  max-width: 36px !important; max-height: 36px !important;
+  padding: 0 !important; border-radius: 50% !important;
+  aspect-ratio: 1 !important; flex-shrink: 0 !important;
+  overflow: hidden !important; clip-path: circle(50%) !important;
+}
 `.trim();
 
 /**
@@ -198,13 +214,13 @@ export const aiCompanionHTML = `
 <!-- AI伴学浮动按钮 -->
 <button id="ai-companion-trigger" title="AI伴学助手" style="display:flex">
   <span class="pulse"></span>
-  🤖
+  ${AI_COMPANION_ROBOT_SVG}
 </button>
 
 <!-- AI伴学对话框 -->
 <div id="ai-companion-panel" role="dialog" aria-label="AI伴学助手">
   <div id="ac-header">
-    <span class="title">🤖 AI伴学助手</span>
+    <span class="title">${AI_COMPANION_ROBOT_SVG} AI伴学助手</span>
     <div class="actions">
       <button id="ac-clear" title="清空对话" aria-label="清空对话">🗑</button>
       <button id="ac-close" title="关闭" aria-label="关闭">✕</button>
@@ -212,13 +228,15 @@ export const aiCompanionHTML = `
   </div>
   <div id="ac-messages">
     <div id="ac-welcome">
-      <div class="icon">🤖</div>
+      <div class="icon">${AI_COMPANION_ROBOT_SVG}</div>
       <div class="text">你好！我是你的AI学习伙伴<br/>遇到问题随时问我哦</div>
     </div>
   </div>
   <div id="ac-input-area">
     <textarea id="ac-input" rows="1" placeholder="输入你的问题..." maxlength="500"></textarea>
-    <button id="ac-send" aria-label="发送">➤</button>
+    <button id="ac-send" aria-label="发送" style="width:36px;height:36px;padding:0;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+      <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor" aria-hidden="true"><path d="M3 12l18-9v18L3 12z"/></svg>
+    </button>
   </div>
 </div>
 </div>

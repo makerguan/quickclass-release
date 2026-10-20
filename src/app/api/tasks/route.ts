@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { verifyToken } from "@/lib/auth";
+import { applyUnifiedOrder } from "@/lib/activities/unified-order";
 
 // GET: 获取教师的课堂列表
 export async function GET(req: NextRequest) {
@@ -297,6 +298,16 @@ export async function POST(req: NextRequest) {
         assignments: true,
       },
     });
+
+    // 📐 CONTRACT: 导入重建后对每个学习活动做跨 4 表兜底重排（对话→探究→项目→作业 分组连续）。
+    // 上方嵌套 create 用 pcIndex/qaIndex 类型内下标（各表都从 0 计），4 表并存时 sortOrder 并列冲突，
+    // 统一排序渲染顺序会不稳定；applyUnifiedOrder 把它们重排进同一数值空间。
+    // 🔗 RELATED: src/lib/activities/unified-order.ts、tasks/[taskId]/route.ts（编辑重建同款兜底）
+    for (const sp of task.subProjects) {
+      await prisma.$transaction(async (tx) => {
+        await applyUnifiedOrder(tx, sp.id, null);
+      });
+    }
 
     return NextResponse.json(task);
   } catch (error) {

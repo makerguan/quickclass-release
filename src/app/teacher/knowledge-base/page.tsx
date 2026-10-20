@@ -206,7 +206,7 @@ export default function KnowledgeBasePage() {
     ? list.filter(
         (kb) =>
           kb.name.toLowerCase().includes(search.toLowerCase()) ||
-          (kb.fileName && kb.fileName.toLowerCase().includes(search.toLowerCase()))
+          (kb.filename && kb.filename.toLowerCase().includes(search.toLowerCase()))
       )
     : list;
 
@@ -219,7 +219,7 @@ export default function KnowledgeBasePage() {
       <div className="space-y-6 pb-8">
         <div className="flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-semibold text-[#1A1A1A]">📚 知识库管理</h2>
+            <h2 className="text-xl font-semibold text-[var(--title)]">📚 知识库管理</h2>
 
           </div>
           <div className="flex items-center gap-2">
@@ -237,10 +237,10 @@ export default function KnowledgeBasePage() {
         </div>
 
         {loading ? (
-          <div className="text-center text-gray-400 py-12">加载中...</div>
+          <div className="text-center text-[var(--muted-light)] py-12">加载中...</div>
         ) : list.length === 0 ? (
           <Card>
-            <div className="text-center py-12 text-gray-400">
+            <div className="text-center py-12 text-[var(--muted-light)]">
               <p className="text-lg mb-2">📚</p>
               <p>暂无知识库</p>
               <p className="text-sm mt-2">点击「新建知识库」上传您的第一个文档</p>
@@ -256,7 +256,7 @@ export default function KnowledgeBasePage() {
                   <div className="flex items-center justify-between">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <h3 className="font-medium text-[#1A1A1A] truncate">{kb.name}</h3>
+                        <h3 className="font-medium text-[var(--foreground)] truncate">{kb.name}</h3>
                         <Tag
                           theme={kb.enabled ? "success" : "default"}
                           variant="light"
@@ -274,7 +274,7 @@ export default function KnowledgeBasePage() {
                           </Tag>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 text-xs text-[#63666F] mt-1">
+                      <div className="flex items-center gap-3 text-xs text-[var(--muted)] mt-1">
                         {kb.filename && (
                           <span className="flex items-center gap-1">
                             <FileIcon /> {kb.filename}
@@ -290,16 +290,16 @@ export default function KnowledgeBasePage() {
                           style={{ width: 120 }}
                           label={false}
                         />
-                        <span className={`text-xs ${isOverLimit ? "text-red-500 font-medium" : "text-[#63666F]"}`}>
+                        <span className={`text-xs ${isOverLimit ? "text-[var(--danger)] font-medium" : "text-[var(--muted)]"}`}>
                           {kb.content.length.toLocaleString()} / {MAX_CONTENT_LENGTH.toLocaleString()} 字符
                           {isOverLimit && " ⚠ 超出限制"}
                         </span>
                       </div>
-                      <p className="text-xs text-gray-400 mt-0.5">
+                      <p className="text-xs text-[var(--muted-light)] mt-0.5">
                         创建于 {new Date(kb.createdAt).toLocaleDateString("zh-CN")}
                       </p>
                       {kb.referencedBy && kb.referencedBy.length > 0 && (
-                        <div className="mt-1.5 flex items-start gap-1 text-xs text-[#63666F]">
+                        <div className="mt-1.5 flex items-start gap-1 text-xs text-[var(--muted)]">
                           <Tag theme="warning" variant="light" size="small">
                             被 {kb.referencedBy.length} 个课堂引用
                           </Tag>
@@ -353,14 +353,14 @@ export default function KnowledgeBasePage() {
         )}
 
         {/* 使用说明 */}
-        <div className="p-3 bg-[#F0F7FF] rounded-lg text-xs text-[#63666F]">
-          <p><span className="font-medium text-[#0052D9]">📖 使用说明：</span>点击「新建知识库」上传 .md/.txt 文档（单个课堂引用不超过 50,000 字符），在课堂管理中引用已启用的知识库</p>
+        <div className="p-3 bg-[var(--primary-light)] rounded-lg text-xs text-[var(--muted)]">
+          <p><span className="font-medium text-[var(--primary)]">📖 使用说明：</span>点击「新建知识库」上传 .md/.txt 文档（单个课堂引用不超过 50,000 字符），在课堂管理中引用已启用的知识库</p>
         </div>
 
         {/* 分页 */}
         {list.length > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm text-[#63666F]">
+            <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
               <span>每页</span>
               <InputNumber
                 value={pageSize}
@@ -381,6 +381,7 @@ export default function KnowledgeBasePage() {
               pageSize={pageSize}
               current={safePage}
               showJumper
+              showPageSize={false}
               onChange={(pageInfo) => setCurrentPage(pageInfo.current)}
             />
           </div>
@@ -402,7 +403,7 @@ export default function KnowledgeBasePage() {
               placeholder="知识库名称 *"
             />
             <div>
-              <div className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-[#0052D9] transition-colors cursor-pointer"
+              <div className="border-2 border-dashed border-[var(--card-border)] rounded-lg p-6 text-center hover:border-[var(--primary)] transition-colors cursor-pointer"
                 onClick={() => fileInputRef.current?.click()}
               >
                 <input
@@ -414,27 +415,27 @@ export default function KnowledgeBasePage() {
                 />
                 {formFile ? (
                   <div>
-                    <FileIcon className="text-[#0052D9] text-2xl" />
-                    <p className="text-sm text-[#0052D9] mt-1">{formFile.name}</p>
-                    <p className="text-xs text-gray-400 mt-0.5">{formatFileSize(formFile.size)}</p>
+                    <FileIcon className="text-[var(--primary)] text-2xl" />
+                    <p className="text-sm text-[var(--primary)] mt-1">{formFile.name}</p>
+                    <p className="text-xs text-[var(--muted-light)] mt-0.5">{formatFileSize(formFile.size)}</p>
                   </div>
                 ) : editing ? (
                   <div>
-                    <FileIcon className="text-gray-400 text-2xl" />
-                    <p className="text-sm text-gray-500 mt-1">
+                    <FileIcon className="text-[var(--muted-light)] text-2xl" />
+                    <p className="text-sm text-[var(--muted)] mt-1">
                       当前文件：{editing.filename || "未知"}
                     </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
+                    <p className="text-xs text-[var(--muted-light)] mt-0.5">
                       点击上传新文件替换（可选）
                     </p>
                   </div>
                 ) : (
                   <div>
-                    <FileIcon className="text-gray-400 text-2xl" />
-                    <p className="text-sm text-gray-500 mt-1">
+                    <FileIcon className="text-[var(--muted-light)] text-2xl" />
+                    <p className="text-sm text-[var(--muted)] mt-1">
                       点击选择文件
                     </p>
-                    <p className="text-xs text-gray-400 mt-0.5">
+                    <p className="text-xs text-[var(--muted-light)] mt-0.5">
                       支持 .md、.markdown、.txt 格式
                     </p>
                   </div>
@@ -451,13 +452,13 @@ export default function KnowledgeBasePage() {
                   style={{ width: 120 }}
                   label={false}
                 />
-                <span className={`text-xs ${formContentLength > MAX_CONTENT_LENGTH ? "text-red-500 font-medium" : "text-[#63666F]"}`}>
+                <span className={`text-xs ${formContentLength > MAX_CONTENT_LENGTH ? "text-[var(--danger)] font-medium" : "text-[var(--muted)]"}`}>
                   {formContentLength.toLocaleString()} / {MAX_CONTENT_LENGTH.toLocaleString()} 字符
                   {formContentLength > MAX_CONTENT_LENGTH && " ⚠ 超出限制"}
                 </span>
               </div>
             )}
-            <div className="flex gap-2 justify-end pt-2 border-t border-gray-100">
+            <div className="flex gap-2 justify-end pt-2 border-t border-[var(--card-border)]">
               <Button onClick={() => { setFormVisible(false); resetForm(); }}>取消</Button>
               <Button
                 theme="primary"
@@ -482,7 +483,7 @@ export default function KnowledgeBasePage() {
         >
           {previewKb && (
             <div>
-              <div className="flex items-center gap-3 text-xs text-[#63666F] mb-3 pb-3 border-b border-gray-100">
+              <div className="flex items-center gap-3 text-xs text-[var(--muted)] mb-3 pb-3 border-b border-[var(--card-border)]">
                 {previewKb.filename && (
                   <span className="flex items-center gap-1">
                     <FileIcon /> {previewKb.filename}
@@ -491,7 +492,7 @@ export default function KnowledgeBasePage() {
                 <span>{previewKb.content.length.toLocaleString()} 字符</span>
               </div>
               <div className="max-h-[60vh] overflow-y-auto">
-                <div className="break-words text-sm text-[#1A1A1A] leading-relaxed font-sans whitespace-pre-line prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all">
+                <div className="break-words text-sm text-[var(--foreground)] leading-relaxed font-sans whitespace-pre-line prose prose-sm prose-gray max-w-none [&_pre]:overflow-x-auto [&_code]:break-all">
                   <Markdown>{previewKb.content}</Markdown>
                 </div>
               </div>
@@ -511,24 +512,24 @@ export default function KnowledgeBasePage() {
           destroyOnClose
         >
           {deleteTarget && (
-            <div className="space-y-3 text-sm text-[#1A1A1A]">
+            <div className="space-y-3 text-sm text-[var(--foreground)]">
               <p>
                 确定删除知识库「<span className="font-medium">{deleteTarget.name}</span>」吗？此操作不可恢复。
               </p>
               {deleteTarget.referencedBy && deleteTarget.referencedBy.length > 0 ? (
-                <div className="p-3 bg-[#FFF3E8] border border-[#FFC69C] rounded-lg">
-                  <p className="text-[#D25F00] font-medium mb-1">
+                <div className="p-3 bg-[var(--warning-light)] border border-[var(--warning)] rounded-lg">
+                  <p className="text-[var(--warning)] font-medium mb-1">
                     ⚠ 该知识库正被以下 {deleteTarget.referencedBy.length} 个课堂引用：
                   </p>
-                  <p className="text-[#63666F]">
+                  <p className="text-[var(--muted)]">
                     {deleteTarget.referencedBy.map((t) => t.title).join("、")}
                   </p>
-                  <p className="text-[#63666F] mt-1">
+                  <p className="text-[var(--muted)] mt-1">
                     删除后这些课堂将无法正常使用该知识库（课堂配置不会自动清理）。
                   </p>
                 </div>
               ) : (
-                <p className="text-[#63666F]">该知识库当前未被任何课堂引用。</p>
+                <p className="text-[var(--muted)]">该知识库当前未被任何课堂引用。</p>
               )}
             </div>
           )}

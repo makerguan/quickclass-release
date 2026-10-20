@@ -320,7 +320,7 @@ export default function ImageLibraryPage() {
       <div className="space-y-6 pb-8">
         <div className="flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-semibold text-[#1A1A1A]">🖼️ 图片仓库管理</h2>
+            <h2 className="text-xl font-semibold text-[var(--title)]">🖼️ 图片仓库管理</h2>
           </div>
           <div className="flex items-center gap-2">
             <Input
@@ -337,10 +337,10 @@ export default function ImageLibraryPage() {
         </div>
 
         {loading ? (
-          <div className="text-center text-gray-400 py-12">加载中...</div>
+          <div className="text-center text-[var(--muted-light)] py-12">加载中...</div>
         ) : list.length === 0 ? (
           <Card>
-            <div className="text-center py-12 text-gray-400">
+            <div className="text-center py-12 text-[var(--muted-light)]">
               <p className="text-lg mb-2">🖼️</p>
               <p>暂无图片组</p>
               <p className="text-sm mt-2">点击「新建图片组」创建您的第一个图片组，上传教学图片</p>
@@ -353,7 +353,7 @@ export default function ImageLibraryPage() {
                 <div className="flex items-center justify-between">
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <h3 className="font-medium text-[#1A1A1A] truncate">{g.name}</h3>
+                      <h3 className="font-medium text-[var(--foreground)] truncate">{g.name}</h3>
                       <Tag
                         theme={g.enabled ? "success" : "default"}
                         variant="light"
@@ -366,7 +366,7 @@ export default function ImageLibraryPage() {
                       </Tag>
                     </div>
                     {g.description && (
-                      <p className="text-xs text-[#63666F] mt-1 truncate">{g.description}</p>
+                      <p className="text-xs text-[var(--muted)] mt-1 truncate">{g.description}</p>
                     )}
                     {/* 缩略图预览（最多 6 张） */}
                     {g.images.length > 0 && (
@@ -378,22 +378,22 @@ export default function ImageLibraryPage() {
                             src={thumbUrl(img.id)}
                             alt={img.description}
                             title="点击放大预览"
-                            className="w-12 h-12 object-cover rounded border border-gray-200 cursor-zoom-in hover:opacity-75 transition-opacity"
+                            className="w-12 h-12 object-cover rounded border border-[var(--card-border)] cursor-zoom-in hover:opacity-75 transition-opacity"
                             onClick={() => setPreviewImage(img)}
                           />
                         ))}
                         {g.images.length > 6 && (
-                          <span className="w-12 h-12 rounded border border-dashed border-gray-300 flex items-center justify-center text-xs text-gray-400">
+                          <span className="w-12 h-12 rounded border border-dashed border-[var(--card-border)] flex items-center justify-center text-xs text-[var(--muted-light)]">
                             +{g.images.length - 6}
                           </span>
                         )}
                       </div>
                     )}
-                    <p className="text-xs text-gray-400 mt-0.5">
+                    <p className="text-xs text-[var(--muted-light)] mt-0.5">
                       创建于 {new Date(g.createdAt).toLocaleDateString("zh-CN")}
                     </p>
                     {g.referencedBy && g.referencedBy.length > 0 && (
-                      <div className="mt-1.5 flex items-start gap-1 text-xs text-[#63666F]">
+                      <div className="mt-1.5 flex items-start gap-1 text-xs text-[var(--muted)]">
                         <Tag theme="warning" variant="light" size="small">
                           被 {g.referencedBy.length} 个课堂引用
                         </Tag>
@@ -446,9 +446,9 @@ export default function ImageLibraryPage() {
         )}
 
         {/* 使用说明 */}
-        <div className="p-3 bg-[#F0F7FF] rounded-lg text-xs text-[#63666F]">
+        <div className="p-3 bg-[var(--primary-light)] rounded-lg text-xs text-[var(--muted)]">
           <p>
-            <span className="font-medium text-[#0052D9]">📖 使用说明：</span>
+            <span className="font-medium text-[var(--primary)]">📖 使用说明：</span>
             新建图片组并上传教学图片（支持 jpg/png/gif/webp，单张不超过 10MB），上传时 AI
             自动生成图片描述（可在组内修改）；在课堂管理中引用已启用的图片组后，课堂对话中的
             AI 会根据学生问题智能发送组内图片。
@@ -458,7 +458,7 @@ export default function ImageLibraryPage() {
         {/* 分页 */}
         {list.length > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm text-[#63666F]">
+            <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
               <span>每页</span>
               <InputNumber
                 value={pageSize}
@@ -479,6 +479,7 @@ export default function ImageLibraryPage() {
               pageSize={pageSize}
               current={safePage}
               showJumper
+              showPageSize={false}
               onChange={(pageInfo) => setCurrentPage(pageInfo.current)}
             />
           </div>
@@ -509,7 +510,7 @@ export default function ImageLibraryPage() {
               autosize={{ minRows: 2, maxRows: 4 }}
               maxlength={100}
             />
-            <div className="flex gap-2 justify-end pt-2 border-t border-gray-100">
+            <div className="flex gap-2 justify-end pt-2 border-t border-[var(--card-border)]">
               <Button
                 onClick={() => {
                   setFormVisible(false);
@@ -537,7 +538,7 @@ export default function ImageLibraryPage() {
           {detailGroup && (
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <p className="text-xs text-[#63666F]">
+                <p className="text-xs text-[var(--muted)]">
                   共 {detailGroup.images.length} 张图片。描述是 AI 判断何时发图的依据，请确保准确。
                 </p>
                 <div>
@@ -561,13 +562,13 @@ export default function ImageLibraryPage() {
                 </div>
               </div>
               {uploading && (
-                <div className="flex items-center gap-2 text-xs text-[#0052D9]">
+                <div className="flex items-center gap-2 text-xs text-[var(--primary)]">
                   <Loading size="small" />
                   正在上传并生成描述（多模态模型自动识别图片内容）...
                 </div>
               )}
               {detailGroup.images.length === 0 ? (
-                <div className="text-center py-10 text-gray-400">
+                <div className="text-center py-10 text-[var(--muted-light)]">
                   <ImageIcon className="text-3xl" />
                   <p className="text-sm mt-2">暂无图片，点击「上传图片」添加</p>
                 </div>
@@ -579,7 +580,7 @@ export default function ImageLibraryPage() {
                     return (
                       <div
                         key={img.id}
-                        className="border border-gray-200 rounded-lg p-2.5 space-y-2"
+                        className="border border-[var(--card-border)] rounded-lg p-2.5 space-y-2"
                       >
                         <div className="flex gap-2.5">
                           {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -587,10 +588,10 @@ export default function ImageLibraryPage() {
                             src={thumbUrl(img.id)}
                             alt={img.description}
                             title="点击放大预览"
-                            className="w-20 h-20 object-cover rounded border border-gray-100 shrink-0 cursor-zoom-in hover:opacity-75 transition-opacity"
+                            className="w-20 h-20 object-cover rounded border border-[var(--card-border)] shrink-0 cursor-zoom-in hover:opacity-75 transition-opacity"
                             onClick={() => setPreviewImage(img)}
                           />
-                          <div className="flex-1 min-w-0 text-xs text-gray-400 space-y-0.5">
+                          <div className="flex-1 min-w-0 text-xs text-[var(--muted-light)] space-y-0.5">
                             <p className="truncate" title={img.originalName}>
                               {img.originalName}
                             </p>
@@ -648,26 +649,26 @@ export default function ImageLibraryPage() {
           destroyOnClose
         >
           {deleteGroupTarget && (
-            <div className="space-y-3 text-sm text-[#1A1A1A]">
+            <div className="space-y-3 text-sm text-[var(--foreground)]">
               <p>
                 确定删除图片组「
                 <span className="font-medium">{deleteGroupTarget.name}</span>
                 」及其全部 {deleteGroupTarget.images.length} 张图片吗？此操作不可恢复。
               </p>
               {deleteGroupTarget.referencedBy && deleteGroupTarget.referencedBy.length > 0 ? (
-                <div className="p-3 bg-[#FFF3E8] border border-[#FFC69C] rounded-lg">
-                  <p className="text-[#D25F00] font-medium mb-1">
+                <div className="p-3 bg-[var(--warning-light)] border border-[var(--warning)] rounded-lg">
+                  <p className="text-[var(--warning)] font-medium mb-1">
                     ⚠ 该图片组正被以下 {deleteGroupTarget.referencedBy.length} 个课堂引用：
                   </p>
-                  <p className="text-[#63666F]">
+                  <p className="text-[var(--muted)]">
                     {deleteGroupTarget.referencedBy.map((t) => t.title).join("、")}
                   </p>
-                  <p className="text-[#63666F] mt-1">
+                  <p className="text-[var(--muted)] mt-1">
                     删除后这些课堂的对话将无法再发送组内图片。
                   </p>
                 </div>
               ) : (
-                <p className="text-[#63666F]">该图片组当前未被任何课堂引用。</p>
+                <p className="text-[var(--muted)]">该图片组当前未被任何课堂引用。</p>
               )}
             </div>
           )}

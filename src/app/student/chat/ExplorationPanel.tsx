@@ -3,6 +3,25 @@
 import { useState, useEffect, useRef } from "react";
 import { Button, MessagePlugin } from "tdesign-react";
 import SpeechControls from "@/components/speech/SpeechControls";
+
+// 可爱的 AI 学伴机器人图标（与 iframe 内伴学浮窗保持一致）
+const AiCompanionRobotIcon = ({ size = "14px", className = "" }: { size?: string; className?: string }) => (
+  <svg
+    viewBox="0 0 24 24"
+    width={size}
+    height={size}
+    fill="currentColor"
+    aria-hidden="true"
+    className={className}
+  >
+    <path d="M12 2C12.55 2 13 2.45 13 3V4.07C16.39 4.55 19.04 7.06 19.82 10.36C20.21 10.49 20.5 10.85 20.5 11.29V13.71C20.5 14.26 20.05 14.71 19.5 14.71H18.97C18.46 18.11 15.53 20.71 12 20.71C8.47 20.71 5.54 18.11 5.03 14.71H4.5C3.95 14.71 3.5 14.26 3.5 13.71V11.29C3.5 10.85 3.79 10.49 4.18 10.36C4.96 7.06 7.61 4.55 11 4.07V3C11 2.45 11.45 2 12 2Z" />
+    <circle cx="8.8" cy="11" r="1.6" fill="white" />
+    <circle cx="15.2" cy="11" r="1.6" fill="white" />
+    <circle cx="8.8" cy="11" r="0.7" fill="currentColor" />
+    <circle cx="15.2" cy="11" r="0.7" fill="currentColor" />
+    <path d="M9.2 14.3C9.2 14.3 10.4 15.6 12 15.6C13.6 15.6 14.8 14.3 14.8 14.3" stroke="white" strokeWidth="1.2" strokeLinecap="round" fill="none" />
+  </svg>
+);
 import { stopSpeaking } from "@/lib/speech";
 
 interface ExplorationPanelProps {
@@ -226,8 +245,9 @@ export default function ExplorationPanel({
           <Button size="small" onClick={onBack}>← 返回</Button>
           <span className="text-sm font-medium text-[#1A1A1A]">互动探究</span>
           {aiCompanionOn && (
-            <span className="text-xs text-purple-600 bg-purple-50 px-2 py-0.5 rounded">
-              🤖 AI伴学已开启
+            <span className="text-xs text-orange-600 bg-orange-50 px-2 py-0.5 rounded inline-flex items-center gap-1">
+              <AiCompanionRobotIcon size="14px" className="text-orange-500" />
+              AI伴学已开启
             </span>
           )}
           <div className="flex-1" />
@@ -249,25 +269,30 @@ export default function ExplorationPanel({
         ) : isEnabled ? (
           // ===== 可参与：显示互动内容（包含提交按钮） =====
           <div className="p-4">
-            <div className="text-sm text-gray-500 mb-2">完成互动后，点击右下角的"提交成绩"按钮提交你的结果。</div>
+            <div className="text-sm text-gray-500 mb-2">完成互动后，点击页面左下角的红色「提交」按钮提交你的结果。</div>
+            {/* ⛔ DO NOT REVERT: iframe sandbox 必须包含 allow-popups，否则内部 <a target="_blank"> / window.open 会被浏览器静默拦截。
+                原因：探究 HTML 由教师/AI 生成，常嵌入外部资源链接，学生点击需弹出新标签页。
+                关联：src/app/teacher/tasks/[taskId]/exploration/[explorationId]/page.tsx 的预览 iframe 同理，若未来也支持外部链接需同步。
+                测试：修改后可用带 target="_blank" 的探究内容验证点击能否打开新标签页。 */}
             <iframe
               ref={iframeRef}
               srcDoc={htmlContentFinal}
               className="w-full rounded-lg border border-gray-200"
               style={{ height: "calc(100vh - 200px)" }}
-              sandbox="allow-scripts allow-same-origin allow-forms allow-autoplay"
+              sandbox="allow-scripts allow-same-origin allow-forms allow-autoplay allow-popups allow-popups-to-escape-sandbox"
               title="探究内容"
             />
           </div>
         ) : (
           // ===== 无需提交：只展示活动内容 =====
           <div className="p-4">
+            {/* ⛔ DO NOT REVERT: 同上方可提交态 iframe，探究内容中外部链接需弹出新标签页，sandbox 必须带 allow-popups。 */}
             <iframe
               ref={iframeRef}
               srcDoc={htmlContentFinal}
               className="w-full rounded-lg border border-gray-200"
               style={{ height: "calc(100vh - 160px)" }}
-              sandbox="allow-scripts allow-same-origin allow-autoplay"
+              sandbox="allow-scripts allow-same-origin allow-autoplay allow-popups allow-popups-to-escape-sandbox"
               title="探究内容"
             />
           </div>

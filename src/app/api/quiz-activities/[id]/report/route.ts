@@ -304,12 +304,14 @@ export async function GET(
       // 展示层统一清理：旧数据入库时未剥说明文字/围栏，返回前用 cleanInsightContent 截取 HTML 主体（幂等，库数据不动）
       aiContent: quizInsight ? cleanInsightContent(quizInsight.content || "") || null : null,
       aiContentVersion: quizInsight?.version || null,
+      // ⚠️ PERF：历史版本正文体积大（每个都是完整 HTML 报告），初始 GET 只回元数据，
+      // 老师点「切换版本」时再由前端按需拉取正文（/report/versions/[versionId] GET），
+      // 避免一次请求把 N 份历史报告全量下发拖慢打开。最新版正文仍由 aiContent 下发。
       aiReportVersions: allQuizInsights.map(i => ({ 
         id: i.id, 
-        content: cleanInsightContent(i.content || ""), 
         version: i.version, 
         createdAt: i.createdAt.toISOString() 
-      })), // 所有版本列表
+      })), // 所有版本列表（仅元数据）
     });
   } catch (error) {
     console.error("获取作业报告失败:", error);

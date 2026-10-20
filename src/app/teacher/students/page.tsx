@@ -198,7 +198,7 @@ export default function TeacherStudentsPage() {
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-xl font-semibold">学生管理</h2>
-            <p className="text-gray-500 text-sm mt-1">查看所有班级学生列表，可导入和重置密码</p>
+            <p className="text-[var(--muted)] text-sm mt-1">查看所有班级学生列表，可导入和重置密码</p>
           </div>
           <Button theme="primary" onClick={() => setImportVisible(true)}>
             导入学生
@@ -218,12 +218,12 @@ export default function TeacherStudentsPage() {
       >
         {resetStudent && (
           <div className="space-y-4">
-            <p className="text-gray-700">
+            <p className="text-[var(--foreground)]">
               确定要重置学生 <strong>{resetStudent.name}</strong> 的密码吗？
             </p>
-            <div className="bg-yellow-50 rounded-lg p-3 text-sm text-yellow-700">
+            <div className="bg-[var(--warning-light)] rounded-lg p-3 text-sm text-[var(--warning)]">
               <p className="font-medium mb-1">重置后：</p>
-              <ul className="list-disc list-inside space-y-0.5 text-yellow-600">
+              <ul className="list-disc list-inside space-y-0.5 text-[var(--warning)]">
                 <li>密码将恢复为默认密码（123456）</li>
                 <li>学生可使用姓名/学号+密码登录</li>
               </ul>
@@ -247,8 +247,8 @@ export default function TeacherStudentsPage() {
       >
         <div className="space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              选择班级 <span className="text-red-500">*</span>
+            <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+              选择班级 <span className="text-[var(--danger)]">*</span>
             </label>
             <Select
               value={importClassId}
@@ -260,8 +260,8 @@ export default function TeacherStudentsPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              学生信息 <span className="text-red-500">*</span>
+            <label className="block text-sm font-medium text-[var(--foreground)] mb-2">
+              学生信息 <span className="text-[var(--danger)]">*</span>
             </label>
             <Input
               value={importText}
@@ -270,19 +270,19 @@ export default function TeacherStudentsPage() {
               style={{ width: "100%" }}
               status="default"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="text-xs text-[var(--muted)] mt-1">
               每行一个学生，格式：姓名,学号,密码（学号和密码可选，密码留空则默认123456）
             </p>
           </div>
 
-          <div className="bg-blue-50 rounded-lg p-3 text-sm text-blue-700">
+          <div className="bg-[var(--primary-light)] rounded-lg p-3 text-sm text-[var(--primary)]">
             <div className="flex items-center justify-between mb-2">
               <p className="font-medium">导入说明：</p>
               <Button size="small" variant="outline" onClick={downloadTemplate}>
                 下载模板
               </Button>
             </div>
-            <ul className="list-disc list-inside space-y-0.5 text-blue-600">
+            <ul className="list-disc list-inside space-y-0.5 text-[var(--primary)]">
               <li>姓名中的空格会自动去除</li>
               <li>姓名在本次导入中不能重复</li>
               <li>已存在的学生（同名+同班级）将跳过</li>

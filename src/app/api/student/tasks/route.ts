@@ -35,7 +35,9 @@ export async function GET(req: NextRequest) {
             },
             ExplorationActivity: {
               where: { enabled: true },
-              select: { id: true, title: true, description: true, enableSubmission: true, enableAiCompanion: true, questionsJson: true },
+              // 📐 CONTRACT: select 必须带 sortOrder——学生端侧边栏按它做跨类型统一排序
+              //（4 表共用一个数值空间，见 src/lib/activities/unified-order.ts）。⛔ DO NOT REMOVE
+              select: { id: true, title: true, description: true, enableSubmission: true, enableAiCompanion: true, questionsJson: true, sortOrder: true },
               orderBy: { sortOrder: "asc" },
             },
             ProjectSubmission: {
@@ -73,6 +75,8 @@ export async function GET(req: NextRequest) {
           visibleToClass: ps.visibleToClass,
           allowLike: ps.allowLike,
           fileSizeLimit: ps.fileSizeLimit,
+          // 📐 CONTRACT: 学生端跨类型统一排序依赖 sortOrder（⛔ DO NOT REMOVE）
+          sortOrder: ps.sortOrder,
         })),
       })),
     }));

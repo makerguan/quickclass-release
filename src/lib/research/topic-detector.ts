@@ -54,7 +54,9 @@ export async function generateTitles(
   seed: string = "default"
 ): Promise<ResearchTitle[]> {
   const prompt = buildTitlesPrompt(data, projectType, keywords, count, seed);
-  const { chatModel } = await createDashScopeClient();
+  // ⛔ DO NOT REVERT: noFailover = 只用主模型、不限制时间（教学科研全链路一致）
+  // 🔗 RELATED: src/lib/ai.ts createDashScopeClient 的 noFailover 分支
+  const { chatModel } = await createDashScopeClient("text", undefined, { noFailover: true });
 
   const result = await aiQueue.enqueue(async () => {
     return generateText({

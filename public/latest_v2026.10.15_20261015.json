@@ -1,0 +1,6 @@
+{
+  "version": "v2026.10.15",
+  "downloadUrl": "https://gitee.com/maoyouhui/quickclass-release",
+  "changelog": "修复问题：编辑课堂/对话/项目/互动探究等弹窗点击窗外或按 ESC 不再误关闭，防止未保存内容丢失；互动探究对话记录消息颜色修复；对话记录、模板、设置页多处按钮与状态标识显示修复",
+  "releaseDate": "2026-10-15"
+}

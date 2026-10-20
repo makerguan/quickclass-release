@@ -5,12 +5,13 @@ import { useRouter, useParams } from "next/navigation";
 import { Button, Tag, Select, MessagePlugin, Dialog, Switch, InputNumber } from "tdesign-react";
 import { ArrowLeftIcon, ChartBarIcon, RefreshIcon } from "tdesign-icons-react";
 import Markdown from "@/components/Markdown";
+import ExportPdfButton from "@/components/ExportPdfButton";
 import TeacherLayout from "@/components/layout/TeacherLayout";
 import QuickFormDashboard, { type QfRecordItem, analyzeFields } from "@/components/exploration/QuickFormDashboard";
 import QuickFormRecordList from "@/components/exploration/QuickFormRecordList";
 import QuickFormAiDashboard from "@/components/exploration/QuickFormAiDashboard";
 import DashboardEditor from "@/components/exploration/DashboardEditor";
-import { SUBMITTED_AT_FIELD, type AiDashboardConfig, type AiDashboardChart, type AiDashboardKpi } from "@/lib/prompts/dashboard-config";
+import { SUBMITTED_AT_FIELD, applyQuickEdits, type AiDashboardConfig, type AiDashboardChart, type AiDashboardKpi } from "@/lib/prompts/dashboard-config";
 import TemplatePreviewButton from "@/components/template/TemplatePreviewButton";
 
 interface StudentRecord {
@@ -31,6 +32,8 @@ interface AnalysisData {
   submittedCount: number;
   totalStudents: number | null;
   classIds: string[];
+  // 各班级提交数（2026-10-13 起由 analysis GET 返回，供默认班级选择）
+  classSubmittedCounts?: Record<string, number>;
   averageScore: number;
   scoreDistribution: Record<string, number>;
   avgTimeSpent: number;
@@ -80,7 +83,7 @@ function InsightContent({ content, className = "" }: { content: string; classNam
     return (
       <div className="relative group">
         <button
-          className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-white/80 hover:bg-white text-gray-600 rounded border border-gray-200 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="absolute top-2 right-2 z-10 px-2 py-1 text-xs bg-[var(--card-bg)]/80 hover:bg-[var(--card-bg)] text-[var(--muted)] rounded border border-[var(--card-border)] opacity-0 group-hover:opacity-100 transition-opacity"
           onClick={() => {
             const w = window.open('', '_blank');
             if (w) {
@@ -102,9 +105,12 @@ function InsightContent({ content, className = "" }: { content: string; classNam
       </div>
     );
   }
+  // 文本型分支：data-insight-body 是 ExportPdfButton 的定位锚点（closest 向上查找），
+  // 丢了该属性导出按钮静默失效。🔗 RELATED：src/components/ExportPdfButton.tsx
   return (
-    <div className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
+    <div data-insight-body className={`prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all ${className}`}>
       <Markdown>{content}</Markdown>
+      <ExportPdfButton title="探究 AI 分析报告" />
     </div>
   );
 }
@@ -253,9 +259,21 @@ export default function ExplorationAnalysisPage() {
     try {
       const token = localStorage.getItem("token");
 
-      const res = await fetch(`/api/exploration-activities/${explorationId}/analysis`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // ⚠️ GOTCHA / PERF：原先 7 个请求串行 await，链路被 RTT 累加放大，
+      // 导致「分析」页打开明显慢于课堂整体分析（后者仅 3 个请求）。
+      // 改为「3 波并行」：第 1 波互相独立（分析/班级列表/当前班级），
+      // 第 2 波依赖班级选择（提交列表/探究详情），第 3 波依赖详情里的 qfTaskId。
+      const [res, clsRes, curRes] = await Promise.all([
+        fetch(`/api/exploration-activities/${explorationId}/analysis`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch("/api/classes", {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch("/api/classes/current", {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
       if (!res.ok) {
         const errText = await res.text().catch(() => "请求失败");
         setError(errText);
@@ -265,42 +283,51 @@ export default function ExplorationAnalysisPage() {
       const data: AnalysisData = await res.json();
       setAnalysisData(data);
 
-      // 设置班级选择：优先用当前班级，否则用第一个
-      // 加载班级列表
-      const clsRes = await fetch("/api/classes", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
       if (clsRes.ok) {
         const clsData = await clsRes.json();
         setAllClasses(Array.isArray(clsData) ? clsData : []);
       }
 
-      // 获取当前班级
-      const curRes = await fetch("/api/classes/current", {
-        headers: { Authorization: `Bearer ${token}` },
-      });
       let currentClassId = "";
       if (curRes.ok) {
         const curData = await curRes.json();
         currentClassId = curData.class?.id || "";
       }
-      const targetClassId = data.classIds?.includes(currentClassId)
-        ? currentClassId
-        : (data.classIds?.[0] || "");
+      // 默认班级：优先「当前班级且有提交」；否则选第一个有提交的班级；
+      // 都没有提交才退回原行为（当前班级在列用它，否则 classIds[0]）。
+      // ⚠️ GOTCHA（2026-10-13）：教师多班时，当前班级可能无提交，原先直接用它导致
+      //   点「分析」看不到任何提交数据（课堂列表却显示 N 份提交，来自全量 _count）。
+      // ⛔ DO NOT REVERT: 退回旧逻辑会复现「后台显示有人提交，分析页却为空」。
+      // 🔗 RELATED: analysis GET 返回 classSubmittedCounts；tasks/page.tsx openAnalysisModal 同款逻辑
+      const firstClassWithSub = (data.classIds || []).find(
+        (c: string) => (data.classSubmittedCounts?.[c] ?? 0) > 0
+      );
+      let targetClassId = "";
+      if (currentClassId && (data.classSubmittedCounts?.[currentClassId] ?? 0) > 0) {
+        targetClassId = currentClassId;
+      } else if (firstClassWithSub) {
+        targetClassId = firstClassWithSub;
+      } else {
+        targetClassId = data.classIds?.includes(currentClassId)
+          ? currentClassId
+          : (data.classIds?.[0] || "");
+      }
       setSelectedClassId(targetClassId);
 
-      const subRes = await fetch(`/api/exploration-activities/${explorationId}/submissions${targetClassId ? `?classId=${targetClassId}` : ""}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
+      // 第 2 波：提交列表与探究详情都只依赖 targetClassId，可并行
+      const [subRes, detailRes] = await Promise.all([
+        fetch(`/api/exploration-activities/${explorationId}/submissions${targetClassId ? `?classId=${targetClassId}` : ""}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+        fetch(`/api/exploration-activities/${explorationId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        }),
+      ]);
       if (subRes.ok) {
         const subData = await subRes.json();
         setSubmissions(Array.isArray(subData) ? subData : subData.submissions || []);
       }
 
-      // 拉取 QuickForm 收集数据（数据大屏）
-      const detailRes = await fetch(`/api/exploration-activities/${explorationId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
       let qfTaskId: string | null = null;
       if (detailRes.ok) {
         const detail = await detailRes.json();
@@ -308,31 +335,35 @@ export default function ExplorationAnalysisPage() {
         setQfTaskId(qfTaskId);
         setAiDashConfig(parseDashboardConfig(detail.dashboardConfig));
       }
+
+      // 第 3 波：QF 收集数据（依赖 qfTaskId）与 AI 报告版本（依赖 targetClassId）并行
+      const wave3: Promise<void>[] = [];
       if (qfTaskId) {
-        setQfLoading(true);
-        try {
-          const qfRes = await fetch(`/api/qf/records/${qfTaskId}?page=1&pageSize=500${targetClassId ? `&classId=${targetClassId}` : ""}`, {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (qfRes.ok) {
-            const qfData = await qfRes.json();
-            setQfRecords(Array.isArray(qfData.items) ? qfData.items : []);
-            setQfTotal(typeof qfData.total === "number" ? qfData.total : 0);
+        wave3.push((async () => {
+          setQfLoading(true);
+          try {
+            const qfRes = await fetch(`/api/qf/records/${qfTaskId}?page=1&pageSize=500${targetClassId ? `&classId=${targetClassId}` : ""}`, {
+              headers: { Authorization: `Bearer ${token}` },
+            });
+            if (qfRes.ok) {
+              const qfData = await qfRes.json();
+              setQfRecords(Array.isArray(qfData.items) ? qfData.items : []);
+              setQfTotal(typeof qfData.total === "number" ? qfData.total : 0);
+            }
+          } catch {
+            // QF 数据拉取失败不影响其它标签展示
+          } finally {
+            setQfLoading(false);
           }
-        } catch {
-          // QF 数据拉取失败不影响其它标签展示
-        } finally {
-          setQfLoading(false);
-        }
+        })());
       } else {
         setQfRecords([]);
         setQfTotal(0);
       }
-
-      // 加载已保存的 AI 报告版本
       if (targetClassId) {
-        await fetchAiVersions(targetClassId);
+        wave3.push(fetchAiVersions(targetClassId));
       }
+      await Promise.all(wave3);
     } catch (e: any) {
       console.error("获取分析数据失败", e);
       setError(e.message || "获取数据失败");
@@ -429,20 +460,49 @@ export default function ExplorationAnalysisPage() {
   /**
    * 「AI 重排大屏」：把字段摘要交给 AI，产出**图表配置 JSON** 并落库缓存；
    * 前端只按配置渲染图表（AI 不产出 HTML，避免 XSS）。老师手动触发、低频。
+   * 自然语言编辑三档分发（2026-10-13）：
+   *   1. 换色 / 移位 / 删除等简单指令 → applyQuickEdits 本地直接改配置（PUT 落库，不耗 AI）；
+   *   2. 已有大屏 + 复杂指令 → POST 带 baseConfig 走「AI 修订」（只改提到的部分）；
+   *   3. 无当前大屏 → 从零重排（原行为）。
    */
   const handleGenerateAiDashboard = async () => {
     if (aiDashLoading) return;
+    const instruction = aiDashInstruction.trim();
     setAiDashLoading(true);
     setAiDashError("");
+    const token = localStorage.getItem("token");
+    const apiUrl = `/api/exploration-activities/${explorationId}/dashboard-config`;
     try {
-      const token = localStorage.getItem("token");
-      const res = await fetch(`/api/exploration-activities/${explorationId}/dashboard-config`, {
+      // 快速指令：本地确定性修改，不耗 AI；解析器不认识任何片段时返回 null 交给 AI
+      if (instruction && aiDashConfig) {
+        const quick = applyQuickEdits(aiDashConfig, instruction);
+        if (quick) {
+          const res = await fetch(apiUrl, {
+            method: "PUT",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ config: quick.config }),
+          });
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok || !data?.config) {
+            setAiDashError(data?.message || "保存失败，请重试。");
+            return;
+          }
+          setAiDashConfig(data.config as AiDashboardConfig);
+          MessagePlugin.success(`已直接应用：${quick.applied.join("、")}`);
+          return;
+        }
+      }
+      const revise = Boolean(instruction && aiDashConfig);
+      const res = await fetch(apiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           Authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ instruction: aiDashInstruction }),
+        body: JSON.stringify({ instruction, baseConfig: revise ? aiDashConfig : undefined }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok || !data?.config) {
@@ -450,7 +510,7 @@ export default function ExplorationAnalysisPage() {
         return;
       }
       setAiDashConfig(data.config as AiDashboardConfig);
-      MessagePlugin.success("已按 AI 配置重排大屏");
+      MessagePlugin.success(revise ? "已按 AI 修订大屏" : "已按 AI 配置重排大屏");
     } catch {
       setAiDashError("网络异常，生成失败。");
     } finally {
@@ -527,6 +587,10 @@ export default function ExplorationAnalysisPage() {
           setAiReport(null);
           setAiVersionIndex(0);
         }
+      } else {
+        // ⚠️ GOTCHA：if(res.ok) 必须带 else——无 else 会静默吞掉 500，老师生成成功后
+        // 版本列表拉取失败会停在旧列表，误以为生成没生效（2026-10-11 修复版本号不对应时补上）。
+        MessagePlugin.error("获取分析报告版本失败");
       }
     } catch { /* ignore */ }
   };
@@ -552,21 +616,21 @@ export default function ExplorationAnalysisPage() {
       });
       if (res.ok) {
         const data = await res.json();
-        const newInsight: InsightVersion = {
-          id: data.id,
-          content: data.content,
-          version: data.version,
-          createdAt: data.createdAt,
-        };
-        setAiReportVersions((prev) => {
-          const updated = data.previousContent
-            ? [{ id: data.previousId, content: data.previousContent, version: data.version - 1, createdAt: "" }, newInsight]
-            : [newInsight];
-          return updated;
-        });
-        setAiVersionIndex(0);
-        setAiReport(newInsight);
-        MessagePlugin.success("AI 分析报告已生成");
+        // ⛔ DO NOT REVERT to local version-list rebuild ([previousContent, newInsight], version = new-1).
+        // Why removed (2026-10-11): (1) in-place rebuild silently drops all historical versions
+        // from the UI — DB still has them; symptom was "version buttons wrong until page refresh"
+        // (e.g. DB has v1+v2, after generating v3 only v2/v3 shown, v1 gone).
+        // (2) previous version's content came raw from DB without cleanInsightContent and with
+        // an empty createdAt, diverging from what GET returns after refresh.
+        // (3) `version = data.version - 1` is a guess, not the stored value.
+        // Server data is the single source of truth: refetch the full version list — it also
+        // selects the newest version (fetchAiVersions sets versions[0] + index 0).
+        // 🔗 RELATED: fetchAiVersions (refetch + select newest); same fix done the same day in
+        // src/app/teacher/tasks/[taskId]/insights/page.tsx (generateTaskClassInsight);
+        // src/app/api/exploration-activities/[id]/analysis/generate/route.ts POST returns only
+        // previousContent, NOT the full version list — insufficient for a local rebuild.
+        await fetchAiVersions(selectedClassId);
+        MessagePlugin.success(`AI 分析报告已生成（v${data.version}）`);
       } else {
         const err = await res.json().catch(() => ({}));
         MessagePlugin.error(err.error || "生成失败");
@@ -583,8 +647,8 @@ export default function ExplorationAnalysisPage() {
   const TabButton = ({ tabKey, label }: { tabKey: TabKey; label: string }) => (
     <button
       className={`px-6 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === tabKey
-        ? "border-blue-500 text-blue-600"
-        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+        ? "border-[var(--primary)] text-[var(--primary)]"
+        : "border-transparent text-[var(--muted)] hover:text-[var(--foreground)] hover:border-[var(--card-border)]"
         }`}
       onClick={() => { setActiveTab(tabKey); refreshLiveData(); }}
     >
@@ -598,11 +662,11 @@ export default function ExplorationAnalysisPage() {
       if (qfLoading) {
         return (
           <div className="space-y-4 animate-pulse" aria-label="数据大屏加载中">
-            <div className="h-20 rounded-2xl bg-blue-100/60" />
-            <div className="h-32 rounded-2xl bg-gray-100" />
+            <div className="h-20 rounded-2xl bg-[var(--primary-light)]" />
+            <div className="h-32 rounded-2xl bg-[var(--primary-lighter)]" />
             <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-              <div className="h-48 rounded-2xl bg-gray-100" />
-              <div className="h-48 rounded-2xl bg-gray-100" />
+              <div className="h-48 rounded-2xl bg-[var(--primary-lighter)]" />
+              <div className="h-48 rounded-2xl bg-[var(--primary-lighter)]" />
             </div>
           </div>
         );
@@ -632,8 +696,8 @@ export default function ExplorationAnalysisPage() {
           <input
             value={aiDashInstruction}
             onChange={(e) => setAiDashInstruction(e.target.value)}
-            placeholder="可选：描述风格或重点（如「深色科技风，突出年龄分布」「清新绿色」）"
-            className="flex-1 min-w-[220px] h-8 px-3 text-xs border border-gray-200 rounded-md focus:outline-none focus:border-blue-400"
+            placeholder="可选：自然语言修改，如「排行榜放最前」「换成青色」「删掉词云」「突出年龄分布」"
+            className="flex-1 min-w-[220px] h-8 px-3 text-xs border border-[var(--card-border)] rounded-md focus:outline-none focus:border-[var(--primary)]"
           />
           {!editing && (
             <Button
@@ -655,6 +719,26 @@ export default function ExplorationAnalysisPage() {
               恢复默认
             </Button>
           )}
+          {/* 提交统计自动刷新（2026-10-11 从顶部导航移入本 tab）：
+              轮询只刷新提交统计数据（refreshLiveData），放顶部会让人以为它也作用于 AI 报告等其他 tab。 */}
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-xs text-[var(--muted)]">自动刷新</span>
+            <Switch size="small" value={autoRefresh} onChange={(v) => setAutoRefresh(!!v)} />
+            {/* ⚠️ GOTCHA：默认 theme 是左右加减号（row），width 64 时两个按钮各占约 30px，
+                数字「15」被挤到只剩几像素、根本看不清；改用上下加减号（column）+ 加宽到 72 才能正常显示秒数。 */}
+            <InputNumber
+              size="small"
+              theme="column"
+              value={refreshSeconds}
+              min={5}
+              max={300}
+              step={5}
+              disabled={!autoRefresh}
+              onChange={(v) => setRefreshSeconds(Number(v) || 15)}
+              style={{ width: 72 }}
+            />
+            <span className="text-xs text-[var(--muted-light)]">秒</span>
+          </div>
         </div>
       );
 
@@ -662,7 +746,7 @@ export default function ExplorationAnalysisPage() {
         <div>
           {toolbar}
           {aiDashError && (
-            <div className="mb-3 text-xs text-red-500 bg-red-50 border border-red-100 rounded-md px-3 py-2">
+            <div className="mb-3 text-xs text-[var(--danger)] bg-[var(--danger-light)] border border-[var(--danger-light)] rounded-md px-3 py-2">
               {aiDashError}
             </div>
           )}
@@ -682,7 +766,7 @@ export default function ExplorationAnalysisPage() {
       );
     }
 
-    if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交数据</div>;
+    if (submissions.length === 0) return <div className="text-center py-8 text-sm text-[var(--muted-light)]">暂无提交数据</div>;
 
     const allAnswers: Record<string, any>[] = submissions.map((sub) => {
       try { return JSON.parse(sub.answers || "{}"); } catch { return {}; }
@@ -723,15 +807,15 @@ export default function ExplorationAnalysisPage() {
     return (
       <div className="space-y-6">
         <div className="grid grid-cols-2 gap-4">
-          <div className="bg-blue-50 rounded-lg p-4 text-center">
-            <div className="text-3xl font-bold text-blue-700">{submissions.length}</div>
-            <div className="text-xs text-blue-500 mt-1">已提交</div>
+          <div className="bg-[var(--primary-light)] rounded-lg p-4 text-center">
+            <div className="text-3xl font-bold text-[var(--primary)]">{submissions.length}</div>
+            <div className="text-xs text-[var(--primary)] mt-1">已提交</div>
           </div>
-          <div className="bg-green-50 rounded-lg p-4 text-center">
-            <div className="text-3xl font-bold text-green-700">
+          <div className="bg-[var(--success-light)] rounded-lg p-4 text-center">
+            <div className="text-3xl font-bold text-[var(--success)]">
               {submissions.filter((s) => s.score !== null && s.score !== undefined).length}
             </div>
-            <div className="text-xs text-green-500 mt-1">已评分</div>
+            <div className="text-xs text-[var(--success)] mt-1">已评分</div>
           </div>
         </div>
 
@@ -753,19 +837,19 @@ export default function ExplorationAnalysisPage() {
 
             return (
               <div key={field}>
-                <h3 className="text-sm font-medium text-gray-600 mb-3">{fieldLabels[field] || field}</h3>
+                <h3 className="text-sm font-medium text-[var(--muted)] mb-3">{fieldLabels[field] || field}</h3>
                 <div className="grid grid-cols-3 gap-3">
-                  <div className="bg-purple-50 rounded-lg p-3 text-center">
-                    <div className="text-xl font-bold text-purple-700">{avg}</div>
-                    <div className="text-xs text-purple-500">平均值</div>
+                  <div className="bg-[var(--primary-lighter)] rounded-lg p-3 text-center">
+                    <div className="text-xl font-bold text-[var(--accent)]">{avg}</div>
+                    <div className="text-xs text-[var(--accent)]">平均值</div>
                   </div>
-                  <div className="bg-blue-50 rounded-lg p-3 text-center">
-                    <div className="text-xl font-bold text-blue-700">{min}</div>
-                    <div className="text-xs text-blue-500">最小值</div>
+                  <div className="bg-[var(--primary-light)] rounded-lg p-3 text-center">
+                    <div className="text-xl font-bold text-[var(--primary)]">{min}</div>
+                    <div className="text-xs text-[var(--primary)]">最小值</div>
                   </div>
-                  <div className="bg-green-50 rounded-lg p-3 text-center">
-                    <div className="text-xl font-bold text-green-700">{max}</div>
-                    <div className="text-xs text-green-500">最大值</div>
+                  <div className="bg-[var(--success-light)] rounded-lg p-3 text-center">
+                    <div className="text-xl font-bold text-[var(--success)]">{max}</div>
+                    <div className="text-xs text-[var(--success)]">最大值</div>
                   </div>
                 </div>
               </div>
@@ -783,12 +867,12 @@ export default function ExplorationAnalysisPage() {
 
             return (
               <div key={field}>
-                <h3 className="text-sm font-medium text-gray-600 mb-3">{fieldLabels[field] || field}</h3>
+                <h3 className="text-sm font-medium text-[var(--muted)] mb-3">{fieldLabels[field] || field}</h3>
                 <div className="flex flex-wrap gap-2">
                   {entries.map(([item, count]) => (
-                    <div key={item} className="bg-gray-50 rounded-full px-3 py-1 text-xs">
-                      <span className="text-gray-500">{item}</span>
-                      <span className="ml-1 font-medium text-gray-700">{count}人</span>
+                    <div key={item} className="bg-[var(--hover-bg)] rounded-full px-3 py-1 text-xs">
+                      <span className="text-[var(--muted)]">{item}</span>
+                      <span className="ml-1 font-medium text-[var(--foreground)]">{count}人</span>
                     </div>
                   ))}
                 </div>
@@ -806,28 +890,28 @@ export default function ExplorationAnalysisPage() {
 
           return (
             <div key={field}>
-              <h3 className="text-sm font-medium text-gray-600 mb-3">{fieldLabels[field] || field}</h3>
+              <h3 className="text-sm font-medium text-[var(--muted)] mb-3">{fieldLabels[field] || field}</h3>
               {uniqueValues.length <= 3 ? (
                 <div className="space-y-2">
                   {sorted.map(([val, count]) => (
                     <div key={val} className="flex items-center gap-3 text-xs">
-                      <span className="w-20 text-gray-500 truncate">{val}</span>
-                      <div className="flex-1 bg-gray-100 rounded-full h-3">
+                      <span className="w-20 text-[var(--muted)] truncate">{val}</span>
+                      <div className="flex-1 bg-[var(--primary-lighter)] rounded-full h-3">
                         <div
-                          className="bg-blue-400 rounded-full h-3 transition-all"
+                          className="bg-[var(--primary)] rounded-full h-3 transition-all"
                           style={{ width: `${(count / values.length) * 100}%` }}
                         />
                       </div>
-                      <span className="text-gray-600 w-6">{count}人</span>
+                      <span className="text-[var(--muted)] w-6">{count}人</span>
                     </div>
                   ))}
                 </div>
               ) : (
                 <div className="flex flex-wrap gap-2">
                   {sorted.map(([val, count]) => (
-                    <div key={val} className="bg-gray-50 rounded-full px-3 py-1 text-xs">
-                      <span className="text-gray-700">{val}</span>
-                      <span className="ml-1 text-gray-400">({count}人)</span>
+                    <div key={val} className="bg-[var(--hover-bg)] rounded-full px-3 py-1 text-xs">
+                      <span className="text-[var(--foreground)]">{val}</span>
+                      <span className="ml-1 text-[var(--muted-light)]">({count}人)</span>
                     </div>
                   ))}
                 </div>
@@ -845,7 +929,7 @@ export default function ExplorationAnalysisPage() {
   //   这里抽成独立函数，供下方「收集数据 / 行为数据」切换复用，避免行为轨丢失。
   // ⛔ DO NOT REVERT：不要把行为数据视图从双轨探究里摘掉——那会退回「作品快照无入口」。
   const renderBehaviorSubmissions = () => {
-    if (submissions.length === 0) return <div className="text-center py-8 text-sm text-gray-400">暂无提交记录</div>;
+    if (submissions.length === 0) return <div className="text-center py-8 text-sm text-[var(--muted-light)]">暂无提交记录</div>;
 
     const toggleExpand = (id: string, studentId: string, canvasCount: number) => {
       const willExpand = !expandedIds.has(id);
@@ -892,13 +976,13 @@ export default function ExplorationAnalysisPage() {
       return (
         <div className="space-y-3">
           {items.length === 0 && canvasShots.length === 0 ? (
-            <div className="text-xs text-gray-400">无数据</div>
+            <div className="text-xs text-[var(--muted-light)]">无数据</div>
           ) : (
             <div className="grid grid-cols-2 gap-2">
               {items.map(([key, val]) => (
-                <div key={key} className="bg-gray-50 rounded px-3 py-2">
-                  <div className="text-xs text-gray-400">{fieldLabels[key] || key}</div>
-                  <div className="text-sm font-medium text-gray-700 mt-0.5">
+                <div key={key} className="bg-[var(--hover-bg)] rounded px-3 py-2">
+                  <div className="text-xs text-[var(--muted-light)]">{fieldLabels[key] || key}</div>
+                  <div className="text-sm font-medium text-[var(--foreground)] mt-0.5">
                     {key === "completedSections"
                       ? (Array.isArray(val) && val.length > 0 ? val.join("、") : "无")
                       : Array.isArray(val) ? val.join("、") : String(val)}
@@ -906,9 +990,9 @@ export default function ExplorationAnalysisPage() {
                 </div>
               ))}
               {scoreInferred === true && (
-                <div className="bg-amber-50 rounded px-3 py-2">
-                  <div className="text-xs text-gray-400">分数来源</div>
-                  <div className="text-sm font-medium text-amber-700 mt-0.5">页面文本推测（页面未主动上报）</div>
+                <div className="bg-[var(--warning-light)] rounded px-3 py-2">
+                  <div className="text-xs text-[var(--muted-light)]">分数来源</div>
+                  <div className="text-sm font-medium text-[var(--warning)] mt-0.5">页面文本推测（页面未主动上报）</div>
                 </div>
               )}
             </div>
@@ -917,8 +1001,8 @@ export default function ExplorationAnalysisPage() {
           {/* AI 上报的页面状态（契约轨明细） */}
           {gameState && typeof gameState === "object" && Object.keys(gameState).length > 0 && (
             <div>
-              <div className="text-xs text-gray-400 mb-1">🤖 页面状态（AI 上报）</div>
-              <div className="bg-blue-50/50 rounded p-2 text-xs font-mono break-all">
+              <div className="text-xs text-[var(--muted-light)] mb-1">🤖 页面状态（AI 上报）</div>
+              <div className="bg-[var(--primary-light)] rounded p-2 text-xs font-mono break-all">
                 {JSON.stringify(gameState)}
               </div>
             </div>
@@ -927,14 +1011,14 @@ export default function ExplorationAnalysisPage() {
           {/* canvas 作品快照（详情拉取后展示） */}
           {canvasShots.length > 0 && (
             <div>
-              <div className="text-xs text-gray-400 mb-1">🖼️ 作品快照</div>
+              <div className="text-xs text-[var(--muted-light)] mb-1">🖼️ 作品快照</div>
               <div className="flex flex-wrap gap-2">
                 {canvasShots.map((src, i) => (
                   <img
                     key={i}
                     src={src}
                     alt={`作品快照 ${i + 1}`}
-                    className="max-w-[220px] rounded border border-gray-200"
+                    className="max-w-[220px] rounded border border-[var(--card-border)]"
                   />
                 ))}
               </div>
@@ -944,16 +1028,16 @@ export default function ExplorationAnalysisPage() {
           {/* 页面文本快照（折叠） */}
           {typeof textSnapshot === "string" && textSnapshot.trim() && (
             <details>
-              <summary className="text-xs text-gray-400 cursor-pointer">📄 页面文本快照</summary>
-              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-gray-50 rounded p-2 whitespace-pre-wrap">{textSnapshot}</pre>
+              <summary className="text-xs text-[var(--muted-light)] cursor-pointer">📄 页面文本快照</summary>
+              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-[var(--hover-bg)] rounded p-2 whitespace-pre-wrap">{textSnapshot}</pre>
             </details>
           )}
 
           {/* 页面存档数据（折叠） */}
           {storageSnapshot && typeof storageSnapshot === "object" && Object.keys(storageSnapshot).length > 0 && (
             <details>
-              <summary className="text-xs text-gray-400 cursor-pointer">💾 页面存档数据</summary>
-              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-gray-50 rounded p-2 whitespace-pre-wrap">{JSON.stringify(storageSnapshot, null, 2)}</pre>
+              <summary className="text-xs text-[var(--muted-light)] cursor-pointer">💾 页面存档数据</summary>
+              <pre className="mt-1 max-h-40 overflow-y-auto text-xs bg-[var(--hover-bg)] rounded p-2 whitespace-pre-wrap">{JSON.stringify(storageSnapshot, null, 2)}</pre>
             </details>
           )}
         </div>
@@ -962,7 +1046,7 @@ export default function ExplorationAnalysisPage() {
 
     return (
       <div className="space-y-3">
-        <div className="text-sm text-gray-500 mb-2">
+        <div className="text-sm text-[var(--muted)] mb-2">
           共 {submissions.length} 人提交
         </div>
 
@@ -977,44 +1061,44 @@ export default function ExplorationAnalysisPage() {
             : [];
 
           return (
-            <div key={sub.id} className="border border-gray-200 rounded-lg overflow-hidden">
+            <div key={sub.id} className="border border-[var(--card-border)] rounded-lg overflow-hidden">
               <div
-                className="flex items-center justify-between px-4 py-3 bg-gray-50 cursor-pointer hover:bg-gray-100 transition-colors"
+                className="flex items-center justify-between px-4 py-3 bg-[var(--hover-bg)] cursor-pointer hover:bg-[var(--primary-lighter)] transition-colors"
                 onClick={() => toggleExpand(sub.id, sub.studentId, displayAnswers.canvasCount || 0)}
               >
                 <div className="flex items-center gap-3">
-                  <span className="font-medium text-gray-800">{sub.studentName}</span>
-                  <span className="text-xs text-gray-400">
+                  <span className="font-medium text-[var(--foreground)]">{sub.studentName}</span>
+                  <span className="text-xs text-[var(--muted-light)]">
                     {new Date(sub.submittedAt).toLocaleString()}
                   </span>
                 </div>
-                <div className="text-gray-400 transition-transform" style={{ transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>
+                <div className="text-[var(--muted-light)] transition-transform" style={{ transform: isExpanded ? "rotate(180deg)" : "rotate(0deg)" }}>
                   ▼
                 </div>
               </div>
 
               {isExpanded && (
-                <div className="px-4 py-3 space-y-4 border-t border-gray-100">
+                <div className="px-4 py-3 space-y-4 border-t border-[var(--card-border)]">
                   <div>
-                    <h5 className="text-xs font-medium text-gray-500 mb-2">📊 提交数据</h5>
+                    <h5 className="text-xs font-medium text-[var(--muted)] mb-2">📊 提交数据</h5>
                     {renderAnswersDetail(displayAnswers, canvasShots)}
                   </div>
                   <div>
-                    <h5 className="text-xs font-medium text-gray-500 mb-2">📋 操作记录</h5>
+                    <h5 className="text-xs font-medium text-[var(--muted)] mb-2">📋 操作记录</h5>
                     {sub.actionLogs && sub.actionLogs.length > 0 ? (
-                      <div className="max-h-48 overflow-y-auto space-y-1 bg-gray-50 rounded p-3">
+                      <div className="max-h-48 overflow-y-auto space-y-1 bg-[var(--hover-bg)] rounded p-3">
                         {sub.actionLogs.map((log, idx) => (
                           <div key={idx} className="flex items-center gap-2 text-xs">
-                            <span className="w-2 h-2 rounded-full bg-blue-400 shrink-0" />
-                            <span className="text-blue-600 font-medium">{log.type}</span>
-                            <span className="text-gray-400">
+                            <span className="w-2 h-2 rounded-full bg-[var(--primary)] shrink-0" />
+                            <span className="text-[var(--primary)] font-medium">{log.type}</span>
+                            <span className="text-[var(--muted-light)]">
                               {new Date(log.timestamp).toLocaleTimeString()}
                             </span>
                           </div>
                         ))}
                       </div>
                     ) : (
-                      <div className="text-xs text-gray-400">无操作记录</div>
+                      <div className="text-xs text-[var(--muted-light)]">无操作记录</div>
                     )}
                   </div>
                 </div>
@@ -1027,24 +1111,24 @@ export default function ExplorationAnalysisPage() {
   };
 
   const renderSubmissions = () => {
-    if (loading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+    if (loading) return <div className="text-center py-8 text-sm text-[var(--muted-light)]">加载中...</div>;
 
     // 双轨：探究绑定了 QuickForm 收集任务 → 「收集数据 / 行为数据」两个视图切换；
     // 否则只有行为数据（ExplorationSubmission），不影响既有探究。
     if (qfTaskId) {
-      if (qfLoading) return <div className="text-center py-8 text-sm text-gray-400">加载中...</div>;
+      if (qfLoading) return <div className="text-center py-8 text-sm text-[var(--muted-light)]">加载中...</div>;
       return (
         <div className="space-y-3">
           <div className="flex items-center gap-1.5">
             <button
               onClick={() => setSubmissionView("qf")}
-              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "qf" ? "bg-blue-50 text-blue-600 border-blue-200" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "qf" ? "bg-[var(--primary-light)] text-[var(--primary)] border-[var(--primary-light)]" : "bg-[var(--card-bg)] text-[var(--muted)] border-[var(--card-border)] hover:bg-[var(--hover-bg)]"}`}
             >
               收集数据（{qfTotal || qfRecords.length}）
             </button>
             <button
               onClick={() => setSubmissionView("behavior")}
-              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "behavior" ? "bg-blue-50 text-blue-600 border-blue-200" : "bg-white text-gray-500 border-gray-200 hover:bg-gray-50"}`}
+              className={`px-3 py-1.5 text-xs rounded-md border transition-colors ${submissionView === "behavior" ? "bg-[var(--primary-light)] text-[var(--primary)] border-[var(--primary-light)]" : "bg-[var(--card-bg)] text-[var(--muted)] border-[var(--card-border)] hover:bg-[var(--hover-bg)]"}`}
             >
               行为数据（{submissions.length}）
             </button>
@@ -1062,19 +1146,19 @@ export default function ExplorationAnalysisPage() {
   };
 
   const renderAiReport = () => (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100">
+    <div className="bg-[var(--card-bg)] rounded-xl shadow-sm border border-[var(--card-border)]">
       {/* 头部：标题 + 版本切换 + 操作按钮 */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100">
+      <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--card-border)]">
         <div className="flex items-center gap-2">
           <ChartBarIcon className="text-[#FF6B35]" />
-          <span className="font-medium text-gray-700 text-sm">AI 分析报告</span>
+          <span className="font-medium text-[var(--foreground)] text-sm">AI 分析报告</span>
           {aiReportVersions.length > 1 && (
             <div className="flex items-center ml-3 gap-2">
-              <span className="text-xs text-gray-400">版本：</span>
+              <span className="text-xs text-[var(--muted-light)]">版本：</span>
               {aiReportVersions.map((v, i) => (
                 <div key={i} className="flex items-center gap-3">
                   <button
-                    className={`px-2 py-0.5 text-xs rounded ${i === aiVersionIndex ? 'bg-[#0052D9] text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+                    className={`px-2 py-0.5 text-xs rounded ${i === aiVersionIndex ? 'bg-[var(--primary)] text-white' : 'bg-[var(--primary-lighter)] text-[var(--muted)] hover:bg-[var(--hover-bg)]'}`}
                     onClick={() => {
                       setAiVersionIndex(i);
                       setAiReport(v);
@@ -1084,7 +1168,7 @@ export default function ExplorationAnalysisPage() {
                   </button>
                   {v.id && (
                     <button
-                      className="text-xs text-red-400 hover:text-red-600 px-0.5"
+                      className="text-xs text-[var(--danger)] hover:text-[var(--danger)] px-0.5"
                       onClick={() => {
                         setDeleteVersion({ id: v.id!, version: v.version });
                         setDeleteVisible(true);
@@ -1104,7 +1188,7 @@ export default function ExplorationAnalysisPage() {
             <select
               value={selectedTemplateId}
               onChange={(e) => setSelectedTemplateId(e.target.value)}
-              className="px-2 py-1 border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-[#0052D9]"
+              className="px-2 py-1 border border-[var(--card-border)] rounded text-xs focus:outline-none focus:ring-1 focus:ring-[var(--primary)]"
             >
               <option value="">默认模板</option>
               {templates.map((t) => (
@@ -1143,9 +1227,9 @@ export default function ExplorationAnalysisPage() {
         {aiReport ? (
           <InsightContent content={aiReport.content} />
         ) : generatingReport ? (
-          <div className="text-center py-12 text-gray-400">AI 正在生成报告...</div>
+          <div className="text-center py-12 text-[var(--muted-light)]">AI 正在生成报告...</div>
         ) : (
-          <div className="text-center py-12 text-gray-400">
+          <div className="text-center py-12 text-[var(--muted-light)]">
             点击「生成报告」按钮，AI 将基于所有提交数据生成分析报告
           </div>
         )}
@@ -1157,7 +1241,7 @@ export default function ExplorationAnalysisPage() {
     return (
       <TeacherLayout>
         <div className="flex items-center justify-center h-64">
-          <div className="text-sm text-gray-400">加载中...</div>
+          <div className="text-sm text-[var(--muted-light)]">加载中...</div>
         </div>
       </TeacherLayout>
     );
@@ -1168,11 +1252,11 @@ export default function ExplorationAnalysisPage() {
       <TeacherLayout>
         <div className="p-6">
           <div className="flex items-center gap-3 mb-6">
-            <Button theme="default" variant="text" size="small" icon={<ArrowLeftIcon />} onClick={() => router.back()} />
+            <Button theme="primary" variant="text" size="small" icon={<ArrowLeftIcon />} onClick={() => router.back()} />
             <h2 className="text-xl font-semibold">探究分析</h2>
           </div>
           <div className="text-center py-12">
-            <div className="text-red-500 text-sm mb-4">{error}</div>
+            <div className="text-[var(--danger)] text-sm mb-4">{error}</div>
             <Button onClick={fetchData}>重试</Button>
           </div>
         </div>
@@ -1185,33 +1269,17 @@ export default function ExplorationAnalysisPage() {
       <div className="p-6">
         {/* 顶部导航 */}
         <div className="flex items-center gap-3 mb-6">
-          <Button theme="default" variant="text" size="small" icon={<ArrowLeftIcon />} onClick={() => router.back()} />
+          <Button theme="primary" variant="text" size="small" icon={<ArrowLeftIcon />} onClick={() => router.back()} />
           <div>
             <h2 className="text-xl font-semibold">探究分析报告</h2>
-            <p className="text-sm text-gray-500 mt-0.5">{analysisData?.explorationTitle}</p>
+            <p className="text-sm text-[var(--muted)] mt-0.5">{analysisData?.explorationTitle}</p>
           </div>
           <div className="flex items-center gap-3 ml-auto">
             {lastUpdated && (
-              <span className="text-xs text-gray-400">最后更新 {lastUpdated}</span>
+              <span className="text-xs text-[var(--muted-light)]">最后更新 {lastUpdated}</span>
             )}
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-gray-500">自动刷新</span>
-              <Switch size="small" value={autoRefresh} onChange={(v) => setAutoRefresh(!!v)} />
-              {/* ⚠️ GOTCHA：默认 theme 是左右加减号（row），width 64 时两个按钮各占约 30px，
-                  数字「15」被挤到只剩几像素、根本看不清；改用上下加减号（column）+ 加宽到 72 才能正常显示秒数。 */}
-              <InputNumber
-                size="small"
-                theme="column"
-                value={refreshSeconds}
-                min={5}
-                max={300}
-                step={5}
-                disabled={!autoRefresh}
-                onChange={(v) => setRefreshSeconds(Number(v) || 15)}
-                style={{ width: 72 }}
-              />
-              <span className="text-xs text-gray-400">秒</span>
-            </div>
+            {/* 2026-10-11：「自动刷新」开关+秒数已移入「统计信息」tab 的 QF 大屏工具栏 ——
+                轮询只刷提交统计数据，与 AI 报告等其他 tab 无关，控件应与被刷新内容同处一 tab。 */}
             <Button
               theme="default"
               variant="outline"
@@ -1224,7 +1292,7 @@ export default function ExplorationAnalysisPage() {
             </Button>
             {analysisData?.classIds && analysisData.classIds.length > 0 && (
               <div className="flex items-center gap-2">
-                <span className="text-sm text-gray-500">班级：</span>
+                <span className="text-sm text-[var(--muted)]">班级：</span>
                 <select
                   value={selectedClassId}
                   onChange={(e) => {
@@ -1237,7 +1305,7 @@ export default function ExplorationAnalysisPage() {
                     // 提交列表 / QF 数据大屏 / 提交详情也按班级重新拉取（显式传新班级，避免闭包旧值）
                     refreshLiveData(cid);
                   }}
-                  className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9]"
+                  className="px-3 py-1.5 border border-[var(--card-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)]"
                 >
                   {analysisData.classIds.map((cid: string) => {
                     const cls = allClasses.find((c) => c.id === cid);
@@ -1254,7 +1322,7 @@ export default function ExplorationAnalysisPage() {
         </div>
 
         {/* Tab 切换 */}
-        <div className="border-b border-gray-200 mb-6">
+        <div className="border-b border-[var(--card-border)] mb-6">
           <TabButton tabKey="statistics" label="统计信息" />
           <TabButton tabKey="submissions" label="提交详情" />
           <TabButton tabKey="ai" label="AI 分析报告" />
@@ -1274,10 +1342,10 @@ export default function ExplorationAnalysisPage() {
         footer={null}
       >
         <div className="space-y-4">
-          <p className="text-gray-700">
+          <p className="text-[var(--foreground)]">
             确定要删除 <strong>v{deleteVersion?.version}</strong> 版分析吗？
           </p>
-          <p className="text-sm text-red-600">此操作不可撤销！</p>
+          <p className="text-sm text-[var(--danger)]">此操作不可撤销！</p>
           <div className="flex gap-2 justify-end">
             <Button onClick={() => { setDeleteVisible(false); setDeleteVersion(null); }}>取消</Button>
             <Button theme="danger" loading={deleting} onClick={async () => {

@@ -89,7 +89,10 @@ async function validateCitationsBatch(
 ): Promise<CitationValidationItem[]> {
   if (citations.length === 0) return [];
 
-  const { chatModel } = await createDashScopeClient();
+  // ⛔ DO NOT REVERT: noFailover = 只用主模型、不限制时间（生成流程内的引用审核，
+  //   与 document-generator 主链路保持一致，避免审核步骤切备用模型降质）。
+  // 🔗 RELATED: src/lib/ai.ts createDashScopeClient 的 noFailover 分支
+  const { chatModel } = await createDashScopeClient("text", undefined, { noFailover: true });
 
   // 构建批量审核 prompt
   const items = citations.map(

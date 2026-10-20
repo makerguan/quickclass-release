@@ -21,6 +21,8 @@ interface Message {
   role: string;
   content: string;
   createdAt: string;
+  /** 语音消息的播放地址（2026-10-15 起返回，用于记录里播放语音） */
+  audioUrl?: string;
 }
 
 interface PresetConversationInfo {
@@ -465,8 +467,8 @@ export default function TeacherConversationsPage() {
       <div className="space-y-6 pb-8">
         {/* 页面标题 */}
         <div>
-          <h1 className="text-2xl font-bold text-[#1A1A1A]">对话记录</h1>
-          <p className="text-[#63666F] mt-1">查看学生与 AI 的对话记录，了解学习情况</p>
+          <h1 className="text-2xl font-bold text-[var(--title)]">对话记录</h1>
+          <p className="text-[var(--muted)] mt-1">查看学生与 AI 的对话记录，了解学习情况</p>
         </div>
 
         {/* 操作栏 */}
@@ -476,7 +478,7 @@ export default function TeacherConversationsPage() {
             <select
               value={selectedClassId}
               onChange={(e) => setSelectedClassId(e.target.value)}
-              className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9] focus:border-transparent"
+              className="px-3 py-1.5 border border-[var(--card-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent"
             >
               {classes.map((cls) => (
                 <option key={cls.id} value={cls.id}>
@@ -493,7 +495,7 @@ export default function TeacherConversationsPage() {
                   setSelectedTaskId(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9] focus:border-transparent"
+                className="px-3 py-1.5 border border-[var(--card-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent"
               >
                 {tasks.map((t) => (
                   <option key={t.id} value={t.id}>
@@ -511,7 +513,7 @@ export default function TeacherConversationsPage() {
                   setSelectedPresetConversationId(e.target.value);
                   setCurrentPage(1);
                 }}
-                className="px-3 py-1.5 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[#0052D9] focus:border-transparent"
+                className="px-3 py-1.5 border border-[var(--card-border)] rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-[var(--primary)] focus:border-transparent"
               >
                 {presetConversations.map((pc) => (
                   <option key={pc.id} value={pc.id}>
@@ -533,14 +535,14 @@ export default function TeacherConversationsPage() {
                     {searchKeyword && (
                       <button
                         onClick={handleClearSearch}
-                        className="text-gray-400 hover:text-gray-600 text-sm px-1"
+                        className="text-[var(--muted-light)] hover:text-[var(--muted)] text-sm px-1"
                       >
                         清除
                       </button>
                     )}
                     <button
                       onClick={handleSearch}
-                      className="text-[#0052D9] hover:text-[#003DA6] px-1"
+                      className="text-[var(--primary)] hover:text-[var(--primary-dark)] px-1"
                     >
                       <SearchIcon />
                     </button>
@@ -556,18 +558,22 @@ export default function TeacherConversationsPage() {
                 <>
                   <button
                     onClick={toggleSelectAll}
-                    className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-1"
+                    className="px-3 py-1.5 text-sm border border-[var(--card-border)] rounded-lg hover:bg-[var(--hover-bg)] flex items-center gap-1"
                   >
                     <CheckCircleIcon />
                     {selectedIds.size === conversations.length ? "取消全选" : "全选"}
                   </button>
+                  {/* ⛔ DO NOT REVERT（2026-10-14 修复）：本文件共 5 处 bg-[var(--danger/warning-light)]0 坏类（约 569/604/656/851/890 行）——
+                      尾部多余 0 使 Tailwind 任意值类失效 → 背景透明，白字/白对勾浮在页面上看不清（用户报告）。修复为实色底白字。
+                      ⚠️ GOTCHA: --danger-light/--warning-light 是浅色，只能配深色文字，勿与 text-white 搭配。
+                      🔗 RELATED: templates/page.tsx 确认删除按钮、settings/page.tsx 新版本圆点与警示图标，同根因同修法。 */}
                   <button
                     onClick={handleBatchDelete}
                     disabled={selectedIds.size === 0}
                     className={`px-3 py-1.5 text-sm rounded-lg flex items-center gap-1 ${
                       selectedIds.size > 0
-                        ? "bg-red-500 text-white hover:bg-red-600"
-                        : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                        ? "bg-[var(--danger)] text-white"
+                        : "bg-[var(--primary-lighter)] text-[var(--muted-light)] cursor-not-allowed"
                     }`}
                   >
                     <DeleteIcon />
@@ -575,7 +581,7 @@ export default function TeacherConversationsPage() {
                   </button>
                   <button
                     onClick={exitSelectionMode}
-                    className="px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50"
+                    className="px-3 py-1.5 text-sm border border-[var(--card-border)] rounded-lg hover:bg-[var(--hover-bg)]"
                   >
                     取消
                   </button>
@@ -585,8 +591,8 @@ export default function TeacherConversationsPage() {
                   <button
                     onClick={enterSelectionMode}
                     disabled={conversations.length === 0}
-                    className={`px-3 py-1.5 text-sm border border-gray-200 rounded-lg hover:bg-gray-50 flex items-center gap-1 ${
-                      conversations.length === 0 ? "text-gray-400 cursor-not-allowed" : ""
+                    className={`px-3 py-1.5 text-sm border border-[var(--card-border)] rounded-lg hover:bg-[var(--hover-bg)] flex items-center gap-1 ${
+                      conversations.length === 0 ? "text-[var(--muted-light)] cursor-not-allowed" : ""
                     }`}
                   >
                     <CheckCircleIcon />
@@ -601,8 +607,8 @@ export default function TeacherConversationsPage() {
                       disabled={(classes.find((c) => c.id === selectedClassId)?.conversationCount || 0) === 0}
                       className={`px-3 py-1.5 text-sm rounded-lg flex items-center gap-1 ${
                         (classes.find((c) => c.id === selectedClassId)?.conversationCount || 0) > 0
-                          ? "bg-orange-500 text-white hover:bg-orange-600"
-                          : "bg-gray-100 text-gray-400 cursor-not-allowed"
+                          ? "bg-[var(--warning)] text-white"
+                          : "bg-[var(--primary-lighter)] text-[var(--muted-light)] cursor-not-allowed"
                       }`}
                     >
                       <DeleteIcon />
@@ -614,7 +620,7 @@ export default function TeacherConversationsPage() {
             </div>
           </div>
           {searchKeyword && (
-            <div className="mt-2 text-sm text-[#63666F]">
+            <div className="mt-2 text-sm text-[var(--muted)]">
               搜索 &quot;{searchKeyword}&quot; 的结果：共 {totalCount} 个对话
             </div>
           )}
@@ -622,9 +628,9 @@ export default function TeacherConversationsPage() {
 
         {/* 对话列表 */}
         {loading ? (
-          <div className="text-center text-gray-400 py-12">加载中...</div>
+          <div className="text-center text-[var(--muted-light)] py-12">加载中...</div>
         ) : !firstLoaded ? null : conversations.length === 0 ? (
-          <div className="text-center text-gray-400 py-12">
+          <div className="text-center text-[var(--muted-light)] py-12">
             <p className="text-lg mb-2">📋</p>
             <p>{searchKeyword ? "未找到匹配的对话记录" : "暂无对话记录"}</p>
             {!searchKeyword && (
@@ -642,8 +648,8 @@ export default function TeacherConversationsPage() {
                 <Card
                   key={conv.id}
                   className={`transition-all ${
-                    isSelected ? "ring-2 ring-red-400 ring-opacity-50 bg-red-50" : ""
-                  } ${isExpanded && !isSelectionMode ? "ring-2 ring-[#0052D9] ring-opacity-30" : "hover:shadow-md"}`}
+                    isSelected ? "ring-2 ring-[var(--danger)] ring-opacity-50 bg-[var(--danger-light)]" : ""
+                  } ${isExpanded && !isSelectionMode ? "ring-2 ring-[var(--primary)] ring-opacity-30" : "hover:shadow-md"}`}
                 >
                   {/* 对话头部 */}
                   <div className="flex items-center gap-3">
@@ -653,8 +659,8 @@ export default function TeacherConversationsPage() {
                         onClick={(e) => toggleSelect(conv.id, e)}
                         className={`w-5 h-5 rounded border-2 flex items-center justify-center cursor-pointer transition-colors ${
                           isSelected
-                            ? "bg-red-500 border-red-500"
-                            : "border-gray-300 hover:border-red-400"
+                            ? "bg-[var(--danger)] border-[var(--danger)]"
+                            : "border-[var(--card-border)] hover:border-[var(--danger)]"
                         }`}
                       >
                         {isSelected && (
@@ -678,26 +684,26 @@ export default function TeacherConversationsPage() {
                     >
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <div className="w-7 h-7 rounded-full bg-[#0052D9] bg-opacity-10 flex items-center justify-center flex-shrink-0">
-                            <span className="text-[#0052D9] text-xs font-medium">
+                          <div className="w-7 h-7 rounded-full bg-[var(--primary)] bg-opacity-10 flex items-center justify-center flex-shrink-0">
+                            <span className="text-[var(--primary)] text-xs font-medium">
                               {conv.user.name.charAt(0)}
                             </span>
                           </div>
                           <div className="min-w-0">
                             <div className="flex items-center gap-2 flex-wrap">
-                              <span className="text-sm font-medium text-[#1A1A1A]">{conv.user.name}</span>
-                              <span className="text-xs text-[#63666F] bg-[#EDF1F7] px-1.5 py-0.5 rounded">
+                              <span className="text-sm font-medium text-[var(--foreground)]">{conv.user.name}</span>
+                              <span className="text-xs text-[var(--muted)] bg-[var(--hover-bg)] px-1.5 py-0.5 rounded">
                                 {conv.class.name}
                               </span>
                               {conv.presetConversation && (
-                                <span className="text-xs text-[#0052D9] bg-[#E8F0FE] px-1.5 py-0.5 rounded truncate max-w-[200px]" title={`${conv.presetConversation.subProject.task.title} / ${conv.presetConversation.subProject.title} / ${conv.presetConversation.title}`}>
+                                <span className="text-xs text-[var(--primary)] bg-[var(--primary-light)] px-1.5 py-0.5 rounded truncate max-w-[200px]" title={`${conv.presetConversation.subProject.task.title} / ${conv.presetConversation.subProject.title} / ${conv.presetConversation.title}`}>
                                   {conv.presetConversation.subProject.task.title} / {conv.presetConversation.subProject.title} / {conv.presetConversation.title}
                                 </span>
                               )}
                             </div>
                             <div className="flex items-center gap-2 mt-0.5">
-                              <span className="text-xs text-[#63666F]">{conv.title}</span>
-                              <span className="text-xs text-gray-400">{msgCount} 条消息</span>
+                              <span className="text-xs text-[var(--muted)]">{conv.title}</span>
+                              <span className="text-xs text-[var(--muted-light)]">{msgCount} 条消息</span>
                             </div>
                           </div>
                         </div>
@@ -705,14 +711,14 @@ export default function TeacherConversationsPage() {
                           {/* 删除按钮 */}
                           <button
                             onClick={(e) => handleDeleteSingle(conv.id, e)}
-                            className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
+                            className="p-1.5 text-[var(--muted-light)] hover:text-[var(--danger)] hover:bg-[var(--danger-light)] rounded transition-colors"
                             title="删除此对话"
                           >
                             <DeleteIcon />
                           </button>
                           {/* 展开箭头 */}
                           {!isSelectionMode && (
-                            <div className="text-gray-400">
+                            <div className="text-[var(--muted-light)]">
                               <svg
                                 className={`w-5 h-5 transition-transform ${isExpanded ? "rotate-180" : ""}`}
                                 fill="none"
@@ -733,28 +739,33 @@ export default function TeacherConversationsPage() {
 
                   {/* 展开时显示完整对话 */}
                   {isExpanded && !isSelectionMode && (
-                    <div className="mt-4 pt-4 border-t border-gray-100 pl-12 space-y-3 max-h-[250px] overflow-y-auto overflow-x-hidden w-full min-w-0">
+                    <div className="mt-4 pt-4 border-t border-[var(--card-border)] pl-12 space-y-3 max-h-[250px] overflow-y-auto overflow-x-hidden w-full min-w-0">
                       {conv.messages.length === 0 ? (
-                        <p className="text-sm text-gray-400">暂无消息</p>
+                        <p className="text-sm text-[var(--muted-light)]">暂无消息</p>
                       ) : (
                         conv.messages.map((msg) => (
                           <div key={msg.id} className="flex gap-2 w-full min-w-0">
-                            <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs bg-[#0052D9] text-white">
+                            <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs bg-[var(--primary)] text-white">
                               {msg.role === "user" ? "生" : "AI"}
                             </div>
                             <div className="flex-1 min-w-0 w-full" style={{ maxWidth: 'calc(100% - 2rem)' }}>
                               <div className="flex items-center gap-2 mb-0.5">
-                                <span className="text-xs font-medium text-[#1A1A1A]">
+                                <span className="text-xs font-medium text-[var(--foreground)]">
                                   {msg.role === "user" ? conv.user.name : "AI 助手"}
                                 </span>
                               </div>
-                              <div className="text-sm text-[#333] break-words bg-[#F7F8FA] rounded-lg p-3 overflow-hidden w-full">
+                              <div className="text-sm text-[#333] break-words bg-[var(--primary-lighter)] rounded-lg p-3 overflow-hidden w-full">
                                 {msg.role === "assistant" ? (
                                   <div className="!max-w-full prose prose-sm prose-gray [&_*]:break-words [&_*]:!max-w-full [&_*]:whitespace-pre-wrap [&_pre]:overflow-x-auto [&_pre]:!max-w-full [&_code]:break-all [&_p]:mb-2 [&_p:last-child]:mb-0 [&_ul]:mb-2 [&_ol]:mb-2 [&_li]:mb-0.5 [&_h1]:text-base [&_h2]:text-sm [&_h3]:text-sm [&_pre]:bg-gray-800 [&_pre]:text-gray-100 [&_pre]:rounded-lg [&_pre]:!overflow-x-auto [&_pre]:p-3 [&_pre_code]:text-xs [&_blockquote]:border-l-2 [&_blockquote]:border-gray-400 [&_blockquote]:pl-3 [&_blockquote]:italic [&_table]:text-xs [&_table]:table-auto [&_th]:px-2 [&_th]:py-1 [&_td]:px-2 [&_td]:py-1">
                                     <Markdown>{msg.content}</Markdown>
                                   </div>
                                 ) : (
-                                  <div className="whitespace-pre-wrap break-all w-full">{msg.content}</div>
+                                  <div className="w-full">
+                                    <div className="whitespace-pre-wrap break-all w-full">{msg.content}</div>
+                                    {msg.audioUrl && (
+                                      <audio src={msg.audioUrl} controls className="mt-2 max-w-full h-9" />
+                                    )}
+                                  </div>
                                 )}
                               </div>
                             </div>
@@ -772,7 +783,7 @@ export default function TeacherConversationsPage() {
         {/* 分页 */}
         {!loading && totalCount > 0 && (
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="flex items-center gap-2 text-sm text-[#63666F]">
+            <div className="flex items-center gap-2 text-sm text-[var(--muted)]">
               <span>每页</span>
               <InputNumber
                 value={pageSize}
@@ -793,6 +804,7 @@ export default function TeacherConversationsPage() {
               pageSize={pageSize}
               current={Math.min(currentPage, totalPages)}
               showJumper
+              showPageSize={false}
               onChange={(pageInfo) => setCurrentPage(pageInfo.current)}
             />
           </div>
@@ -802,23 +814,23 @@ export default function TeacherConversationsPage() {
         {!loading && totalCount > 0 && !searchKeyword && (
           <div className="grid grid-cols-3 gap-4 mt-4">
             <Card className="text-center py-3">
-              <div className="text-xl font-bold text-[#0052D9]">{totalStudents}</div>
-              <div className="text-xs text-[#63666F] mt-0.5">对话学生数</div>
+              <div className="text-xl font-bold text-[var(--primary)]">{totalStudents}</div>
+              <div className="text-xs text-[var(--muted)] mt-0.5">对话学生数</div>
             </Card>
             <Card className="text-center py-3">
-              <div className="text-xl font-bold text-[#0052D9]">{totalCount}</div>
-              <div className="text-xs text-[#63666F] mt-0.5">对话总数</div>
+              <div className="text-xl font-bold text-[var(--primary)]">{totalCount}</div>
+              <div className="text-xs text-[var(--muted)] mt-0.5">对话总数</div>
             </Card>
             <Card className="text-center py-3">
-              <div className="text-xl font-bold text-[#0052D9]">{totalMessages}</div>
-              <div className="text-xs text-[#63666F] mt-0.5">消息总数</div>
+              <div className="text-xl font-bold text-[var(--primary)]">{totalMessages}</div>
+              <div className="text-xs text-[var(--muted)] mt-0.5">消息总数</div>
             </Card>
           </div>
         )}
 
         {/* 底部统计 */}
         {!loading && conversations.length > 0 && (
-          <div className="text-center text-sm text-gray-400 mt-2">
+          <div className="text-center text-sm text-[var(--muted-light)] mt-2">
             共 {totalCount} 个对话
             {searchKeyword && ` · 搜索: "${searchKeyword}"`}
           </div>
@@ -835,19 +847,19 @@ export default function TeacherConversationsPage() {
             <p>
               确定要删除 {deleteTarget?.ids.length} 个对话记录吗？
             </p>
-            <p className="text-red-500 text-sm">此操作不可撤销，对话和消息将被永久删除。</p>
+            <p className="text-[var(--danger)] text-sm">此操作不可撤销，对话和消息将被永久删除。</p>
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setDeleteDialogVisible(false)}
                 disabled={deleting}
-                className="px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                className="px-4 py-2 border border-[var(--card-border)] rounded-lg hover:bg-[var(--hover-bg)] disabled:opacity-50"
               >
                 取消
               </button>
               <button
                 onClick={confirmDelete}
                 disabled={deleting}
-                className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 disabled:opacity-50 flex items-center gap-2"
+                className="px-4 py-2 bg-[var(--danger)] text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
               >
                 {deleting && (
                   <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
@@ -872,21 +884,21 @@ export default function TeacherConversationsPage() {
             <p>
               确定要清空 <strong>{clearClassTarget?.name}</strong> 的所有对话记录吗？
             </p>
-            <p className="text-orange-500 text-sm">
+            <p className="text-[var(--warning)] text-sm">
               将删除该班级下 {clearClassTarget?.conversationCount || 0} 个对话记录，此操作不可撤销。
             </p>
             <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setClearClassDialogVisible(false)}
                 disabled={deleting}
-                className="px-4 py-2 border border-gray-200 rounded-lg hover:bg-gray-50 disabled:opacity-50"
+                className="px-4 py-2 border border-[var(--card-border)] rounded-lg hover:bg-[var(--hover-bg)] disabled:opacity-50"
               >
                 取消
               </button>
               <button
                 onClick={confirmClearClass}
                 disabled={deleting}
-                className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 disabled:opacity-50 flex items-center gap-2"
+                className="px-4 py-2 bg-[var(--warning)] text-white rounded-lg disabled:opacity-50 flex items-center gap-2"
               >
                 {deleting && (
                   <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
