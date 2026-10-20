@@ -4,6 +4,35 @@ import { prisma } from "@/lib/prisma";
 import { generatePaperDocx } from "@/lib/research/docx-generator";
 import { generateProposalDocxFromTemplate } from "@/lib/research/docx-template-generator";
 import { extractFrameworkJSON, generateFrameworkDiagram } from "@/lib/research/framework-diagram";
+import AdmZip from "adm-zip";
+import { randomUUID, createHash } from "crypto";
+
+/**
+ * ⛔ DO NOT REVERT / 📐 CONTRACT
+ * 在导出的 docx 包内注入一个 Word 不识别、界面不可见/不可改的隐藏标记 part：
+ *   - quickclassMeta/export.json：source=QuickClass、exportId、exportedAt、文档内容 sha256
+ *   - 同时向 [Content_Types].xml 补一条 Override 声明（OPC 规范要求，否则 Word 严格校验会报文档损坏）
+ * 为什么：普通用户用 Word 查看/编辑/另存都看不到此标记、也无法经 Word 操作删除；
+ *         只有懂 docx 结构（unzip 改包）的人才能改动——这是"一般用户不可见、高手可改"的预期边界。
+ * 🔗 RELATED：论文与课题方案两条导出链路共用此函数，改逻辑需同时校验两者。
+ * 维护：docx 库生成的 zip 为标准 OPC 包，adm-zip 重打包会保留其余 entry；若 Word 打开报损坏，
+ *       优先检查 [Content_Types].xml 的 Override 是否被后续改动覆盖。
+ */
+function stampQuickClassExport(buffer: Buffer): Buffer {
+  const zip = new AdmZip(buffer);
+  zip.addFile("quickclassMeta/export.json", Buffer.from(JSON.stringify({
+    source: "QuickClass",
+    exportId: `QC-EXPORT:${randomUUID()}`,
+    exportedAt: new Date().toISOString(),
+    sha256: createHash("sha256").update(buffer).digest("hex"),
+  }), "utf8"));
+  const ct = zip.readAsText("[Content_Types].xml").replace(
+    "</Types>",
+    '<Override PartName="/quickclassMeta/export.json" ContentType="application/json"/></Types>'
+  );
+  zip.updateFile("[Content_Types].xml", Buffer.from(ct, "utf8"));
+  return zip.toBuffer();
+}
 
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -51,6 +80,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     if (project.projectType === "PAPER") {
       buffer = await generatePaperDocx(contentData);
+      buffer = stampQuickClassExport(buffer);
       filename = `${docTitle}.docx`;
     } else {
       // ── 课题方案：尝试提取框架图 JSON 并插入（第（五）章前）──
@@ -69,6 +99,7 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
         // 容错：不插入图，继续生成 doc
       }
       buffer = await generateProposalDocxFromTemplate(contentData, { frameworkDiagram });
+      buffer = stampQuickClassExport(buffer);
       filename = `${docTitle}.docx`;
     }
 
