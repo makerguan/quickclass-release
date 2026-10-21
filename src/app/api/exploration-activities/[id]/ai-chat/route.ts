@@ -173,10 +173,16 @@ export async function POST(
           // 通过 onError 回调 + finally 兜底逻辑确保错误能传递给客户端。
           if (streamError) {
             const errMsg = streamError.message;
-            const userFriendlyMsg =
-              errMsg.includes("quota") || errMsg.includes("配额") || errMsg.includes("free")
-                ? "抱歉，AI 服务配额已用完，请稍后再试或联系管理员补充配额。"
-                : `抱歉，AI 服务响应异常：${errMsg.slice(0, 100)}`;
+            // ⛔ DO NOT REVERT: 本项目 streamText 固定 maxOutputTokens=65536（见上方调用处），
+            // 部署点若配了输出上限 <64K 的模型（如 deepseek-flash 上限 32768），网关返回
+            // 400 InternalError.Algo.InvalidParameter: "Range of max tokens should be [1, 32768]"，
+            // 原样透传学生看不懂（2026-10-21 课堂实测）→ 必须译成人话并给行动指引。
+            // 🔗 RELATED: src/app/api/chat/route.ts 空流分支有同款判断，两处须同步。
+            const userFriendlyMsg = /max.?tokens|InvalidParameter/i.test(errMsg)
+              ? "抱歉，AI 模型输出上限设置超限，请联系老师，更换 64K 及以上大模型。"
+              : errMsg.includes("quota") || errMsg.includes("配额") || errMsg.includes("free")
+              ? "抱歉，AI 服务配额已用完，请稍后再试或联系管理员补充配额。"
+              : `抱歉，AI 服务响应异常：${errMsg.slice(0, 100)}`;
             try {
               controller.enqueue(encoder.encode(userFriendlyMsg));
             } catch (e) {
