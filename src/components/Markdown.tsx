@@ -13,6 +13,7 @@ import {
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import remarkBreaks from "remark-breaks";
 import rehypeKatex from "rehype-katex";
 import { normalizeMathDelimiters } from "@/lib/math-format";
 
@@ -214,8 +215,20 @@ function InlineParagraph({ children }: { children?: ReactNode }) {
  * 插件数组与 components 对象必须是模块级常量（引用恒定）：
  * react-markdown 10.x 的同步 Markdown 组件每次渲染都完整重跑 parse + runSync（无内部 memo），
  * 组件体内新建的字面量除了引发子树 remount，还会让父组件每敲一个字都重新解析全部 markdown。
+ *
+ * ⚠️ GOTCHA：两个数组都必须在模块顶层且互相独立（不能是 [...REMARK_PLUGINS, remarkBreaks]
+ * 这种在组件体内现拼的写法）——见上方"模块级常量"注释，运行时新建数组会破坏引用恒定，
+ * 引发子树 remount。渲染时按 breaks prop 直接二选一取常量，不做任何数组拼接。
  */
 const REMARK_PLUGINS = [remarkGfm, remarkMath];
+/**
+ * breaks=true 时启用 remark-breaks（GFM 硬换行：段落内单个 \n → <br>）。
+ * 用于"老师手工编辑、需要保真显示换行"的文本（如课堂作业题目正文、代码题），
+ * 否则 ReactMarkdown 标准语义会把单个换行折叠成空格，代码/多行题目被压成一行。
+ * 🔗 RELATED：src/app/teacher/activities/[subProjectId]/quiz/[quizId]/questions/page.tsx（预览）、
+ * src/app/student/chat/QuizPanel.tsx（学生答题视图）。
+ */
+const REMARK_PLUGINS_WITH_BREAKS = [remarkGfm, remarkMath, remarkBreaks];
 const REHYPE_PLUGINS = [rehypeKatex];
 
 /** 块级模式：mermaid 拦截（pre）+ 图片增强（img） */
@@ -289,7 +302,7 @@ const INLINE_COMPONENTS = { p: InlineParagraph, img: MarkdownImg };
 
 /**
  * 📐 CONTRACT —— 本组件被 React.memo 包装，调用方约定：
- * props 只有 children(string) 与 inline(boolean)，全是原始类型，浅比较即可精确判断内容是否变化。
+ * props 只有 children(string)、inline(boolean)、breaks(boolean)，全是原始类型，浅比较即可精确判断内容是否变化。
  * 学生聊天页（src/app/student/chat/page.tsx）输入框每敲一个字符 setInput → 整页重渲染，
  * 若无 memo，页面上每条历史消息的 markdown 都会被完整重新解析（react-markdown 无内部缓存），
  * 且 mermaid 图表因 components.pre 引用变化被卸载重挂（闪烁）。
@@ -299,6 +312,7 @@ const INLINE_COMPONENTS = { p: InlineParagraph, img: MarkdownImg };
 const Markdown = memo(function Markdown({
   children,
   inline,
+  breaks,
 }: {
   children: string;
   /**
@@ -306,11 +320,19 @@ const Markdown = memo(function Markdown({
    * 用于题目选项、评语、标签等单行片段，避免块级边距破坏行内布局。
    */
   inline?: boolean;
+  /**
+   * 保留换行（GFM 硬换行）：把段落内单个 \n 渲染成 <br>，而不是按标准 Markdown 折叠成空格。
+   * 用于老师手工编辑、需要"所见即所得"保真换行的文本（课堂作业题目正文、代码题等）。
+   * 默认 false（保持全局行为不变）——AI 生成的聊天/报告内容继续用标准 Markdown 折叠语义。
+   * 🔗 RELATED：REMARK_PLUGINS_WITH_BREAKS（本文件）。
+   */
+  breaks?: boolean;
 }) {
+  const remarkPlugins = breaks ? REMARK_PLUGINS_WITH_BREAKS : REMARK_PLUGINS;
   if (inline) {
     return (
       <ReactMarkdown
-        remarkPlugins={REMARK_PLUGINS}
+        remarkPlugins={remarkPlugins}
         rehypePlugins={REHYPE_PLUGINS}
         components={INLINE_COMPONENTS}
       >
@@ -325,7 +347,7 @@ const Markdown = memo(function Markdown({
   if (!hasChart) {
     return (
       <ReactMarkdown
-        remarkPlugins={REMARK_PLUGINS}
+        remarkPlugins={remarkPlugins}
         rehypePlugins={REHYPE_PLUGINS}
         components={BLOCK_COMPONENTS}
       >
@@ -346,7 +368,7 @@ const Markdown = memo(function Markdown({
         return (
           <ReactMarkdown
             key={i}
-            remarkPlugins={REMARK_PLUGINS}
+            remarkPlugins={remarkPlugins}
             rehypePlugins={REHYPE_PLUGINS}
             components={BLOCK_COMPONENTS}
           >

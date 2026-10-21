@@ -245,7 +245,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
                     <span className="text-xs text-[#8B8F99]">{backend.score ?? 0} / {backend.maxScore} 分</span>
                   ) : null}
                 </div>
-                <div className="text-base font-medium text-[#1A1A1A]"><Markdown>{q.content}</Markdown></div>
+                <div className="text-base font-medium text-[#1A1A1A]"><Markdown breaks>{q.content}</Markdown></div>
                 {backend?.comment && !ungraded && (
                   <div className="text-xs text-[#8B8F99] mt-1">评语：<Markdown inline>{backend.comment}</Markdown></div>
                 )}
@@ -331,7 +331,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
               <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium mt-1.5">[多选]</span>
             )}
             <div className="flex-1">
-              <div className="text-base font-medium text-[#1A1A1A]"><Markdown>{currentQ.content}</Markdown></div>
+              <div className="text-base font-medium text-[#1A1A1A]"><Markdown breaks>{currentQ.content}</Markdown></div>
             </div>
           </div>
 
