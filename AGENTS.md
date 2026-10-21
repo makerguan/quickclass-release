@@ -34,10 +34,10 @@ QuickClass（觉课智能体）—— 面向教师/学生的 AI 课堂平台。W
 | 项 | 值 |
 |---|---|
 | 技术栈 | Next.js 14（App Router）+ TypeScript + Prisma + SQLite + TDesign |
-| 主仓库 | Gitee `maoyouhui/quickclass-release`（GitHub 有国际镜像仓库） |
-| 私有开发仓库 | Gitee `maoyouhui/quickclass-private`（`dev` 日常推送与个人备份，见 §6） |
-| 开发分支 | `dev`（**所有改动都提到 `dev`**） |
-| 生产分支 | `main`（只由项目负责人从 `dev` 合并，见 `Git协作完整指南.md`） |
+| 主仓库 | Gitee `maoyouhui/quickclass-private`（**日常开发都在这里**，`dev` 是共享主干） |
+| 展示仓库 | Gitee `maoyouhui/quickclass-release`（仅对外展示窗口，`main` 由私有 `main` 同步过去，**不要直接向它提交**） |
+| 开发分支 | `dev`（两位开发者日常直接推送，开工前必先拉取，见 §4） |
+| 生产分支 | `main`（只在发版时由项目负责人从 `dev` 合并，见 `私有dev发布流程.md`） |
 | 权威协作文档 | `Git协作完整指南.md`（给人看的完整版；本文件是给 AI 看的可执行版） |
 
 ---
@@ -122,66 +122,49 @@ npx tsc --noEmit
 
 ---
 
-## 4. 开工前先做：检查并合并待处理的 PR（本项目固定流程）
+## 4. 开工前先同步 dev（🛑 AI 必须执行，不是可选建议）
 
-**这不是可选建议。在阅读代码、修改任何文件之前，先完成本节。**
+> ⛔ DO NOT SKIP 历史教训：本仓库是**两人共享 `dev` 主干**的协作模式。
+> 跳过拉取 = 基于旧代码开发 = 与合作者的新提交冲突，返工一轮（2026-09 与 2026-10 均实际发生过）。
 
-本仓库是多方协作：合作开发者通过 **Pull Request（PR）** 把改动提交到 `dev`；**PR 必须先被合并**，改动才真正进入 `dev`。
-若在“PR 还没合并”的旧代码上继续开发 ⇒ 重复劳动、合并冲突、互相覆盖。
-
-> ⛔ DO NOT SKIP 历史教训（2026-09）：曾因未先合并 PR 就基于旧代码开发，与已提 PR 的改动冲突，返工一轮。
-
-### ① 查上游有没有待合并的 PR
-
-用你环境里**已接入的 Gitee 能力**（Gitee 集成 / MCP / API / 网页）查看 `maoyouhui/quickclass-release` 的 open PR：
+### ① 开工第一步永远是拉最新
 
 ```bash
-# 有 API 凭据时
-curl -s -H "Authorization: Bearer $GITEE_TOKEN" \
-  "https://gitee.com/api/v5/repos/maoyouhui/quickclass-release/pulls?state=open"
+git pull origin dev
+git status        # 确认工作区干净、无冲突残留，再开始读代码/改代码
 ```
 
-```text
-# 没有凭据就直接看网页
-https://gitee.com/maoyouhui/quickclass-release/pulls?state=open
-```
-
-返回空数组 / 没有 open PR ⇒ 跳到 ③。
-
-### ② 有 PR：先报告，经用户同意后再合并
-
-把每个 PR 的 **编号 / 标题 / 提交人 / 改动文件** 列给用户，并明确问：
-
-> 「上游有 N 个待合并的 PR，是否现在就合并？」
-
-**必须经用户同意后才能合并**（合并影响其他协作者且难以撤销）。同意后，用你可用的 Gitee 能力合并：
+### ② 动手前先看目标文件最近谁在改
 
 ```bash
-curl -s -X PUT -H "Authorization: Bearer $GITEE_TOKEN" \
-  "https://gitee.com/api/v5/repos/maoyouhui/quickclass-release/pulls/<PR编号>/merge"
+git log --oneline -5 -- <要改的文件>
 ```
 
-返回 `200` = 合并成功；`401` = 凭据无效；`403` = 无权限。
+- 若合作者最近 1~2 天内有提交，且你们的改动可能重叠 → **先向用户说明**「该文件合作者刚改过」，
+  建议先沟通或把改动拆到对方不会碰的文件，不要闷头改；
+- **大改动**（新功能 / 跨多文件重构）→ 先拉个人分支（`cc/功能名` 或 `myh/功能名`），
+  本地测稳后合回 `dev` 再推送；小修直接在 `dev` 上做。
 
-### ③ 同步代码，然后才开始工作
+### ③ push 被拒时：先 pull，再按原则解冲突，禁止暴力手段
+
+`git push` 被拒 ⇒ 说明合作者先推了新提交 ⇒ `git pull origin dev` 后按下面原则处理 `<<<<<<< / ======= / >>>>>>>` 冲突标记：
+
+| 原则 | 说明 |
+|---|---|
+| 合并两边 | 两处改动功能上互不影响（如各加了一个函数）→ 都保留 |
+| 取正确版 | 同一处改了两版 → 理解两边意图，保留语义正确的一版（可融合） |
+| 拿不准就停 | 把冲突块贴给用户，**问完再动手**——宁可通过率低，不能静默丢改动 |
+
+> ⛔ DO NOT FORCE PUSH —— `git push --force` 会**抹掉合作者已推送的提交**，不可恢复。
+> ⛔ DO NOT DISCARD —— 禁止用 `git checkout -- .` / `git reset --hard` 清工作区来"让冲突消失"，那会连本地未提交工作一起丢。
+> ⛔ 禁止直接删掉对方的改动行来"解决"冲突——冲突的意义就是两边都改了，必须逐块读懂。
+
+### ④ 解完冲突必须验证再推送
 
 ```bash
-# 日常开发的真身在私有仓库 private；origin 是发布仓库，其 dev 仅发布时由 main 反向同步
-git fetch private
-git checkout dev
-git pull private dev
-git status          # 确认工作区干净、无冲突，再开始
+npx tsc --noEmit    # 见 §3-③，确认无新增类型错误
+git add <解决的文件> && git commit && git push origin dev
 ```
-
-**凭据怎么办**：Token 由**运行本规则的 AI 环境自行解决**（Gitee 集成 / MCP / 环境变量均可）。
-拿不到就**降级**为「执行 ③ + 把 PR 列表链接给用户，请他手动合并」，合并完成后继续 ③。
-**不要因为缺 token 就整段跳过本检查。** Token 只在各自本机配置，**不要写入仓库、不要提交**。
-
-### 边界
-
-- **不要**未经用户确认就合并 PR。
-- **不要**直接向 `main` 推送。
-- 本节只处理**上游仓库**的 PR；不要合并你 fork 里尚未提 PR 的分支。
 
 ---
 
@@ -221,9 +204,9 @@ git status          # 确认工作区干净、无冲突，再开始
 
 ## 6. 提交与分支约定
 
-- **项目负责人**：日常改动直接推 `private/dev`（`dev` 的上游已指向私有仓库，裸 `git push` 即可）。
-- **外部合作者**：向 `maoyouhui/quickclass-release` 提 PR，由负责人按 §4 流程合并进 `dev`。
+- **两位开发者**：小修直接在 `dev` 上改完推送（开工前先按 §4 拉取）；大改动走个人分支（`cc/功能名` / `myh/功能名`）测稳后合回 `dev`。
 - **不直接推 `main`**：`main` 只在发布时由项目负责人从 `dev` 合并后推送（见 `私有dev发布流程.md`）。
+- `quickclass-release` 是对外展示窗口，由私有 `main` 同步，**任何人都不要直接向它提交**。
 - 一个提交一件事；提交信息写清“**做了什么 + 为什么**”。
 - 推送前自查：`git status` 干净、无 `.env` / `*.db` 混入。
 - 提交信息规范见 `.trae/rules/git-commit-message.md`。
