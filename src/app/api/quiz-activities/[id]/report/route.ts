@@ -55,9 +55,34 @@ export async function GET(
     // 已参加作业的学生 ID 集合
     const attemptedUserIds = new Set(filteredAttempts.map(a => a.User.id));
 
-    // 区分已完成和未完成
-    const completedAttempts = filteredAttempts.filter(a => a.QuestionAttempt.length === quiz.Question.length);
-    const incompleteAttempts = filteredAttempts.filter(a => a.QuestionAttempt.length < quiz.Question.length);
+    // ⛔ DO NOT REVERT：统计前必须先按学生去重——同一学生可能有多条 QuizAttempt
+    // （历史并发双击提交 / 2026-09-08 前无事务版本遗留的重复记录）。
+    // 判定口径与 POST 提交（attempts/route.ts 的 403）及学生端自愈（QuizPanel.tsx）一致：
+    // 记录数 == 题目数才算完成；去重时优先保留“完整”的 attempt，同完整度保留最新提交的，
+    // 避免“一条完整一条残缺”的学生同时出现在已完成与未完成两个名单。
+    const attemptByStudent = new Map<string, (typeof quiz.QuizAttempt)[number]>();
+    for (const a of filteredAttempts) {
+      const sid = a.User.id;
+      const cur = attemptByStudent.get(sid);
+      if (!cur) {
+        attemptByStudent.set(sid, a);
+        continue;
+      }
+      const curComplete = cur.QuestionAttempt.length === quiz.Question.length;
+      const nextComplete = a.QuestionAttempt.length === quiz.Question.length;
+      const curTime = cur.submittedAt?.getTime() ?? 0;
+      const nextTime = a.submittedAt?.getTime() ?? 0;
+      if (nextComplete && !curComplete) {
+        attemptByStudent.set(sid, a);
+      } else if (nextComplete === curComplete && nextTime > curTime) {
+        attemptByStudent.set(sid, a);
+      }
+    }
+    const dedupedAttempts = [...attemptByStudent.values()];
+
+    // 区分已完成和未完成（基于去重后名单）
+    const completedAttempts = dedupedAttempts.filter(a => a.QuestionAttempt.length === quiz.Question.length);
+    const incompleteAttempts = dedupedAttempts.filter(a => a.QuestionAttempt.length < quiz.Question.length);
 
     // 未完成作业的学生名单
     const incompleteStudents = incompleteAttempts.map(a => ({ name: a.User.name, score: a.score, answered: a.QuestionAttempt.length, total: quiz.Question.length, userId: a.User.id }));
