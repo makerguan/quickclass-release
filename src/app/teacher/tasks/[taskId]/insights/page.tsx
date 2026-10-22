@@ -176,6 +176,16 @@ export default function TaskInsightsPage() {
   const [batchProgress, setBatchProgress] = useState<{ done: number; total: number }>({ done: 0, total: 0 });
   // 学生学情分析版本切换：studentId -> 选中的版本在 versions 数组中的下标（0 表示最新）
   const [studentVersionIndex, setStudentVersionIndex] = useState<Record<string, number>>({});
+  // 「查看对话」弹窗：浏览某学生在当前对话活动的全部对话（只读，学生卡片分析按钮旁）
+  const [convDialogStudent, setConvDialogStudent] = useState<{ id: string; name: string } | null>(null);
+  const [convDialogLoading, setConvDialogLoading] = useState(false);
+  const [convDialogData, setConvDialogData] = useState<{
+    conversations: Array<{
+      id: string; title: string; createdAt: string;
+      messages: Array<{ id: string; role: string; content: string; createdAt: string; audioUrl?: string }>;
+    }>;
+    totalMessages: number;
+  } | null>(null);
 
   // 班级分析收展
   const [expandedPcClass, setExpandedPcClass] = useState(true);  // 默认展开班级分析
@@ -406,6 +416,33 @@ export default function TaskInsightsPage() {
         setStudentContentCache((prev) => ({ ...prev, [insightId]: d.content || "" }));
       }
     } catch { /* 静默失败：保持加载态 */ }
+  };
+
+  // 查看单个学生在当前对话活动的全部对话（「查看对话」弹窗数据源）。
+  // 走 /api/conversations/teacher（教师端现成接口），按 presetConversationId + classId + userId 精确筛选；
+  // userId 精确匹配避免同班同名学生串数据（2026-10-22 新增，接口向后兼容）。
+  // ⚠️ GOTCHA：pageSize 一次性拉足（200），一个学生在同一对话活动的会话数远小于此；
+  // 若未来出现大量会话需要翻页，再改成分页 + 滚动加载。
+  const fetchStudentConversations = async (student: { id: string; name: string }) => {
+    if (!selectedPCId || !selectedClassId) return;
+    setConvDialogStudent(student);
+    setConvDialogLoading(true);
+    setConvDialogData(null);
+    try {
+      const token = localStorage.getItem("token");
+      const url = `/api/conversations/teacher?presetConversationId=${selectedPCId}&classId=${selectedClassId}&userId=${student.id}&pageSize=200`;
+      const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        setConvDialogData({
+          conversations: data.conversations || [],
+          totalMessages: data.totalMessages || 0,
+        });
+      } else {
+        MessagePlugin.error("获取对话记录失败");
+      }
+    } catch { MessagePlugin.error("网络错误"); }
+    finally { setConvDialogLoading(false); }
   };
 
   // ===== AI 生成 =====
@@ -1144,6 +1181,11 @@ export default function TaskInsightsPage() {
                                 <div className="flex items-center gap-2">
                                   {hasConv && (
                                     <>
+                                      {/* 「查看对话」：弹窗浏览该学生在当前对话活动的全部对话（只读） */}
+                                      <Button theme="default" variant="outline" size="small"
+                                        onClick={(e) => { e.stopPropagation(); fetchStudentConversations({ id: student.id, name: student.name }); }}>
+                                        查看对话
+                                      </Button>
                                       <Button theme="primary" variant="text" size="small" loading={isAnalyzing}
                                         disabled={generatingBusy}
                                         onClick={(e) => { e.stopPropagation(); withPromptPreview(
@@ -1628,6 +1670,66 @@ export default function TaskInsightsPage() {
               确认删除
             </Button>
           </div>
+        </div>
+      </Dialog>
+
+      {/* 「查看对话」弹窗：只读浏览某学生在当前对话活动的全部对话消息 */}
+      <Dialog
+        header={convDialogStudent ? `${convDialogStudent.name} 的对话记录` : "对话记录"}
+        visible={!!convDialogStudent}
+        onClose={() => setConvDialogStudent(null)}
+        footer={null}
+        width={760}
+      >
+        <div className="space-y-4">
+          {convDialogLoading ? (
+            <div className="py-10 text-center"><Loading /></div>
+          ) : convDialogData && convDialogData.conversations.length > 0 ? (
+            <>
+              <p className="text-xs text-[var(--muted-light)]">
+                共 {convDialogData.conversations.length} 段对话 · {convDialogData.totalMessages} 条消息
+              </p>
+              <div className="space-y-4 max-h-[60vh] overflow-y-auto pr-1">
+                {convDialogData.conversations.map((conv) => (
+                  <div key={conv.id} className="border border-[var(--card-border)] rounded-lg overflow-hidden">
+                    <div className="px-3 py-2 bg-[var(--primary-lighter)] flex items-center justify-between gap-2 flex-wrap">
+                      <span className="text-sm font-medium truncate">{conv.title || "对话"}</span>
+                      <span className="text-xs text-[var(--muted)] whitespace-nowrap">
+                        {conv.messages.length} 条 · {formatDate(conv.createdAt)}
+                      </span>
+                    </div>
+                    <div className="p-3 space-y-3">
+                      {conv.messages.length === 0 ? (
+                        <p className="text-sm text-[var(--muted-light)]">暂无消息</p>
+                      ) : conv.messages.map((msg) => (
+                        <div key={msg.id} className="flex gap-2 w-full min-w-0">
+                          <div className="w-6 h-6 rounded-full flex items-center justify-center flex-shrink-0 text-xs bg-[var(--primary)] text-white">
+                            {msg.role === "user" ? "生" : "AI"}
+                          </div>
+                          <div className="flex-1 min-w-0" style={{ maxWidth: "calc(100% - 2rem)" }}>
+                            <div className="text-sm break-words bg-[var(--primary-lighter)] rounded-lg p-3 overflow-hidden w-full">
+                              {msg.role === "assistant" ? (
+                                <div className="prose prose-sm prose-gray max-w-none break-words [&_pre]:overflow-x-auto [&_code]:break-all">
+                                  <Markdown>{msg.content}</Markdown>
+                                </div>
+                              ) : (
+                                <div className="whitespace-pre-wrap break-all w-full">{msg.content}</div>
+                              )}
+                              {msg.audioUrl && (
+                                <audio src={msg.audioUrl} controls className="mt-2 max-w-full h-9" />
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          ) : (
+            <p className="text-sm text-[var(--muted-light)] text-center py-8">暂无对话记录</p>
+          )}
         </div>
       </Dialog>
     </>
