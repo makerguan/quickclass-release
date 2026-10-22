@@ -47,6 +47,8 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
   const [expandedExplanations, setExpandedExplanations] = useState<Record<string, boolean>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  // 上次提交记录不完整（记录数 < 题目数，多为 2026-09-08 前旧版本遗留）：不锁定，提示重新作答
+  const [incompleteSubmit, setIncompleteSubmit] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("token");
@@ -54,6 +56,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
 
     const currentQuizId = quizId; // 捕获当前 quizId，防止旧请求覆盖
     setSubmitted(false);
+    setIncompleteSubmit(false);
     setAnswers({});
     setResult(null);
     setAnswerResults({});
@@ -74,9 +77,16 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
         if (currentQuizId !== quizId) return;
         setQuiz(quizData);
         if (quizData.questions) setQuestions(quizData.questions);
+        // ⛔ DO NOT REVERT：已提交锁定判定与后端口径一致（report/attempts）——记录数 == 题目数才算“已提交”。
+        // 历史版本（2026-09-08 前无事务提交）可能留下“记录数 < 题目数”的不完整 attempt：
+        // 此时不锁定，标记 incompleteSubmit 提示重新作答；重交一次 POST 会清旧记录写全量，自动修复。
         // 兼容新旧 API 格式：attemptData.answers（新格式）或 attemptData.QuestionAttempt（旧格式）
         const answersData = attemptData?.answers || attemptData?.QuestionAttempt || [];
-        if (answersData.length > 0) {
+        const totalQuestions = (quizData.questions && quizData.questions.length > 0)
+          ? quizData.questions.length
+          : questions.length;
+        const isPartialSubmit = answersData.length > 0 && answersData.length < totalQuestions;
+        if (answersData.length > 0 && !isPartialSubmit) {
           setSubmitted(true);
           const correct = answersData.filter((a: any) => a.isCorrect).length;
           setResult({ 
@@ -100,7 +110,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
           setAnswerResults(resultMap);
           
           // 如果已提交但 questions 为空（从缓存恢复的情况），强制刷新题目数据以显示答案
-          if (answersData.length > 0 && (!quizData.questions || quizData.questions.length === 0)) {
+          if (!quizData.questions || quizData.questions.length === 0) {
             // 重新获取题目以显示答案
             fetch(`/api/quiz-activities/${quizId}`, { headers: { Authorization: `Bearer ${token}` } })
               .then(r => r.json())
@@ -108,6 +118,9 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
                 if (qData.questions) setQuestions(qData.questions);
               });
           }
+        } else if (isPartialSubmit) {
+          // 记录不齐：不锁定，提示重新作答（重新提交会覆盖旧的不完整记录）
+          setIncompleteSubmit(true);
         }
         setLoading(false);
       })
@@ -146,6 +159,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
       const data = await res.json();
       if (res.ok) {
         setSubmitted(true);
+        setIncompleteSubmit(false);
         setResult({ score: data.score, totalQuestions: data.totalQuestions, correctCount: data.correctCount, passScore: data.passScore });
         // 以服务端判定为准
         const resultMap: Record<string, AnswerResult> = {};
@@ -245,7 +259,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
                     <span className="text-xs text-[#8B8F99]">{backend.score ?? 0} / {backend.maxScore} 分</span>
                   ) : null}
                 </div>
-                <div className="text-base font-medium text-[#1A1A1A]"><Markdown>{q.content}</Markdown></div>
+                <div className="text-base font-medium text-[#1A1A1A]"><Markdown breaks>{q.content}</Markdown></div>
                 {backend?.comment && !ungraded && (
                   <div className="text-xs text-[#8B8F99] mt-1">评语：<Markdown inline>{backend.comment}</Markdown></div>
                 )}
@@ -331,7 +345,7 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
               <span className="text-xs px-1.5 py-0.5 rounded bg-amber-100 text-amber-700 font-medium mt-1.5">[多选]</span>
             )}
             <div className="flex-1">
-              <div className="text-base font-medium text-[#1A1A1A]"><Markdown>{currentQ.content}</Markdown></div>
+              <div className="text-base font-medium text-[#1A1A1A]"><Markdown breaks>{currentQ.content}</Markdown></div>
             </div>
           </div>
 
@@ -399,6 +413,12 @@ export default function QuizPanel({ quizId, initialQuizData, initialQuestions = 
           <div className="mt-2 text-xs text-green-600 flex items-center gap-1">
             <CheckCircleIcon size="14px" />
             已提交
+          </div>
+        )}
+        {incompleteSubmit && !submitted && (
+          <div className="mt-2 text-xs text-orange-600 flex items-center gap-1">
+            <ErrorCircleIcon size="14px" />
+            上次提交不完整，请重新作答后提交（将覆盖原记录）
           </div>
         )}
       </div>

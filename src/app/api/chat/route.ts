@@ -445,7 +445,14 @@ export async function POST(req: NextRequest) {
             const raw = (streamError as Error | null)?.message || "";
             let errMsg: string;
             if (raw) {
-              errMsg = /quota|配额|free|429|rate|limit/i.test(raw)
+              // ⛔ DO NOT REVERT: 本项目 streamText 固定 maxOutputTokens=65536（见下方调用处），
+              // 部署点若配了输出上限 <64K 的模型（如 deepseek-flash 上限 32768），网关返回
+              // 400 InternalError.Algo.InvalidParameter: "Range of max tokens should be [1, 32768]"，
+              // 原样透传学生看不懂（2026-10-21 课堂实测）→ 必须译成人话并给行动指引。
+              // 🔗 RELATED: src/app/api/exploration-activities/[id]/ai-chat/route.ts finally 段有同款分支，两处须同步。
+              errMsg = /max.?tokens|InvalidParameter/i.test(raw)
+                ? "AI 模型输出上限设置超限，请联系老师，更换 64K 及以上大模型。"
+                : /quota|配额|free|429|rate|limit/i.test(raw)
                 ? "AI 服务繁忙（限流或配额不足），请稍后重试"
                 : `AI 服务响应异常：${raw.slice(0, 100)}`;
             } else if (hasAudioContent(lastMessage.content)) {

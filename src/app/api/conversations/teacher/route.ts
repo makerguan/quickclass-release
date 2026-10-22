@@ -50,6 +50,7 @@ export async function GET(req: NextRequest) {
     const { searchParams } = new URL(req.url);
     const classId = searchParams.get("classId");
     const studentName = searchParams.get("studentName");
+    const userId = searchParams.get("userId");
     const taskId = searchParams.get("taskId");
     const presetConversationId = searchParams.get("presetConversationId");
     const page = parseInt(searchParams.get("page") || "1", 10);
@@ -68,8 +69,12 @@ export async function GET(req: NextRequest) {
       where.classId = { in: classes.map((c) => c.id) };
     }
 
-    // 按学生名搜索（SQLite 兼容模式搜索）
-    if (studentName) {
+    // 按学生精确筛选（userId 精确匹配，优先于 studentName——分析窗口「查看对话」弹窗用它，
+    // 避免同班同名学生串数据；studentName 是对话记录页的模糊搜索入口，保持原行为）
+    // 📐 CONTRACT：新增 userId 参数向后兼容，不传时行为与历史完全一致
+    if (userId) {
+      where.userId = userId;
+    } else if (studentName) {
       const students = await prisma.user.findMany({
         where: { name: { contains: studentName } },
         select: { id: true },

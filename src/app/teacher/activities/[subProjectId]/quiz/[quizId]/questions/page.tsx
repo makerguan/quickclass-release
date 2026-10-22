@@ -419,7 +419,7 @@ function QuestionPreview({ question, onClose }: { question: Question; onClose: (
           </div>
           <button onClick={onClose} className="text-[var(--muted-light)] hover:text-[var(--muted)] text-lg">✕</button>
         </div>
-        <div className="text-base text-[var(--foreground)] mb-6"><Markdown>{question.content}</Markdown></div>
+        <div className="text-base text-[var(--foreground)] mb-6"><Markdown breaks>{question.content}</Markdown></div>
         {!isJudge && (
           <div className="space-y-3">
             {["A","B","C","D"].map((k) => opts[k] ? (

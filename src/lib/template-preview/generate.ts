@@ -9,6 +9,66 @@ import { getSampleDataset, getSampleVars, replaceSampleVars } from "./samples";
 export const PREVIEW_TEXT_LIMIT = 20000;
 export const PREVIEW_HTML_LIMIT = 200000;
 
+/**
+ * 📐 CONTRACT —— JSON 整体输出的预览格式化（作业设计类模板专用通道）。
+ *
+ * 为什么：QUIZ_DESIGN 类模板要求 AI「直接输出 JSON 数组、不要代码块」（机器解析用），
+ * 预览若照原样返回会被前端当 Markdown 渲染成一大坨无换行的源码（2026-10-21 老师实测反馈）。
+ *
+ * 现状约束：只处理「剥掉 markdown 围栏后整体就是一个 JSON 数组/对象」的输出 ——
+ * 报告类模板正文里偶尔讨论 JSON 示例的，整体 parse 必然失败，走原 Markdown 通道，互不干扰。
+ * 分色用后端拼好的内联样式 HTML（kind=html 走预览弹窗的沙箱 iframe），不引前端高亮库。
+ *
+ * 🔗 RELATED：TemplatePreviewButton.tsx（kind=html → iframe srcDoc 渲染）；本文件 generatePreview。
+ * ⛔ DO NOT REVERT：不要改成把 JSON 包进 ```json 围栏走 Markdown —— 本项目 Markdown 组件
+ *   无代码高亮（见 Markdown.tsx，未接 rehype-highlight），围栏只会得到无色源码块，等于没修。
+ */
+const JSON_TOKEN_RE = /("(?:\\.|[^"\\])*")(\s*:)?|\b(true|false|null)\b|(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)/g;
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/** 剥掉 markdown 代码围栏（AI 有时不听"不要代码块"的嘱托） */
+function stripCodeFence(text: string): string {
+  const m = text.match(/^\s*```[a-zA-Z]*\s*\n([\s\S]*?)\n?```\s*$/);
+  return m ? m[1] : text;
+}
+
+/** 整体输出是 JSON 时返回带分色样式的独立 HTML 文档；否则返回 null（调用方走原通道） */
+function jsonPreviewHtml(raw: string): string | null {
+  const body = stripCodeFence(raw).trim();
+  if (!/^[[{]/.test(body) || !/[\]}]$/.test(body)) return null;
+  let data: unknown;
+  try {
+    data = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (data === null || typeof data !== "object") return null;
+
+  // 单遍 tokenizer：key=蓝 / 字符串值=绿 / 数值·布尔·null=橙，其余（括号逗号）灰色
+  const pretty = JSON.stringify(data, null, 2);
+  const parts: string[] = [];
+  let last = 0;
+  for (const m of pretty.matchAll(JSON_TOKEN_RE)) {
+    const idx = m.index ?? 0;
+    parts.push(escapeHtml(pretty.slice(last, idx)));
+    const [full, str, colon, bool, num] = m;
+    const color = colon ? "#185FA5" : str ? "#2E7D32" : bool || num ? "#B26A00" : "#555";
+    parts.push(`<span style="color:${color}">${escapeHtml(full)}</span>`);
+    last = idx + full.length;
+  }
+  parts.push(escapeHtml(pretty.slice(last)));
+
+  return [
+    "<!DOCTYPE html><html><head><meta charset=\"utf-8\">",
+    "<style>body{margin:0;padding:20px 24px;background:#fafbfc;font:13px/1.85 ui-monospace,SFMono-Regular,Consolas,'Courier New',monospace;color:#333}",
+    "pre{margin:0;white-space:pre-wrap;word-break:break-all}</style></head><body>",
+    `<pre>${parts.join("")}</pre></body></html>`,
+  ].join("");
+}
+
 /** 模板正文哈希：只算正文，所以"只改模板名"不会让预览过期 */
 export function hashTemplateContent(content: string): string {
   return createHash("sha256").update(content, "utf8").digest("hex").slice(0, 32);
@@ -86,6 +146,18 @@ export async function generatePreview(params: {
 
   const raw = (result.text || "").trim();
   if (!raw) throw new Error("预览生成失败：模型没有返回内容");
+
+  // JSON 整体输出（作业设计类模板）→ 直接产出格式化 HTML，跳过 Markdown/报告清洗管线
+  const jsonHtml = jsonPreviewHtml(raw);
+  if (jsonHtml) {
+    const truncated = jsonHtml.length > PREVIEW_HTML_LIMIT;
+    return {
+      kind: "html",
+      content: truncated ? `${jsonHtml.slice(0, PREVIEW_HTML_LIMIT)}<!-- 内容较长，预览已截断 -->` : jsonHtml,
+      truncated,
+      model: null,
+    };
+  }
 
   // 先按模型**原始输出**判类型（认 <!DOCTYPE html>/<html>/<body> 文档标记）
   const kind = detectPreviewKind(raw);
